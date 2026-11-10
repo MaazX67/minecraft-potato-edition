@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   msvc:
     runs-on: windows-latest
@@ -25,3 +28,12 @@ jobs:
           name: PotatoEdition-exe
           path: build/Release/PotatoEdition.exe
           if-no-files-found: error
+
+      - name: Publish Alpha release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0-Alpha
+          name: v1.0.0-Alpha - Potato Edition
+          prerelease: true
+          files: build/Release/PotatoEdition.exe
+          generate_release_notes: true
