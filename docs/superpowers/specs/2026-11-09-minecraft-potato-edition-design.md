@@ -118,7 +118,9 @@ minecraft-potato-edition/
   Z sides 10; stored raw (0–15) per vertex, divided by 15 and multiplied in the
   vertex shader. No flood-fill propagation yet.
 - GPU data per chunk: one vertex buffer + one 32-bit index buffer, re-created on
-  remesh. Vertex = pos (3xfloat32), uv (2xfloat32), light (1xfloat32) = 24 bytes.
+  remesh. Vertex = pos (3f), tile origin (2f), local UV in block units (2f),
+  light (1f) = 32 bytes. The pixel shader repeats tiles across merged quads via
+  `frac(localUV)` — required so greedy quads don't stretch textures.
   Draw: `DrawIndexed` per visible chunk, frustum-culled by chunk AABB.
 
 ### 5.4 engine.h — clock and input
@@ -146,7 +148,8 @@ minecraft-potato-edition/
 ## 7. Verification
 
 - CI (windows-latest, MSVC v143, /W4): `cmake -A x64` Release build must succeed.
-- CI executes `PotatoEdition.exe --selftest` (headless, no D3D device):
+- CI executes `PotatoSelfTest.exe` (separate console target linking the CPU-only
+  `potato_core` library — no D3D device, no window):
   - Greedy mesh of a fully solid chunk yields exactly 6 quads / 24 verts.
   - Single isolated voxel yields 6 quads; known asymmetric pattern yields a
     precomputed quad count.
@@ -177,3 +180,51 @@ Each is a candidate follow-up, not silent scope creep.
   the Actions Windows runner, all visual verification via the user's laptop.
 - Ironlake has no cloud equivalent; 70 FPS is an engineering target, validated
   only on the real machine in M4.
+
+## 11. Scope addendum (user-directed, 2026-11-09)
+
+Added to v1 by explicit user request; "pixel-perfect full Minecraft" remains
+out of scope — these are the delivered systems:
+
+- **Audio** (`sound.h/.cpp`): XAudio2 (ships with Win10). Ogg decoded at
+  boot via vendored `stb_vorbis.c`; dig/attack/crit sounds pre-buffered as PCM;
+  Stop/FlushSourceBuffers/SubmitSourceBuffer retrigger = no play-time decode or
+  disk I/O. Missing sounds degrade to silence.
+- **UI** (`gui.h/.cpp`): orthographic quad pass (depth off, alpha blend) using
+  vanilla GUI sprites from the object store (buttons, logo, crosshair, hotbar,
+  ascii font). Title / Options / Pause screens; options (render distance, FOV,
+  sensitivity, sound) are functional. HUD: crosshair, attack-recharge bar,
+  9-slot hotbar with block icons, actionbar text. Missing sprites show checker.
+- **Combat** (`engine.h/.cpp` AttackCooldown + main): 1.9+ cooldown —
+  strength = clamp((elapsed+25ms)/period), damage = base * (0.2+0.8*s^2),
+  falling-hit crits x1.5 with crit sound. Left click = DDA raycast break,
+  right click = place selected hotbar block (never inside the camera).
+- Grass textures get the plains biome tint (0x91BD59) baked at atlas load.
+
+## 12. Phase 2 addendum (user-directed, 2026-11-10)
+
+- **PvP combat matrix**: `PlayerState.attackCooldownProgress` refreshed every
+  frame from raw QPC milliseconds (`SystemTimeMs`, never the clamped render
+  delta). Vanilla crit gate enforced: strength > 0.9 AND falling; short-cycled
+  clicks take the 0.2+0.8*s^2 damage penalty and spawn no particle sweep.
+  True crits spawn a 16-particle `critical_hit.png` sweep (CPU-simulated in
+  `engine.cpp`, rendered as camera-facing quads with depth-test-on/write-off,
+  alpha fade by remaining life, hard cap 256).
+- **Native audio architecture**: all PCM packed into one contiguous arena
+  reserved once at boot (submitted pointers can never dangle). Playback
+  requests enter a rigid 64-slot ring queue served by a background thread —
+  the render thread never calls XAudio2. Voice pool: 3 pre-created source
+  voices per variant so overlapping plays don't cut each other. 3D positional
+  playback: 16-block linear attenuation + equal-power stereo pan via
+  SetOutputMatrix against the camera listener. Full ring = dropped request,
+  never a blocked frame.
+- **Time-sliced anti-lag buffer**: mesh uploads moved from an unbounded deque
+  to a rigid 128-slot `RingQueue` with worker backpressure (failed TryPush
+  leaves the mesh intact; worker retries at 1 ms). Chunk eviction is two-phase:
+  `World::Update` only detaches evicted subchunks from the map; `EvictStep(4)`
+  frees at most 4 x 64 KB per frame. GPU-side cleanup sweeps at most 32 map
+  entries per frame from a rotating cursor. Ceilings live in `engine.h`:
+  8 uploads / 4 evicts / 32 GPU checks per frame.
+- **Verification**: selftest extended to 31 checks (cooldown math incl. the
+  0.9 crit boundary, ring FIFO/overflow/wrap, particle cap and expiry). All
+  pass under a local MinGW syntax+unit run; MSVC build remains CI-gated.
