@@ -417,7 +417,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     if (!InitRenderer(hwnd, gRC, gShaderSource)) return 1;
 
     // Asset index: default verified Migurinth path, overridable via --assets <path>.
-    std::string assetsPath = DEFAULT_ASSET_INDEX;
+    std::string assetsPath = DefaultAssetIndexPath();
     const char* flag = strstr(GetCommandLineA(), "--assets");
     if (flag) {
         const char* p = flag + 8;

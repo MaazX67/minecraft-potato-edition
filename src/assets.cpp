@@ -1,5 +1,6 @@
 #include "assets.h"
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 
@@ -61,6 +62,14 @@ bool Atlas::GetTileOrigin(int tile, float& u, float& v) const {
 // ---------------------------------------------------------------------------
 // AssetStore
 // ---------------------------------------------------------------------------
+
+std::string DefaultAssetIndexPath() {
+    const char* appdata = getenv("APPDATA");
+    if (appdata && appdata[0]) {
+        return std::string(appdata) + "/Migurinth/meta/assets/indexes/34.json";
+    }
+    return "C:/Users/Admin/AppData/Roaming/Migurinth/meta/assets/indexes/34.json";
+}
 
 bool AssetStore::LoadIndex(const std::string& indexPath) {
     try {

@@ -8,8 +8,8 @@ namespace potato {
 
 // Verified local launcher layout (Migurinth): the index maps logical asset
 // names to SHA1 hashes; objects/<first-2-hex>/<hash> holds the raw files.
-constexpr const char* DEFAULT_ASSET_INDEX =
-    "C:/Users/Admin/AppData/Roaming/Migurinth/meta/assets/indexes/34.json";
+// Resolved from %APPDATA% at runtime so any Windows username works.
+std::string DefaultAssetIndexPath();
 
 constexpr int ATLAS_SIZE = 1024;
 constexpr int ATLAS_TILE = 16;

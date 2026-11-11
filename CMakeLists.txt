@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
+
+# Static CRT: the exe must run on a bare Windows 10 box. The target laptop's
+# MSVCP140.dll (14.32) predates the VS2022 17.10 mutex layout change and
+# crashes with newer-toolset binaries; linking the CRT in avoids the redist
+# entirely and keeps the shipped exe self-contained.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 project(MinecraftPotatoEdition LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
