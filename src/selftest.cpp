@@ -1,7 +1,10 @@
 #include "assets.h"
 #include "engine.h"
 #include "world.h"
+#include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <thread>
 #include <vector>
 
 using namespace potato;
@@ -123,6 +126,59 @@ int main() {
     CHECK(parts.List().size() <= MAX_PARTICLES, "particle count hard-capped");
     parts.Update(2.0f);
     CHECK(parts.List().empty(), "expired particles are swept");
+
+    // --- Block flags ---
+    CHECK(BLOCK_FLAGS[BLOCK_AIR] == 0, "air has no flags");
+    CHECK((BLOCK_FLAGS[BLOCK_WATER] & BF_LIQUID) && !(BLOCK_FLAGS[BLOCK_WATER] & BF_SOLID),
+          "water is liquid and non-solid");
+    CHECK((BLOCK_FLAGS[BLOCK_OAK_LEAVES] & BF_CUTOUT) && (BLOCK_FLAGS[BLOCK_OAK_LEAVES] & BF_SOLID),
+          "leaves are solid cutout");
+    CHECK((BLOCK_FLAGS[BLOCK_STONE] & BF_OPAQUE) && (BLOCK_FLAGS[BLOCK_STONE] & BF_SOLID),
+          "stone is solid opaque");
+    CHECK((BLOCK_FLAGS[BLOCK_GLASS] & BF_CUTOUT) && !(BLOCK_FLAGS[BLOCK_GLASS] & BF_OPAQUE),
+          "glass is cutout, not opaque");
+
+    // --- Liquid mesh partition ---
+    std::vector<uint8_t> water(CHUNK_VOL, 0);
+    water[5 + 16 * 5 + 256 * 64] = BLOCK_WATER;
+    MeshData wm;
+    BuildChunkMeshCPU(water.data(), nullptr, nullptr, nullptr, nullptr, tiles, wm);
+    CHECK(wm.opaqueIndexCount == 0 && wm.indices.size() == 36,
+          "isolated water block meshes to 6 liquid quads (opaque count 0)");
+
+    // --- Player physics: gravity, landing, jump ---
+    {
+        InputState in;
+        FlyCamera cam;
+        PlayerBody body;
+        body.flying = false;
+        body.x = 8.5f; body.y = 70.0f; body.z = 8.5f;
+        auto ground = [](int, int y, int) -> uint8_t {
+            return (y >= 0 && y < 64) ? BLOCK_STONE : BLOCK_AIR;
+        };
+        for (int i = 0; i < 240; ++i) body.Update(in, 1.0f / 60.0f, cam, ground);
+        CHECK(body.onGround && fabsf(body.y - 64.0f) < 0.05f,
+              "player falls under gravity and lands on ground at y=64");
+        in.keys[VK_SPACE] = true;
+        body.Update(in, 1.0f / 60.0f, cam, ground);
+        CHECK(body.y > 64.0f, "jump lifts the player off the ground");
+    }
+
+    // --- Terrain generation (real async World) ---
+    {
+        World world(1337, 2);
+        world.SetBlockTiles(tiles);
+        world.Update(8.5f, 8.5f);
+        int sy = -1;
+        for (int i = 0; i < 300 && sy < 0; ++i) {
+            sy = world.SurfaceY(8, 8);
+            if (sy < 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        CHECK(sy > 0, "terrain generates a surface near spawn");
+        CHECK(world.GetBlock(8, 0, 8) == BLOCK_BEDROCK, "bedrock floor at y=0");
+        if (sy > 0) CHECK((BLOCK_FLAGS[world.GetBlock(8, sy, 8)] & BF_SOLID) != 0,
+                          "surface block is solid");
+    }
 
     if (gFail) {
         printf("\n%d TEST(S) FAILED\n", gFail);

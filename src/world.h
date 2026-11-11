@@ -23,11 +23,15 @@ struct MeshVertex {
     float tu, tv;     // atlas tile origin (UV)
     float u, v;       // local UV in block units (greedy tiling via frac in PS)
     float light;      // raw 0..15
+    float cr, cg, cb; // vertex tint (1,1,1 = untinted; GUI text colors)
 };
 
 struct MeshData {
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;
+    // indices [0, opaqueIndexCount) are opaque/cutout; the rest are liquid
+    // (drawn last with alpha blend, depth write off).
+    uint32_t opaqueIndexCount = 0;
 };
 
 // Resolved atlas tile ids per block id and face class.
@@ -56,6 +60,8 @@ public:
     explicit PerlinNoise(uint32_t seed);
     float Noise2(float x, float y) const;
     float Fbm2(float x, float y, int octaves) const; // normalized to ~[-1, 1]
+    float Noise3(float x, float y, float z) const;
+    float Fbm3(float x, float y, float z, int octaves) const;
 private:
     uint8_t mP[512];
 };
@@ -97,6 +103,8 @@ public:
     void Update(float camX, float camZ); // load/unload chunks around the camera
     uint8_t GetBlock(int x, int y, int z) const;
     void SetBlock(int x, int y, int z, uint8_t block); // marks dirty, remeshes
+    // Highest solid block in the column, or -1 if the chunk isn't generated.
+    int SurfaceY(int x, int z) const;
     bool HasChunk(int cx, int cz) const;
     size_t ChunkCount() const;
     bool PopUpload(uint64_t& key, MeshData& out);

@@ -1,5 +1,6 @@
 #include "gui.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -21,7 +22,6 @@ GuiTexture GuiRenderer::LoadGui(RenderContext& rc, AssetStore& store, const char
         t.srv = CreateTextureSRV(rc, px.data(), t.w, t.h);
         if (t.srv) return t;
     }
-    // Honest fallback: visible checker so missing GUI assets are obvious.
     uint8_t checker[16 * 16 * 4];
     for (int y = 0; y < 16; ++y) {
         for (int x = 0; x < 16; ++x) {
@@ -40,15 +40,28 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texButtonHi       = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/button_highlighted.png");
     texButtonDisabled = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/button_disabled.png");
     texLogo           = LoadGui(rc, store, "minecraft/textures/gui/title/minecraft.png");
+    texEdition        = LoadGui(rc, store, "minecraft/textures/gui/title/edition.png");
     texCrosshair      = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair.png");
     texHotbar         = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/hotbar.png");
     texHotbarSel      = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/hotbar_selection.png");
     texFont           = LoadGui(rc, store, "minecraft/textures/font/ascii.png");
     texDirt           = LoadGui(rc, store, "minecraft/textures/block/dirt.png");
+    texHeart[0]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/container.png");
+    texHeart[1]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/full.png");
+    texHeart[2]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/half.png");
+    texFood[0]        = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_empty.png");
+    texFood[1]        = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_full.png");
+    texFood[2]        = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_half.png");
+    texAttackBg       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair_attack_indicator_background.png");
+    texAttackProgress = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair_attack_indicator_progress.png");
+    texPanoramaOverlay= LoadGui(rc, store, "minecraft/textures/gui/title/background/panorama_overlay.png");
 
     const uint8_t white[4] = {255, 255, 255, 255};
     texWhite.w = texWhite.h = 1;
     texWhite.srv = CreateTextureSRV(rc, white, 1, 1);
+    const uint8_t black[4] = {0, 0, 0, 160};
+    texBlack.w = texBlack.h = 1;
+    texBlack.srv = CreateTextureSRV(rc, black, 1, 1);
 
     for (int b = 1; b < BLOCK_COUNT; ++b) {
         const std::string name = std::string("minecraft/textures/block/") + BLOCK_DEFS[b].side + ".png";
@@ -64,8 +77,11 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
 }
 
 void GuiRenderer::Shutdown() {
-    GuiTexture* all[] = {&texButton, &texButtonHi, &texButtonDisabled, &texLogo,
-                        &texCrosshair, &texHotbar, &texHotbarSel, &texFont, &texDirt, &texWhite};
+    GuiTexture* all[] = {&texButton, &texButtonHi, &texButtonDisabled, &texLogo, &texEdition,
+                        &texCrosshair, &texHotbar, &texHotbarSel, &texFont, &texDirt,
+                        &texWhite, &texBlack, &texAttackBg, &texAttackProgress, &texPanoramaOverlay,
+                        &texHeart[0], &texHeart[1], &texHeart[2],
+                        &texFood[0], &texFood[1], &texFood[2]};
     for (GuiTexture* t : all) {
         if (t->srv) { t->srv->Release(); t->srv = nullptr; }
     }
@@ -80,7 +96,8 @@ void GuiRenderer::BeginFrame() {
 }
 
 void GuiRenderer::DrawQuad(const GuiTexture* tex, float x, float y, float w, float h,
-                          float u0, float v0, float u1, float v1, float shade) {
+                          float u0, float v0, float u1, float v1, float shade,
+                          float cr, float cg, float cb) {
     Batch* batch = nullptr;
     for (Batch& b : mBatches) {
         if (b.tex == tex) { batch = &b; break; }
@@ -91,12 +108,12 @@ void GuiRenderer::DrawQuad(const GuiTexture* tex, float x, float y, float w, flo
     }
     const float x2 = x + w, y2 = y + h;
     const MeshVertex quad[6] = {
-        {x,  y,  0, 0, 0, u0, v0, shade},
-        {x2, y,  0, 0, 0, u1, v0, shade},
-        {x2, y2, 0, 0, 0, u1, v1, shade},
-        {x,  y,  0, 0, 0, u0, v0, shade},
-        {x2, y2, 0, 0, 0, u1, v1, shade},
-        {x,  y2, 0, 0, 0, u0, v1, shade},
+        {x,  y,  0, 0, 0, u0, v0, shade, cr, cg, cb},
+        {x2, y,  0, 0, 0, u1, v0, shade, cr, cg, cb},
+        {x2, y2, 0, 0, 0, u1, v1, shade, cr, cg, cb},
+        {x,  y,  0, 0, 0, u0, v0, shade, cr, cg, cb},
+        {x2, y2, 0, 0, 0, u1, v1, shade, cr, cg, cb},
+        {x,  y2, 0, 0, 0, u0, v1, shade, cr, cg, cb},
     };
     batch->verts.insert(batch->verts.end(), quad, quad + 6);
 }
@@ -105,7 +122,6 @@ void GuiRenderer::DrawSprite(const GuiTexture* tex, float x, float y, float scal
     DrawQuad(tex, x, y, tex->w * scale, tex->h * scale, 0, 0, 1, 1, shade);
 }
 
-// Approximate vanilla glyph advances (default font is proportional).
 static int CharWidth(char c) {
     switch (c) {
         case ' ': return 4;
@@ -124,7 +140,8 @@ float GuiRenderer::TextWidth(const std::string& text, float scale) const {
     return units * scale;
 }
 
-void GuiRenderer::DrawTextRaw(const std::string& text, float x, float y, float scale, float shade) {
+void GuiRenderer::DrawTextRaw(const std::string& text, float x, float y, float scale, float shade,
+                             float cr, float cg, float cb) {
     if (!texFont.srv || texFont.w < 16) return;
     const float cell = float(texFont.w / 16);
     const float invW = 1.0f / float(texFont.w), invH = 1.0f / float(texFont.h);
@@ -134,21 +151,21 @@ void GuiRenderer::DrawTextRaw(const std::string& text, float x, float y, float s
             const int col = c % 16, row = c / 16;
             const float u0 = col * cell * invW, v0 = row * cell * invH;
             const float u1 = (col + 1) * cell * invW, v1 = (row + 1) * cell * invH;
-            DrawQuad(&texFont, pen, y, cell * scale, cell * scale, u0, v0, u1, v1, shade);
+            DrawQuad(&texFont, pen, y, cell * scale, cell * scale, u0, v0, u1, v1, shade, cr, cg, cb);
         }
         pen += CharWidth(c) * scale;
     }
 }
 
 void GuiRenderer::DrawText(const std::string& text, float x, float y, float scale,
-                          float shade, bool shadow) {
-    if (shadow) DrawTextRaw(text, x + scale, y + scale, scale, shade * 0.25f);
-    DrawTextRaw(text, x, y, scale, shade);
+                          float shade, bool shadow, float cr, float cg, float cb) {
+    if (shadow) DrawTextRaw(text, x + scale, y + scale, scale, shade, cr * 0.25f, cg * 0.25f, cb * 0.25f);
+    DrawTextRaw(text, x, y, scale, shade, cr, cg, cb);
 }
 
 void GuiRenderer::DrawTextCentered(const std::string& text, float cx, float y, float scale,
-                                  float shade, bool shadow) {
-    DrawText(text, cx - TextWidth(text, scale) * 0.5f, y, scale, shade, shadow);
+                                  float shade, bool shadow, float cr, float cg, float cb) {
+    DrawText(text, cx - TextWidth(text, scale) * 0.5f, y, scale, shade, shadow, cr, cg, cb);
 }
 
 void GuiRenderer::Flush(RenderContext& rc) {
@@ -185,30 +202,33 @@ void MenuSystem::DrawButton(GuiRenderer& ui, const Button& b, int mouseX, int mo
                        mouseY >= b.y && mouseY < b.y + b.h;
     const GuiTexture* tex = !b.enabled ? &ui.texButtonDisabled : (hover ? &ui.texButtonHi : &ui.texButton);
     ui.DrawQuad(tex, b.x, b.y, b.w, b.h, 0, 0, 1, 1, 15);
-    ui.DrawTextCentered(b.label, b.x + b.w * 0.5f, b.y + (b.h - 16) * 0.5f, 2,
-                        b.enabled ? 14.0f : 7.0f, true);
+    float cr = 0.878f, cg = 0.878f, cb = 0.878f;       // 0xE0E0E0
+    if (!b.enabled) { cr = cg = cb = 0.627f; }          // 0xA0A0A0
+    else if (hover) { cr = 1.0f; cg = 1.0f; cb = 0.627f; } // 0xFFFFA0
+    ui.DrawTextCentered(b.label, b.x + b.w * 0.5f, b.y + (b.h - 16) * 0.5f, 2, 15, true, cr, cg, cb);
 }
 
 void MenuSystem::Draw(GuiRenderer& ui, Screen screen, const Settings& settings,
-                      int mouseX, int mouseY) {
+                      int mouseX, int mouseY, const std::string& splash, float timeSec) {
     mButtons.clear();
     const float cx = SCREEN_W * 0.5f;
     char label[96];
 
     if (screen == Screen::Title) {
-        ui.DrawQuad(&ui.texDirt, 0, 0, SCREEN_W, SCREEN_H, 0, 0,
-                    SCREEN_W / 64.0f, SCREEN_H / 64.0f, 8);
-        ui.DrawSprite(&ui.texLogo, cx - ui.texLogo.w, 30, 2, 15);
-        mButtons.push_back({cx - 200, 240, 400, 40, "Singleplayer", ACT_SINGLEPLAYER, true});
-        mButtons.push_back({cx - 200, 288, 400, 40, "Multiplayer", ACT_NONE, false});
-        mButtons.push_back({cx - 200, 336, 400, 40, "Options...", ACT_OPTIONS, true});
-        mButtons.push_back({cx - 200, 384, 400, 40, "Quit Game", ACT_QUIT, true});
+        if (ui.texPanoramaOverlay.srv)
+            ui.DrawQuad(&ui.texPanoramaOverlay, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+        ui.DrawSprite(&ui.texLogo, cx - ui.texLogo.w * 0.25f, 40, 0.5f, 15);
+        ui.DrawSprite(&ui.texEdition, cx - ui.texEdition.w * 0.5f, 40 + ui.texLogo.h * 0.5f + 2, 1, 15);
+        const float pulse = 2.0f * (1.0f + 0.06f * sinf(timeSec * 6.0f));
+        ui.DrawTextCentered(splash, cx + 185, 150, pulse, 15, true, 1, 1, 0);
+        mButtons.push_back({cx - 200, 288, 400, 40, "Singleplayer", ACT_SINGLEPLAYER, true});
+        mButtons.push_back({cx - 200, 336, 400, 40, "Multiplayer", ACT_NONE, false});
+        mButtons.push_back({cx - 200, 456, 196, 40, "Options...", ACT_OPTIONS, true});
+        mButtons.push_back({cx + 4, 456, 196, 40, "Quit Game", ACT_QUIT, true});
         ui.DrawText("Minecraft Potato Edition (fan project)", 4, SCREEN_H - 20, 2, 15, true);
         const char* tag = "DX10 / Feature Level 10_0";
         ui.DrawText(tag, SCREEN_W - ui.TextWidth(tag, 2) - 4, SCREEN_H - 20, 2, 15, true);
     } else if (screen == Screen::Options) {
-        ui.DrawQuad(&ui.texDirt, 0, 0, SCREEN_W, SCREEN_H, 0, 0,
-                    SCREEN_W / 64.0f, SCREEN_H / 64.0f, 5);
         ui.DrawTextCentered("Options", cx, 30, 2, 15, true);
         snprintf(label, sizeof(label), "Render Distance: %d chunks", settings.renderDistance);
         mButtons.push_back({cx - 155, 110, 310, 40, label, ACT_CYCLE_RD, true});
@@ -220,10 +240,18 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, const Settings& settings,
         mButtons.push_back({cx - 155, 260, 310, 40, label, ACT_TOGGLE_SOUND, true});
         mButtons.push_back({cx - 155, 330, 310, 40, "Done", ACT_OPTIONS_DONE, true});
     } else if (screen == Screen::Pause) {
+        ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
         ui.DrawTextCentered("Game Menu", cx, 60, 2, 15, true);
-        mButtons.push_back({cx - 200, 200, 400, 40, "Back to Game", ACT_RESUME, true});
-        mButtons.push_back({cx - 200, 248, 400, 40, "Options...", ACT_OPTIONS, true});
-        mButtons.push_back({cx - 200, 296, 400, 40, "Quit to Title", ACT_QUIT_TO_TITLE, true});
+        mButtons.push_back({cx - 200, 180, 400, 40, "Back to Game", ACT_RESUME, true});
+        mButtons.push_back({cx - 200, 228, 196, 40, "Options...", ACT_OPTIONS, true});
+        mButtons.push_back({cx + 4, 228, 196, 40, "Advancements", ACT_NONE, false});
+        mButtons.push_back({cx - 200, 276, 400, 40, "Quit to Title", ACT_QUIT_TO_TITLE, true});
+    } else if (screen == Screen::Death) {
+        ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15, 1.0f, 0.25f, 0.2f);
+        ui.DrawTextCentered("You died!", cx, 120, 3, 15, true);
+        ui.DrawTextCentered("Score: 0", cx, 200, 2, 15, true, 1, 1, 0);
+        mButtons.push_back({cx - 200, 280, 400, 40, "Respawn", ACT_RESPAWN, true});
+        mButtons.push_back({cx - 200, 328, 400, 40, "Title Screen", ACT_QUIT_TO_TITLE, true});
     }
 
     for (const Button& b : mButtons) DrawButton(ui, b, mouseX, mouseY);
@@ -243,26 +271,119 @@ int MenuSystem::HitTest(int mouseX, int mouseY) const {
 // HUD
 // ---------------------------------------------------------------------------
 
-void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot, const std::string& actionBar) {
-    const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
-    ui.DrawSprite(&ui.texCrosshair, cx - 15, cy - 15, 2, 15);
-
-    // 1.9+ attack recharge indicator under the crosshair.
-    if (attackStrength < 1.0f) {
-        ui.DrawQuad(&ui.texWhite, cx - 18, cy + 24, 36, 4, 0, 0, 1, 1, 3);
-        ui.DrawQuad(&ui.texWhite, cx - 18, cy + 24, 36 * attackStrength, 4, 0, 0, 1, 1, 15);
-    }
-
+void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar) {
+    const float cx = SCREEN_W * 0.5f;
     const float hotbarX = cx - 182, hotbarY = SCREEN_H - 44.0f;
     ui.DrawSprite(&ui.texHotbar, hotbarX, hotbarY, 2, 15);
     ui.DrawSprite(&ui.texHotbarSel, hotbarX + selectedSlot * 40 - 2, hotbarY - 2, 2, 15);
     for (int i = 0; i < 9; ++i) {
-        const GuiTexture& icon = ui.texBlockIcon[HOTBAR_BLOCKS[i]];
+        const GuiTexture& icon = ui.texBlockIcon[hotbar[i]];
         ui.DrawSprite(&icon, hotbarX + i * 40 + 4, hotbarY + 6, 2, 15);
     }
-    if (!actionBar.empty()) {
-        ui.DrawTextCentered(actionBar, cx, hotbarY - 26, 2, 15, true);
+}
+
+void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
+             const uint8_t* hotbar, int health, int hunger, const std::string& actionBar) {
+    const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
+    ui.DrawSprite(&ui.texCrosshair, cx - 15, cy - 15, 2, 15);
+
+    // 1.9+ attack recharge indicator under the crosshair (hidden when full).
+    if (attackStrength < 1.0f) {
+        ui.DrawSprite(&ui.texAttackBg, cx - 16, cy + 22, 2, 15);
+        ui.DrawQuad(&ui.texAttackProgress, cx - 16, cy + 22, 32 * attackStrength, 8,
+                    0, 0, attackStrength, 1, 15);
     }
+
+    const float rowY = SCREEN_H - 78.0f;
+    for (int i = 0; i < 10; ++i) {
+        const float hx = cx - 182 + i * 16;
+        ui.DrawSprite(&ui.texHeart[0], hx, rowY, 2, 15);
+        if (health >= i * 2 + 2) ui.DrawSprite(&ui.texHeart[1], hx, rowY, 2, 15);
+        else if (health == i * 2 + 1) ui.DrawSprite(&ui.texHeart[2], hx, rowY, 2, 15);
+        const float fx = cx + 182 - 18 - i * 16;
+        ui.DrawSprite(&ui.texFood[0], fx, rowY, 2, 15);
+        if (hunger >= i * 2 + 2) ui.DrawSprite(&ui.texFood[1], fx, rowY, 2, 15);
+        else if (hunger == i * 2 + 1) ui.DrawSprite(&ui.texFood[2], fx, rowY, 2, 15);
+    }
+
+    DrawHotbar(ui, selectedSlot, hotbar);
+    if (!actionBar.empty()) {
+        ui.DrawTextCentered(actionBar, cx, SCREEN_H - 70.0f, 2, 15, true);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Creative inventory picker
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr int INV_COLS = 9;
+constexpr int INV_CELL = 40;
+constexpr int INV_ROWS = (BLOCK_COUNT - 1 + INV_COLS - 1) / INV_COLS;
+constexpr float INV_PAD = 12;
+constexpr float INV_W = INV_COLS * INV_CELL + INV_PAD * 2;
+constexpr float INV_TITLE_H = 40;
+constexpr float INV_HINT_H = 36;
+constexpr float INV_H = INV_TITLE_H + INV_ROWS * INV_CELL + INV_HINT_H;
+constexpr float INV_X = (SCREEN_W - INV_W) * 0.5f;
+constexpr float INV_Y = (SCREEN_H - INV_H) * 0.5f - 20;
+constexpr float INV_GX = INV_X + INV_PAD;
+constexpr float INV_GY = INV_Y + INV_TITLE_H;
+
+void CellRect(int block, float& x, float& y) {
+    const int i = block - 1;
+    x = INV_GX + (i % INV_COLS) * INV_CELL;
+    y = INV_GY + (i / INV_COLS) * INV_CELL;
+}
+} // namespace
+
+int InventoryHitTest(int mouseX, int mouseY) {
+    for (int b = 1; b < BLOCK_COUNT; ++b) {
+        float x, y;
+        CellRect(b, x, y);
+        if (mouseX >= x && mouseX < x + INV_CELL && mouseY >= y && mouseY < y + INV_CELL)
+            return b;
+    }
+    return -1;
+}
+
+void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, const uint8_t* hotbar) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+
+    // Beveled gray panel (light top/left, dark bottom/right).
+    ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, INV_W, INV_H, 0, 0, 1, 1, 15, 0.78f, 0.78f, 0.78f);
+    ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, INV_W, 2, 0, 0, 1, 1, 15, 1, 1, 1);
+    ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 1, 1, 1);
+    ui.DrawQuad(&ui.texWhite, INV_X, INV_Y + INV_H - 2, INV_W, 2, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
+    ui.DrawQuad(&ui.texWhite, INV_X + INV_W - 2, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
+    ui.DrawText("Creative Inventory", INV_X + INV_PAD, INV_Y + 12, 2, 15, false, 0.25f, 0.25f, 0.25f);
+
+    const int hovered = InventoryHitTest(mouseX, mouseY);
+    for (int b = 1; b < BLOCK_COUNT; ++b) {
+        float x, y;
+        CellRect(b, x, y);
+        ui.DrawQuad(&ui.texWhite, x + 2, y + 2, INV_CELL - 4, INV_CELL - 4, 0, 0, 1, 1, 15, 0.55f, 0.55f, 0.55f);
+        ui.DrawQuad(&ui.texWhite, x + 2, y + 2, INV_CELL - 4, 1, 0, 0, 1, 1, 15, 0.35f, 0.35f, 0.35f);
+        ui.DrawQuad(&ui.texWhite, x + 2, y + 2, 1, INV_CELL - 4, 0, 0, 1, 1, 15, 0.35f, 0.35f, 0.35f);
+        if (b == hovered)
+            ui.DrawQuad(&ui.texHotbarSel, x, y, INV_CELL, INV_CELL, 0, 0, 1, 1, 15);
+        ui.DrawSprite(&ui.texBlockIcon[b], x + 4, y + 4, 2, 15);
+    }
+
+    ui.DrawText("Click a block to select it", INV_X + INV_PAD, INV_Y + INV_H - 26, 2, 15, false, 0.3f, 0.3f, 0.3f);
+
+    if (hovered > 0) {
+        std::string name = BLOCK_DEFS[hovered].name;
+        for (char& c : name) if (c == '_') c = ' ';
+        const float tw = ui.TextWidth(name, 2);
+        float tx = mouseX + 16, ty = mouseY - 12;
+        if (tx + tw + 12 > SCREEN_W) tx = SCREEN_W - tw - 12;
+        if (ty < 4) ty = 4;
+        ui.DrawQuad(&ui.texBlack, tx - 6, ty - 6, tw + 12, 28, 0, 0, 1, 1, 15, 0.1f, 0.05f, 0.2f);
+        ui.DrawText(name, tx, ty, 2, 15, true);
+    }
+
+    DrawHotbar(ui, selectedSlot, hotbar);
 }
 
 } // namespace potato

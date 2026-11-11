@@ -2,9 +2,11 @@
 #include <windowsx.h>
 #include <objbase.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include "engine.h"
 #include "renderer.h"
 #include "assets.h"
@@ -20,6 +22,7 @@ struct GpuChunk {
     ID3D10Buffer* vb = nullptr;
     ID3D10Buffer* ib = nullptr;
     UINT indexCount = 0;
+    UINT opaqueIndexCount = 0; // [0,opaque) solid; [opaque,indexCount) liquid
 };
 
 template <typename T> static void SafeRelease(T*& p) {
@@ -27,10 +30,13 @@ template <typename T> static void SafeRelease(T*& p) {
 }
 
 static InputState gInput;
+static HWND gHwnd = nullptr;
 static Screen gScreen = Screen::Title;
 static Screen gOptionsReturn = Screen::Title;
 static Settings gSettings;
 static FlyCamera gCamera;
+static PlayerBody gBody;
+static SurvivalState gSurvival;
 static AttackCooldown gCooldown;
 static PlayerState gPlayer;
 static ParticleSystem gParticles;
@@ -46,11 +52,27 @@ static std::unordered_map<uint64_t, GpuChunk> gGpu;
 static uint64_t gSweepCursor = 0;
 static ID3D10ShaderResourceView* gParticleSRV = nullptr;
 static ID3D10Buffer* gParticleVB = nullptr;
+static ID3D10ShaderResourceView* gWhiteSRV = nullptr;
+static ID3D10Buffer* gOutlineVB = nullptr;
 static int gHotbarSlot = 0;
+static uint8_t gHotbar[9];
 static std::string gActionBar;
 static float gActionBarUntil = 0;
 static float gNowMs = 0;
+static float gTimeSec = 0;
+static float gFps = 0;
 static bool gRunning = true;
+static bool gDebug = false;
+static bool gSpawned = false;
+static float gFallStartY = 0;
+static float gLastSpaceMs = -1000;
+static bool gHaveTarget = false;
+static int gTargetX = 0, gTargetY = 0, gTargetZ = 0;
+static std::string gSplash = "Potato Edition!";
+
+static bool IsWorldScreen(Screen s) {
+    return s == Screen::Game || s == Screen::Pause || s == Screen::Inventory || s == Screen::Death;
+}
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
@@ -114,6 +136,15 @@ static void SetScreen(HWND hwnd, Screen s) {
     }
 }
 
+static void StartGame() {
+    gSurvival = SurvivalState{};
+    gBody = PlayerBody{};
+    gBody.flying = false;
+    gSpawned = false;
+    gActionBar.clear();
+    SetScreen(gHwnd, Screen::Game);
+}
+
 static int ResolveTile(const char* tex) {
     if (!tex || !tex[0]) return 0;
     const int t = gAtlas.FindTile(std::string("minecraft/textures/block/") + tex + ".png");
@@ -126,24 +157,27 @@ static void ApplySettings() {
     gSound.SetEnabled(gSettings.sound);
 }
 
-static void HandleMenuAction(HWND hwnd, int action) {
+static void HandleMenuAction(int action) {
     switch (action) {
         case ACT_SINGLEPLAYER:
+        case ACT_RESPAWN:
+            StartGame();
+            break;
         case ACT_RESUME:
-            SetScreen(hwnd, Screen::Game);
+            SetScreen(gHwnd, Screen::Game);
             break;
         case ACT_OPTIONS:
             gOptionsReturn = gScreen;
-            SetScreen(hwnd, Screen::Options);
+            SetScreen(gHwnd, Screen::Options);
             break;
         case ACT_OPTIONS_DONE:
-            SetScreen(hwnd, gOptionsReturn);
+            SetScreen(gHwnd, gOptionsReturn);
             break;
         case ACT_QUIT:
             gRunning = false;
             break;
         case ACT_QUIT_TO_TITLE:
-            SetScreen(hwnd, Screen::Title);
+            SetScreen(gHwnd, Screen::Title);
             break;
         case ACT_CYCLE_RD:
             gSettings.renderDistance += 2;
@@ -175,13 +209,14 @@ static void HandleMenuAction(HWND hwnd, int action) {
 static void UploadMeshes() {
     uint64_t key;
     MeshData md;
-    int budget = MAX_UPLOADS_PER_FRAME; // hard ceiling: no GPU stall spikes
+    int budget = MAX_UPLOADS_PER_FRAME;
     while (budget-- > 0 && gWorld->PopUpload(key, md)) {
-        if (!gWorld->HasChunk(KeyCX(key), KeyCZ(key))) continue; // evicted in flight
+        if (!gWorld->HasChunk(KeyCX(key), KeyCZ(key))) continue;
         GpuChunk& gc = gGpu[key];
         SafeRelease(gc.vb);
         SafeRelease(gc.ib);
         gc.indexCount = 0;
+        gc.opaqueIndexCount = 0;
         if (md.vertices.empty()) continue;
         D3D10_BUFFER_DESC vd = {};
         vd.ByteWidth = UINT(md.vertices.size() * sizeof(MeshVertex));
@@ -201,10 +236,8 @@ static void UploadMeshes() {
             continue;
         }
         gc.indexCount = UINT(md.indices.size());
+        gc.opaqueIndexCount = md.opaqueIndexCount;
     }
-    // Time-sliced GPU cleanup: examine at most MAX_GPU_SWEEP_PER_FRAME entries
-    // per frame, resuming from the cursor key. Erase only invalidates the
-    // erased iterator, and a rehash just restarts the sweep at begin().
     auto it = gGpu.begin();
     if (gSweepCursor != 0) {
         const auto resume = gGpu.find(gSweepCursor);
@@ -222,14 +255,54 @@ static void UploadMeshes() {
         }
         ++checks;
     }
-    if (it == gGpu.end()) gSweepCursor = 0; // full wrap: restart next frame
+    if (it == gGpu.end()) gSweepCursor = 0;
 }
 
 static void HandleGameFrame(float dt) {
     gCamera.Look(gInput.mouseDX, gInput.mouseDY);
-    gCamera.Update(gInput, dt);
+    const float cp = cosf(gCamera.pitch);
+    gCamera.fwdX = sinf(gCamera.yaw) * cp;
+    gCamera.fwdY = sinf(gCamera.pitch);
+    gCamera.fwdZ = -cosf(gCamera.yaw) * cp;
+    gCamera.rightX = cosf(gCamera.yaw);
+    gCamera.rightZ = sinf(gCamera.yaw);
+
+    auto getBlock = [&](int x, int y, int z) -> uint8_t { return gWorld->GetBlock(x, y, z); };
+
+    if (!gSpawned) {
+        gWorld->Update(8.5f, 8.5f);
+        const int sy = gWorld->SurfaceY(8, 8);
+        if (sy < 0) return; // spawn chunk still generating
+        gBody.x = 8.5f; gBody.z = 8.5f; gBody.y = float(sy + 1);
+        gBody.vx = gBody.vy = gBody.vz = 0;
+        gBody.flying = false;
+        gFallStartY = gBody.y;
+        gSpawned = true;
+    }
+
+    // Vanilla creative double-tap-space toggles flight.
+    if (gInput.KeyPressed(VK_SPACE)) {
+        if (gNowMs - gLastSpaceMs < 300.0f) { gBody.flying = !gBody.flying; gBody.vy = 0; }
+        gLastSpaceMs = gNowMs;
+    }
+
+    const bool wasGround = gBody.onGround;
+    gBody.Update(gInput, dt, gCamera, getBlock);
+    if (gBody.onGround) {
+        if (!wasGround && !gBody.flying && !gBody.inWater) {
+            const float dist = gFallStartY - gBody.y;
+            if (dist > 0) gSurvival.OnLand(dist);
+        }
+        gFallStartY = gBody.y;
+    } else if (gBody.y > gFallStartY) {
+        gFallStartY = gBody.y;
+    }
+    const bool moving = (gBody.vx * gBody.vx + gBody.vz * gBody.vz) > 0.01f;
+    gSurvival.Update(dt, moving, gBody.sprinting);
+    if (gSurvival.dead) { SetScreen(gHwnd, Screen::Death); return; }
+
     gWorld->Update(gCamera.x, gCamera.z);
-    gPlayer.UpdateCombat(gCooldown, gNowMs); // QPC-driven charge indicator
+    gPlayer.UpdateCombat(gCooldown, gNowMs);
     gParticles.Update(dt);
     gSound.SetListener(gCamera.x, gCamera.y, gCamera.z,
                        gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ,
@@ -241,20 +314,20 @@ static void HandleGameFrame(float dt) {
     if (gInput.wheel != 0) {
         gHotbarSlot = (gHotbarSlot + (gInput.wheel > 0 ? -1 : 1) + 9) % 9;
     }
+    if (gInput.KeyPressed('E')) { SetScreen(gHwnd, Screen::Inventory); return; }
+    if (gInput.KeyPressed(VK_F3)) gDebug = !gDebug;
 
-    auto getBlock = [&](int x, int y, int z) -> uint8_t { return gWorld->GetBlock(x, y, z); };
     int hx, hy, hz, nx, ny, nz;
+    gHaveTarget = RaycastDDA(getBlock, gCamera.x, gCamera.y, gCamera.z,
+                             gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 5.0f,
+                             hx, hy, hz, nx, ny, nz);
+    if (gHaveTarget) { gTargetX = hx; gTargetY = hy; gTargetZ = hz; }
 
     if (gInput.leftClick) {
-        if (RaycastDDA(getBlock, gCamera.x, gCamera.y, gCamera.z,
-                       gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 5.0f,
-                       hx, hy, hz, nx, ny, nz)) {
+        if (gHaveTarget) {
             const uint8_t old = gWorld->GetBlock(hx, hy, hz);
-            // 1.9+ combat: damage scales with recharge; spam clicking is weak.
             const float strength = gCooldown.Strength(gNowMs);
             float dmg = gCooldown.Swing(gNowMs);
-            // Vanilla crit gate: fully charged (strength > 0.9) AND falling.
-            // Short-cycled clicks get the damage penalty and no particle sweep.
             const bool crit = strength > 0.9f && gCamera.vy < 0;
             if (crit) {
                 dmg *= 1.5f;
@@ -271,29 +344,189 @@ static void HandleGameFrame(float dt) {
             gActionBar = buf;
             gActionBarUntil = gNowMs + 1000;
         } else {
-            gCooldown.Swing(gNowMs); // whiff still resets the cooldown (vanilla rule)
+            gCooldown.Swing(gNowMs);
             gSound.Play(SND_HIT);
         }
     }
 
-    if (gInput.rightClick) {
-        if (RaycastDDA(getBlock, gCamera.x, gCamera.y, gCamera.z,
-                       gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 5.0f,
-                       hx, hy, hz, nx, ny, nz) && (nx || ny || nz)) {
-            const int px = hx + nx, py = hy + ny, pz = hz + nz;
-            if (py >= 0 && py < CHUNK_Y && gWorld->GetBlock(px, py, pz) == BLOCK_AIR) {
-                const bool insideCamera =
-                    px + 1 > gCamera.x - 0.3f && px < gCamera.x + 0.3f &&
-                    pz + 1 > gCamera.z - 0.3f && pz < gCamera.z + 0.3f &&
-                    py + 1 > gCamera.y - 1.6f && py < gCamera.y + 0.2f;
-                if (!insideCamera) {
-                    const uint8_t block = HOTBAR_BLOCKS[gHotbarSlot];
-                    gWorld->SetBlock(px, py, pz, block);
-                    gSound.PlayAt(SoundEngine::BlockSound(block),
-                                  float(px) + 0.5f, float(py) + 0.5f, float(pz) + 0.5f);
-                }
+    if (gInput.rightClick && gHaveTarget && (nx || ny || nz)) {
+        const int px = hx + nx, py = hy + ny, pz = hz + nz;
+        if (py >= 0 && py < CHUNK_Y && gWorld->GetBlock(px, py, pz) == BLOCK_AIR) {
+            const bool insideBody =
+                px + 1 > gBody.x - PlayerBody::HALF && px < gBody.x + PlayerBody::HALF &&
+                pz + 1 > gBody.z - PlayerBody::HALF && pz < gBody.z + PlayerBody::HALF &&
+                py + 1 > gBody.y && py < gBody.y + PlayerBody::HEIGHT;
+            if (!insideBody) {
+                const uint8_t block = gHotbar[gHotbarSlot];
+                gWorld->SetBlock(px, py, pz, block);
+                gSound.PlayAt(SoundEngine::BlockSound(block),
+                              float(px) + 0.5f, float(py) + 0.5f, float(pz) + 0.5f);
             }
         }
+    }
+}
+
+static void DrawSkybox() {
+    const float yaw = gTimeSec * 0.06f;
+    const XMMATRIX view = XMMatrixMultiply(XMMatrixRotationY(yaw), XMMatrixRotationX(-0.12f));
+    const XMMATRIX proj = XMMatrixPerspectiveFovRH(
+        1.22f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 100.0f);
+    SetViewProj(gRC, XMMatrixMultiply(view, proj));
+    gRC.device->PSSetShader(gRC.psSky);
+    gRC.device->PSSetShaderResources(1, 1, &gRC.panoramaSRV);
+    gRC.device->OMSetDepthStencilState(gRC.depthOff, 0);
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gRC.skyVB, &stride, &offset);
+    gRC.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    gRC.device->Draw(36, 0);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+}
+
+static void DrawBlockOutline() {
+    if (!gHaveTarget || !gOutlineVB || !gWhiteSRV) return;
+    const float e = 0.003f;
+    const float x0 = gTargetX - e, y0 = gTargetY - e, z0 = gTargetZ - e;
+    const float x1 = gTargetX + 1 + e, y1 = gTargetY + 1 + e, z1 = gTargetZ + 1 + e;
+    const float c[8][3] = {
+        {x0,y0,z0},{x1,y0,z0},{x1,y1,z0},{x0,y1,z0},
+        {x0,y0,z1},{x1,y0,z1},{x1,y1,z1},{x0,y1,z1},
+    };
+    static const int E[24] = {0,1,1,2,2,3,3,0, 4,5,5,6,6,7,7,4, 0,4,1,5,2,6,3,7};
+    MeshVertex v[24];
+    for (int i = 0; i < 24; ++i) {
+        MeshVertex& m = v[i];
+        m.x = c[E[i]][0]; m.y = c[E[i]][1]; m.z = c[E[i]][2];
+        m.tu = m.tv = m.u = m.v = 0; m.light = 15;
+        m.cr = m.cg = m.cb = 0; // black selection box
+    }
+    void* data = nullptr;
+    if (FAILED(gOutlineVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+    memcpy(data, v, sizeof(v));
+    gOutlineVB->Unmap();
+    gRC.device->PSSetShader(gRC.psUI);
+    gRC.device->PSSetShaderResources(0, 1, &gWhiteSRV);
+    gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gOutlineVB, &stride, &offset);
+    gRC.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_LINELIST);
+    gRC.device->Draw(24, 0);
+    gRC.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+}
+
+static void DrawWorld() {
+    const XMVECTOR eye = XMVectorSet(gCamera.x, gCamera.y, gCamera.z, 1);
+    const XMVECTOR at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
+    const XMMATRIX view = XMMatrixLookAtRH(eye, at, XMVectorSet(0, 1, 0, 0));
+    const XMMATRIX proj = XMMatrixPerspectiveFovRH(
+        gSettings.fov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 1000.0f);
+    const XMMATRIX vp = XMMatrixMultiply(view, proj);
+    Frustum frustum;
+    ExtractFrustum(vp, frustum);
+    SetViewProj(gRC, vp);
+    gRC.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    gRC.device->PSSetShader(gRC.psWorld);
+    gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+
+    // Opaque + cutout pass.
+    for (const auto& kv : gGpu) {
+        const GpuChunk& gc = kv.second;
+        if (!gc.vb || gc.opaqueIndexCount == 0) continue;
+        const float minX = float(KeyCX(kv.first) * CHUNK_X);
+        const float minZ = float(KeyCZ(kv.first) * CHUNK_Z);
+        if (!AABBInFrustum(frustum, minX, 0, minZ, minX + CHUNK_X, float(CHUNK_Y), minZ + CHUNK_Z)) continue;
+        gRC.device->IASetVertexBuffers(0, 1, &gc.vb, &stride, &offset);
+        gRC.device->IASetIndexBuffer(gc.ib, DXGI_FORMAT_R32_UINT, 0);
+        gRC.device->DrawIndexed(gc.opaqueIndexCount, 0, 0);
+    }
+    // Liquid pass: alpha blended, depth-tested but never writing depth.
+    gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+    gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
+    for (const auto& kv : gGpu) {
+        const GpuChunk& gc = kv.second;
+        if (!gc.vb || gc.indexCount <= gc.opaqueIndexCount) continue;
+        const float minX = float(KeyCX(kv.first) * CHUNK_X);
+        const float minZ = float(KeyCZ(kv.first) * CHUNK_Z);
+        if (!AABBInFrustum(frustum, minX, 0, minZ, minX + CHUNK_X, float(CHUNK_Y), minZ + CHUNK_Z)) continue;
+        gRC.device->IASetVertexBuffers(0, 1, &gc.vb, &stride, &offset);
+        gRC.device->IASetIndexBuffer(gc.ib, DXGI_FORMAT_R32_UINT, 0);
+        gRC.device->DrawIndexed(gc.indexCount - gc.opaqueIndexCount, gc.opaqueIndexCount, 0);
+    }
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+
+    // Crit particle sweep.
+    const auto& parts = gParticles.List();
+    if (!parts.empty() && gParticleSRV && gParticleVB) {
+        gRC.device->PSSetShader(gRC.psUI);
+        gRC.device->PSSetShaderResources(0, 1, &gParticleSRV);
+        gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
+        gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+        MeshVertex verts[MAX_PARTICLES * 6];
+        size_t n = 0;
+        for (const ParticleSystem::Particle& p : parts) {
+            const float s = 0.15f;
+            const float rx = gCamera.rightX * s, rz = gCamera.rightZ * s;
+            const float shade = 15.0f * (p.life / p.maxLife);
+            const float x0 = p.x - rx, z0 = p.z - rz;
+            const float x1 = p.x + rx, z1 = p.z + rz;
+            const float y0 = p.y - s, y1 = p.y + s;
+            const MeshVertex q[6] = {
+                {x0, y1, z0, 0, 0, 0, 0, shade, 1, 1, 1},
+                {x1, y1, z1, 0, 0, 1, 0, shade, 1, 1, 1},
+                {x1, y0, z1, 0, 0, 1, 1, shade, 1, 1, 1},
+                {x0, y1, z0, 0, 0, 0, 0, shade, 1, 1, 1},
+                {x1, y0, z1, 0, 0, 1, 1, shade, 1, 1, 1},
+                {x0, y0, z0, 0, 0, 0, 1, shade, 1, 1, 1},
+            };
+            memcpy(verts + n, q, sizeof(q));
+            n += 6;
+        }
+        void* data = nullptr;
+        if (SUCCEEDED(gParticleVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) {
+            memcpy(data, verts, n * sizeof(MeshVertex));
+            gParticleVB->Unmap();
+            const UINT pstride = UINT(sizeof(MeshVertex)), poffset = 0;
+            gRC.device->IASetVertexBuffers(0, 1, &gParticleVB, &pstride, &poffset);
+            gRC.device->Draw(UINT(n), 0);
+        }
+        gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+        gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+    }
+
+    if (gScreen == Screen::Game) DrawBlockOutline();
+}
+
+static void DrawDebug() {
+    char line[160];
+    gGui.DrawQuad(&gGui.texBlack, 2, 2, 360, 176, 0, 0, 1, 1, 15);
+    int y = 6;
+    auto row = [&](const char* s) { gGui.DrawText(s, 6, float(y), 2, 15, true); y += 20; };
+    row("Minecraft Potato Edition (DX10 / FL 10_0)");
+    snprintf(line, sizeof(line), "%.0f fps  (%d chunks, %zu gpu)", double(gFps),
+             int(gWorld->ChunkCount()), gGpu.size());
+    row(line);
+    snprintf(line, sizeof(line), "XYZ: %.2f / %.2f / %.2f", double(gBody.x), double(gBody.y), double(gBody.z));
+    row(line);
+    snprintf(line, sizeof(line), "Chunk: %d %d  RD: %d", FloorDiv16(int(gBody.x)), FloorDiv16(int(gBody.z)),
+             gSettings.renderDistance);
+    row(line);
+    snprintf(line, sizeof(line), "Facing: %.1f / %.1f  %s", double(gCamera.yaw * 57.2958f),
+             double(gCamera.pitch * 57.2958f), gBody.flying ? "flying" : (gBody.inWater ? "swimming" : "walking"));
+    row(line);
+    snprintf(line, sizeof(line), "HP: %d  Hunger: %d  Slot: %s", gSurvival.health, gSurvival.hunger,
+             BLOCK_DEFS[gHotbar[gHotbarSlot]].name);
+    row(line);
+    if (gHaveTarget) {
+        snprintf(line, sizeof(line), "Target: %d %d %d (%s)", gTargetX, gTargetY, gTargetZ,
+                 BLOCK_DEFS[gWorld->GetBlock(gTargetX, gTargetY, gTargetZ)].name);
+        row(line);
+    } else {
+        row("Target: -");
     }
 }
 
@@ -302,88 +535,46 @@ static void RenderFrame() {
     gRC.device->ClearRenderTargetView(gRC.rtv, sky);
     gRC.device->ClearDepthStencilView(gRC.dsv, D3D10_CLEAR_DEPTH, 1.0f, 0);
 
-    if (gScreen == Screen::Game || gScreen == Screen::Pause) {
-        const XMVECTOR eye = XMVectorSet(gCamera.x, gCamera.y, gCamera.z, 1);
-        const XMVECTOR at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
-        const XMMATRIX view = XMMatrixLookAtRH(eye, at, XMVectorSet(0, 1, 0, 0));
-        const XMMATRIX proj = XMMatrixPerspectiveFovRH(
-            gSettings.fov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 1000.0f);
-        const XMMATRIX vp = XMMatrixMultiply(view, proj);
-        Frustum frustum;
-        ExtractFrustum(vp, frustum);
-        SetViewProj(gRC, vp);
-        gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
-        gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-        gRC.device->PSSetShader(gRC.psWorld);
-        gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
-        const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
-        for (const auto& kv : gGpu) {
-            const GpuChunk& gc = kv.second;
-            if (!gc.vb || gc.indexCount == 0) continue;
-            const float minX = float(KeyCX(kv.first) * CHUNK_X);
-            const float minZ = float(KeyCZ(kv.first) * CHUNK_Z);
-            if (!AABBInFrustum(frustum, minX, 0, minZ,
-                               minX + CHUNK_X, float(CHUNK_Y), minZ + CHUNK_Z)) continue;
-            gRC.device->IASetVertexBuffers(0, 1, &gc.vb, &stride, &offset);
-            gRC.device->IASetIndexBuffer(gc.ib, DXGI_FORMAT_R32_UINT, 0);
-            gRC.device->DrawIndexed(gc.indexCount, 0, 0);
-        }
-
-        // Crit particle sweep: camera-facing quads, depth-tested but never
-        // writing depth, alpha-blended with life fade. PSMainUI samples any
-        // bound sprite with plain 0..1 UVs, so no extra shader is needed.
-        const auto& parts = gParticles.List();
-        if (!parts.empty() && gParticleSRV && gParticleVB) {
-            gRC.device->PSSetShader(gRC.psUI);
-            gRC.device->PSSetShaderResources(0, 1, &gParticleSRV);
-            gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
-            gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
-            MeshVertex verts[MAX_PARTICLES * 6];
-            size_t n = 0;
-            for (const ParticleSystem::Particle& p : parts) {
-                const float s = 0.15f;
-                const float rx = gCamera.rightX * s, rz = gCamera.rightZ * s;
-                const float shade = 15.0f * (p.life / p.maxLife);
-                const float x0 = p.x - rx, z0 = p.z - rz;
-                const float x1 = p.x + rx, z1 = p.z + rz;
-                const float y0 = p.y - s, y1 = p.y + s;
-                const MeshVertex q[6] = {
-                    {x0, y1, z0, 0, 0, 0, 0, shade},
-                    {x1, y1, z1, 0, 0, 1, 0, shade},
-                    {x1, y0, z1, 0, 0, 1, 1, shade},
-                    {x0, y1, z0, 0, 0, 0, 0, shade},
-                    {x1, y0, z1, 0, 0, 1, 1, shade},
-                    {x0, y0, z0, 0, 0, 0, 1, shade},
-                };
-                memcpy(verts + n, q, sizeof(q));
-                n += 6;
-            }
-            void* data = nullptr;
-            if (SUCCEEDED(gParticleVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) {
-                memcpy(data, verts, n * sizeof(MeshVertex));
-                gParticleVB->Unmap();
-                const UINT pstride = UINT(sizeof(MeshVertex)), poffset = 0;
-                gRC.device->IASetVertexBuffers(0, 1, &gParticleVB, &pstride, &poffset);
-                gRC.device->Draw(UINT(n), 0);
-            }
-            gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-            gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
-        }
+    const bool menuBg = (gScreen == Screen::Title || gScreen == Screen::Options);
+    if (menuBg && gRC.panoramaSRV) {
+        DrawSkybox();
+    } else if (IsWorldScreen(gScreen)) {
+        DrawWorld();
     }
 
-    // Orthographic UI pass: Z-buffer disabled, alpha blend, pixel coordinates.
     const XMMATRIX ortho = XMMatrixOrthographicOffCenterRH(
         0, float(SCREEN_W), float(SCREEN_H), 0, -1, 1);
     SetViewProj(gRC, ortho);
     gGui.BeginFrame();
     if (gScreen == Screen::Game) {
-        DrawHUD(gGui, gPlayer.attackCooldownProgress, gHotbarSlot,
+        DrawHUD(gGui, gPlayer.attackCooldownProgress, gHotbarSlot, gHotbar,
+                gSurvival.health, gSurvival.hunger,
                 gNowMs < gActionBarUntil ? gActionBar : std::string());
+        if (gDebug) DrawDebug();
+    } else if (gScreen == Screen::Inventory) {
+        DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gHotbarSlot, gHotbar);
     } else {
-        gMenu.Draw(gGui, gScreen, gSettings, gInput.mouseX, gInput.mouseY);
+        if (menuBg && !gRC.panoramaSRV) {
+            gGui.DrawQuad(&gGui.texDirt, 0, 0, SCREEN_W, SCREEN_H, 0, 0,
+                          SCREEN_W / 64.0f, SCREEN_H / 64.0f, 8);
+        }
+        gMenu.Draw(gGui, gScreen, gSettings, gInput.mouseX, gInput.mouseY, gSplash, gTimeSec);
     }
     gGui.Flush(gRC);
-    gRC.swapChain->Present(0, 0); // vsync off
+    gRC.swapChain->Present(0, 0);
+}
+
+static void LoadSplash() {
+    std::vector<uint8_t> bytes;
+    if (!gStore.ReadFile("minecraft/texts/splashes.txt", bytes)) return;
+    std::vector<std::string> lines;
+    std::string cur;
+    for (uint8_t b : bytes) {
+        if (b == '\n') { if (!cur.empty()) lines.push_back(cur); cur.clear(); }
+        else if (b != '\r') cur += char(b);
+    }
+    if (!cur.empty()) lines.push_back(cur);
+    if (!lines.empty()) gSplash = lines[size_t(rand()) % lines.size()];
 }
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
@@ -405,10 +596,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                                 CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top,
                                 nullptr, nullptr, hInst, nullptr);
     if (!hwnd) return 1;
+    gHwnd = hwnd;
 
     RAWINPUTDEVICE rid = {};
-    rid.usUsagePage = 0x01; // generic desktop
-    rid.usUsage = 0x02;     // mouse
+    rid.usUsagePage = 0x01;
+    rid.usUsage = 0x02;
     rid.dwFlags = 0;
     rid.hwndTarget = hwnd;
     RegisterRawInputDevices(&rid, 1, sizeof(rid));
@@ -416,36 +608,26 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
     if (!InitRenderer(hwnd, gRC, gShaderSource)) return 1;
 
-    // Asset index: default verified Migurinth path, overridable via --assets <path>.
     std::string assetsPath = DefaultAssetIndexPath();
     const char* flag = strstr(GetCommandLineA(), "--assets");
     if (flag) {
         const char* p = flag + 8;
         while (*p == ' ' || *p == '=') ++p;
         std::string parsed;
-        if (*p == '"') {
-            ++p;
-            while (*p && *p != '"') { parsed += *p; ++p; }
-        } else {
-            while (*p && *p != ' ') { parsed += *p; ++p; }
-        }
+        if (*p == '"') { ++p; while (*p && *p != '"') { parsed += *p; ++p; } }
+        else { while (*p && *p != ' ') { parsed += *p; ++p; } }
         if (!parsed.empty()) assetsPath = parsed;
     }
-
     const bool storeOk = gStore.LoadIndex(assetsPath);
-    // Textures/GUI/font live in the client jar, not the asset index.
+
     std::string jarPath = DefaultClientJarPath();
     const char* jflag = strstr(GetCommandLineA(), "--jar");
     if (jflag) {
         const char* p = jflag + 5;
         while (*p == ' ' || *p == '=') ++p;
         std::string parsed;
-        if (*p == '"') {
-            ++p;
-            while (*p && *p != '"') { parsed += *p; ++p; }
-        } else {
-            while (*p && *p != ' ') { parsed += *p; ++p; }
-        }
+        if (*p == '"') { ++p; while (*p && *p != '"') { parsed += *p; ++p; } }
+        else { while (*p && *p != ' ') { parsed += *p; ++p; } }
         if (!parsed.empty()) jarPath = parsed;
     }
     const bool jarOk = !jarPath.empty() && gStore.LoadJar(jarPath);
@@ -466,9 +648,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
 
     if (!gGui.Init(gRC, gStore)) return 1;
-    gSound.Init(gStore); // optional: silence on failure
+    gSound.Init(gStore);
+    CreatePanorama(gRC, gStore); // optional; null falls back to dirt title
+    LoadSplash();
+    memcpy(gHotbar, HOTBAR_BLOCKS, sizeof(gHotbar));
 
-    // Vanilla crit particle sprite; missing file simply disables the sweep.
     {
         std::vector<uint8_t> bytes, px;
         int pw = 0, ph = 0;
@@ -482,6 +666,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         pbd.BindFlags = D3D10_BIND_VERTEX_BUFFER;
         pbd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
         gRC.device->CreateBuffer(&pbd, nullptr, &gParticleVB);
+
+        const uint8_t white[4] = {255, 255, 255, 255};
+        gWhiteSRV = CreateTextureSRV(gRC, white, 1, 1);
+        D3D10_BUFFER_DESC obd = {};
+        obd.ByteWidth = 24 * UINT(sizeof(MeshVertex));
+        obd.Usage = D3D10_USAGE_DYNAMIC;
+        obd.BindFlags = D3D10_BIND_VERTEX_BUFFER;
+        obd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
+        gRC.device->CreateBuffer(&obd, nullptr, &gOutlineVB);
     }
 
     gWorld = new World(1337, gSettings.renderDistance);
@@ -500,22 +693,33 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (!gRunning) break;
 
         const float dt = clock.Tick();
-        gNowMs = SystemTimeMs(); // raw QPC: combat cooldown never sees clamped dt
+        gNowMs = SystemTimeMs();
+        gTimeSec += dt;
 
         if (gInput.KeyPressed(VK_ESCAPE)) {
             if (gScreen == Screen::Game) SetScreen(hwnd, Screen::Pause);
             else if (gScreen == Screen::Pause) SetScreen(hwnd, Screen::Game);
+            else if (gScreen == Screen::Inventory) SetScreen(hwnd, Screen::Game);
             else if (gScreen == Screen::Options) SetScreen(hwnd, gOptionsReturn);
         }
 
         if (gScreen == Screen::Game) {
             HandleGameFrame(dt);
+        } else if (gScreen == Screen::Inventory) {
+            if (gInput.leftClick) {
+                const int b = InventoryHitTest(gInput.mouseX, gInput.mouseY);
+                if (b > 0) {
+                    gHotbar[gHotbarSlot] = uint8_t(b);
+                    gSound.Play(SND_HIT);
+                }
+            }
         } else if (gInput.leftClick) {
-            HandleMenuAction(hwnd, gMenu.HitTest(gInput.mouseX, gInput.mouseY));
+            HandleMenuAction(gMenu.HitTest(gInput.mouseX, gInput.mouseY));
         }
-        if (gScreen == Screen::Game || gScreen == Screen::Pause) {
+
+        if (IsWorldScreen(gScreen)) {
             UploadMeshes();
-            gWorld->EvictStep(MAX_EVICTS_PER_FRAME); // time-sliced subchunk cleanup
+            gWorld->EvictStep(MAX_EVICTS_PER_FRAME);
         }
 
         RenderFrame();
@@ -523,9 +727,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         ++fpsFrames;
         fpsTimer += dt;
         if (fpsTimer >= 0.5f) {
+            gFps = fpsFrames / fpsTimer;
             char title[128];
-            snprintf(title, sizeof(title), "Minecraft Potato Edition - %d FPS",
-                     int(fpsFrames / fpsTimer + 0.5f));
+            snprintf(title, sizeof(title), "Minecraft Potato Edition - %d FPS", int(gFps + 0.5f));
             SetWindowTextA(hwnd, title);
             fpsFrames = 0;
             fpsTimer = 0;
@@ -543,6 +747,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     gGui.Shutdown();
     SafeRelease(gParticleSRV);
     SafeRelease(gParticleVB);
+    SafeRelease(gWhiteSRV);
+    SafeRelease(gOutlineVB);
     ShutdownRenderer(gRC);
     DestroyWindow(hwnd);
     CoUninitialize();

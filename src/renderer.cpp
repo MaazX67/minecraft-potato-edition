@@ -1,6 +1,9 @@
 #include "renderer.h"
+#include "world.h"
 #include <d3dcompiler.h>
+#include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace potato {
 
@@ -79,18 +82,25 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     ID3DBlob* vsBlob = nullptr;
     ID3DBlob* psBlob = nullptr;
     ID3DBlob* psUIBlob = nullptr;
+    ID3DBlob* psSkyBlob = nullptr;
     if (!CompileOne(shaderSource, "VSMain", "vs_4_0", &vsBlob, hwnd)) return false;
     if (!CompileOne(shaderSource, "PSMain", "ps_4_0", &psBlob, hwnd)) { vsBlob->Release(); return false; }
     if (!CompileOne(shaderSource, "PSMainUI", "ps_4_0", &psUIBlob, hwnd)) {
         vsBlob->Release(); psBlob->Release(); return false;
     }
+    if (!CompileOne(shaderSource, "PSMainSky", "ps_4_0", &psSkyBlob, hwnd)) {
+        vsBlob->Release(); psBlob->Release(); psUIBlob->Release(); return false;
+    }
     hr = rc.device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &rc.vs);
-    if (FAILED(hr)) { vsBlob->Release(); psBlob->Release(); psUIBlob->Release(); return false; }
+    if (FAILED(hr)) { vsBlob->Release(); psBlob->Release(); psUIBlob->Release(); psSkyBlob->Release(); return false; }
     hr = rc.device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), &rc.psWorld);
     psBlob->Release();
-    if (FAILED(hr)) { vsBlob->Release(); psUIBlob->Release(); return false; }
+    if (FAILED(hr)) { vsBlob->Release(); psUIBlob->Release(); psSkyBlob->Release(); return false; }
     hr = rc.device->CreatePixelShader(psUIBlob->GetBufferPointer(), psUIBlob->GetBufferSize(), &rc.psUI);
     psUIBlob->Release();
+    if (FAILED(hr)) { vsBlob->Release(); psSkyBlob->Release(); return false; }
+    hr = rc.device->CreatePixelShader(psSkyBlob->GetBufferPointer(), psSkyBlob->GetBufferSize(), &rc.psSky);
+    psSkyBlob->Release();
     if (FAILED(hr)) { vsBlob->Release(); return false; }
 
     const D3D10_INPUT_ELEMENT_DESC elems[] = {
@@ -98,8 +108,9 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 12, D3D10_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    0, 20, D3D10_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 2, DXGI_FORMAT_R32_FLOAT,       0, 28, D3D10_INPUT_PER_VERTEX_DATA, 0},
+        {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D10_INPUT_PER_VERTEX_DATA, 0},
     };
-    hr = rc.device->CreateInputLayout(elems, 4, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(),
+    hr = rc.device->CreateInputLayout(elems, 5, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(),
                                       &rc.layout);
     vsBlob->Release();
     if (FAILED(hr)) return false;
@@ -122,6 +133,10 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     samp.MinLOD = 0;
     samp.MaxLOD = D3D10_FLOAT32_MAX;
     hr = rc.device->CreateSamplerState(&samp, &rc.pointSampler);
+    if (FAILED(hr)) return false;
+    // Linear filtering for the title panorama: vanilla renders it soft/blurred.
+    samp.Filter = D3D10_FILTER_MIN_MAG_MIP_LINEAR;
+    hr = rc.device->CreateSamplerState(&samp, &rc.linearSampler);
     if (FAILED(hr)) return false;
 
     D3D10_BLEND_DESC bd = {};
@@ -162,18 +177,48 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     rc.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     rc.device->VSSetShader(rc.vs);
     rc.device->PSSetSamplers(0, 1, &rc.pointSampler);
+    rc.device->PSSetSamplers(1, 1, &rc.linearSampler);
     rc.device->VSSetConstantBuffers(0, 1, &rc.perFrameCB);
     rc.device->RSSetState(rc.rasterizer);
+
+    // Unit cube for the title panorama; PSMainSky samples the cubemap along
+    // the interpolated object-space direction, so only positions matter.
+    static const float C[8][3] = {
+        {-1,-1,-1}, {1,-1,-1}, {1,1,-1}, {-1,1,-1},
+        {-1,-1, 1}, {1,-1, 1}, {1,1, 1}, {-1,1, 1},
+    };
+    static const int F[36] = {
+        0,1,2, 0,2,3,  5,4,7, 5,7,6,  4,0,3, 4,3,7,
+        1,5,6, 1,6,2,  3,2,6, 3,6,7,  4,5,1, 4,1,0,
+    };
+    MeshVertex sky[36];
+    for (int i = 0; i < 36; ++i) {
+        MeshVertex& v = sky[i];
+        v.x = C[F[i]][0]; v.y = C[F[i]][1]; v.z = C[F[i]][2];
+        v.tu = v.tv = v.u = v.v = 0; v.light = 15;
+        v.cr = v.cg = v.cb = 1;
+    }
+    D3D10_BUFFER_DESC sbd = {};
+    sbd.ByteWidth = UINT(sizeof(sky));
+    sbd.Usage = D3D10_USAGE_IMMUTABLE;
+    sbd.BindFlags = D3D10_BIND_VERTEX_BUFFER;
+    D3D10_SUBRESOURCE_DATA ssub = {};
+    ssub.pSysMem = sky;
+    if (FAILED(rc.device->CreateBuffer(&sbd, &ssub, &rc.skyVB))) return false;
     return true;
 }
 
 void ShutdownRenderer(RenderContext& rc) {
+    SafeRelease(rc.skyVB);
+    SafeRelease(rc.panoramaSRV);
+    SafeRelease(rc.psSky);
     SafeRelease(rc.atlasSRV);
     SafeRelease(rc.rasterizer);
     SafeRelease(rc.depthReadOnly);
     SafeRelease(rc.depthOff);
     SafeRelease(rc.depthOn);
     SafeRelease(rc.alphaBlend);
+    SafeRelease(rc.linearSampler);
     SafeRelease(rc.pointSampler);
     SafeRelease(rc.perFrameCB);
     SafeRelease(rc.layout);
@@ -209,6 +254,57 @@ ID3D10ShaderResourceView* CreateTextureSRV(RenderContext& rc, const uint8_t* rgb
     }
     tex->Release(); // SRV holds the reference
     return srv;
+}
+
+bool CreatePanorama(RenderContext& rc, AssetStore& store) {
+    // D3D10 cube array order is +X,-X,+Y,-Y,+Z,-Z. Vanilla's PanoramaRenderer
+    // rotations map panorama_0..5 onto -X,+X,-Y,+Y,+Z,-Z respectively.
+    static const int FACE_SRC[6] = {1, 0, 3, 2, 4, 5};
+    std::vector<uint8_t> faces[6];
+    int size = 0;
+    for (int i = 0; i < 6; ++i) {
+        char name[96];
+        snprintf(name, sizeof(name),
+                 "minecraft/textures/gui/title/background/panorama_%d.png", FACE_SRC[i]);
+        std::vector<uint8_t> bytes, px;
+        int w = 0, h = 0;
+        if (!store.ReadFile(name, bytes) || !DecodePNGAny(bytes, px, w, h) || w != h || w == 0)
+            return false;
+        if (size == 0) size = w;
+        if (w != size) {
+            std::vector<uint8_t> rs(size_t(size) * size * 4);
+            for (int y = 0; y < size; ++y)
+                for (int x = 0; x < size; ++x)
+                    memcpy(&rs[(size_t(y) * size + x) * 4],
+                           &px[(size_t(y * h / size) * w + x * w / size) * 4], 4);
+            px.swap(rs);
+        }
+        faces[i] = std::move(px);
+    }
+    D3D10_TEXTURE2D_DESC td = {};
+    td.Width = td.Height = UINT(size);
+    td.MipLevels = 1;
+    td.ArraySize = 6;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D10_USAGE_IMMUTABLE;
+    td.BindFlags = D3D10_BIND_SHADER_RESOURCE;
+    td.MiscFlags = D3D10_RESOURCE_MISC_TEXTURECUBE;
+    D3D10_SUBRESOURCE_DATA sub[6] = {};
+    for (int i = 0; i < 6; ++i) {
+        sub[i].pSysMem = faces[i].data();
+        sub[i].SysMemPitch = UINT(size * 4);
+    }
+    ID3D10Texture2D* tex = nullptr;
+    if (FAILED(rc.device->CreateTexture2D(&td, sub, &tex))) return false;
+    D3D10_SHADER_RESOURCE_VIEW_DESC sv = {};
+    sv.Format = td.Format;
+    sv.ViewDimension = D3D10_SRV_DIMENSION_TEXTURECUBE;
+    sv.TextureCube.MostDetailedMip = 0;
+    sv.TextureCube.MipLevels = 1;
+    const HRESULT hr = rc.device->CreateShaderResourceView(tex, &sv, &rc.panoramaSRV);
+    tex->Release();
+    return SUCCEEDED(hr);
 }
 
 void SetViewProj(RenderContext& rc, const XMMATRIX& m) {

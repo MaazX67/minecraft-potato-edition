@@ -282,32 +282,141 @@ bool DecodePNGAny(const std::vector<uint8_t>& bytes, std::vector<uint8_t>& out, 
 // ---------------------------------------------------------------------------
 
 const BlockDef BLOCK_DEFS[BLOCK_COUNT] = {
-    {"air",         "",                "",                ""},
-    {"stone",       "stone",           "stone",           "stone"},
-    {"dirt",        "dirt",            "dirt",            "dirt"},
-    {"grass",       "grass_block_top", "grass_block_side","dirt"},
-    {"cobblestone", "cobblestone",     "cobblestone",     "cobblestone"},
-    {"oak_planks",  "oak_planks",      "oak_planks",      "oak_planks"},
-    {"oak_log",     "oak_log_top",     "oak_log",         "oak_log_top"},
-    {"sand",        "sand",            "sand",            "sand"},
-    {"gravel",      "gravel",          "gravel",          "gravel"},
-    {"bricks",      "bricks",          "bricks",          "bricks"},
+    {"air",               "",                     "",                     ""},
+    {"stone",             "stone",                "stone",                "stone"},
+    {"dirt",              "dirt",                 "dirt",                 "dirt"},
+    {"grass",             "grass_block_top",      "grass_block_side",     "dirt"},
+    {"cobblestone",       "cobblestone",          "cobblestone",          "cobblestone"},
+    {"oak_planks",        "oak_planks",           "oak_planks",           "oak_planks"},
+    {"oak_log",           "oak_log_top",          "oak_log",              "oak_log_top"},
+    {"sand",              "sand",                 "sand",                 "sand"},
+    {"gravel",            "gravel",               "gravel",               "gravel"},
+    {"bricks",            "bricks",               "bricks",               "bricks"},
+    {"bedrock",           "bedrock",              "bedrock",              "bedrock"},
+    {"coal_ore",          "coal_ore",             "coal_ore",             "coal_ore"},
+    {"iron_ore",          "iron_ore",             "iron_ore",             "iron_ore"},
+    {"gold_ore",          "gold_ore",             "gold_ore",             "gold_ore"},
+    {"diamond_ore",       "diamond_ore",          "diamond_ore",          "diamond_ore"},
+    {"redstone_ore",      "redstone_ore",         "redstone_ore",         "redstone_ore"},
+    {"lapis_ore",         "lapis_ore",            "lapis_ore",            "lapis_ore"},
+    {"granite",           "granite",              "granite",              "granite"},
+    {"diorite",           "diorite",              "diorite",              "diorite"},
+    {"andesite",          "andesite",             "andesite",             "andesite"},
+    {"polished_granite",  "polished_granite",     "polished_granite",     "polished_granite"},
+    {"polished_diorite",  "polished_diorite",     "polished_diorite",     "polished_diorite"},
+    {"polished_andesite", "polished_andesite",    "polished_andesite",    "polished_andesite"},
+    {"spruce_planks",     "spruce_planks",        "spruce_planks",        "spruce_planks"},
+    {"birch_planks",      "birch_planks",         "birch_planks",         "birch_planks"},
+    {"spruce_log",        "spruce_log_top",       "spruce_log",           "spruce_log_top"},
+    {"birch_log",         "birch_log_top",        "birch_log",            "birch_log_top"},
+    {"oak_leaves",        "oak_leaves",           "oak_leaves",           "oak_leaves"},
+    {"spruce_leaves",     "spruce_leaves",        "spruce_leaves",        "spruce_leaves"},
+    {"birch_leaves",      "birch_leaves",         "birch_leaves",         "birch_leaves"},
+    {"glass",             "glass",                "glass",                "glass"},
+    {"sandstone",         "sandstone_top",        "sandstone",            "sandstone_bottom"},
+    {"smooth_stone",      "smooth_stone",         "smooth_stone",         "smooth_stone"},
+    {"stone_bricks",      "stone_bricks",         "stone_bricks",         "stone_bricks"},
+    {"mossy_cobblestone", "mossy_cobblestone",    "mossy_cobblestone",    "mossy_cobblestone"},
+    {"obsidian",          "obsidian",             "obsidian",             "obsidian"},
+    {"tnt",               "tnt_top",              "tnt_side",             "tnt_bottom"},
+    {"crafting_table",    "crafting_table_top",   "crafting_table_side",  "crafting_table_bottom"},
+    {"furnace",           "furnace_top",          "furnace_side",         "furnace_top"},
+    {"bookshelf",         "oak_planks",           "bookshelf",            "oak_planks"},
+    {"white_wool",        "white_wool",           "white_wool",           "white_wool"},
+    {"red_wool",          "red_wool",             "red_wool",             "red_wool"},
+    {"blue_wool",         "blue_wool",            "blue_wool",            "blue_wool"},
+    {"lime_wool",         "lime_wool",            "lime_wool",            "lime_wool"},
+    {"yellow_wool",       "yellow_wool",          "yellow_wool",          "yellow_wool"},
+    {"black_wool",        "black_wool",           "black_wool",           "black_wool"},
+    {"water",             "water_still",          "water_still",          "water_still"},
+    {"ice",               "ice",                  "ice",                  "ice"},
+    {"clay",              "clay",                 "clay",                 "clay"},
+    {"snow",              "snow",                 "snow",                 "snow"},
 };
 
-// Vanilla grass textures are grayscale and biome-tinted at runtime by Java.
-// We bake the plains tint (0x91BD59) at load so no shader tint path is needed.
-static void ApplyGrassTint(const std::string& name, uint8_t* px) {
-    const bool top = name.find("grass_block_top") != std::string::npos;
-    const bool side = name.find("grass_block_side") != std::string::npos;
-    if (!top && !side) return;
-    for (int y = 0; y < ATLAS_TILE; ++y) {
-        if (side && y >= 4) break; // side strip only; the rest is plain dirt
+const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
+    0,                                              // air
+    BF_SOLID | BF_OPAQUE,                           // stone
+    BF_SOLID | BF_OPAQUE,                           // dirt
+    BF_SOLID | BF_OPAQUE,                           // grass
+    BF_SOLID | BF_OPAQUE,                           // cobblestone
+    BF_SOLID | BF_OPAQUE,                           // planks
+    BF_SOLID | BF_OPAQUE,                           // log
+    BF_SOLID | BF_OPAQUE,                           // sand
+    BF_SOLID | BF_OPAQUE,                           // gravel
+    BF_SOLID | BF_OPAQUE,                           // brick
+    BF_SOLID | BF_OPAQUE,                           // bedrock
+    BF_SOLID | BF_OPAQUE,                           // coal_ore
+    BF_SOLID | BF_OPAQUE,                           // iron_ore
+    BF_SOLID | BF_OPAQUE,                           // gold_ore
+    BF_SOLID | BF_OPAQUE,                           // diamond_ore
+    BF_SOLID | BF_OPAQUE,                           // redstone_ore
+    BF_SOLID | BF_OPAQUE,                           // lapis_ore
+    BF_SOLID | BF_OPAQUE,                           // granite
+    BF_SOLID | BF_OPAQUE,                           // diorite
+    BF_SOLID | BF_OPAQUE,                           // andesite
+    BF_SOLID | BF_OPAQUE,                           // polished_granite
+    BF_SOLID | BF_OPAQUE,                           // polished_diorite
+    BF_SOLID | BF_OPAQUE,                           // polished_andesite
+    BF_SOLID | BF_OPAQUE,                           // spruce_planks
+    BF_SOLID | BF_OPAQUE,                           // birch_planks
+    BF_SOLID | BF_OPAQUE,                           // spruce_log
+    BF_SOLID | BF_OPAQUE,                           // birch_log
+    BF_SOLID | BF_CUTOUT,                           // oak_leaves
+    BF_SOLID | BF_CUTOUT,                           // spruce_leaves
+    BF_SOLID | BF_CUTOUT,                           // birch_leaves
+    BF_SOLID | BF_CUTOUT,                           // glass
+    BF_SOLID | BF_OPAQUE,                           // sandstone
+    BF_SOLID | BF_OPAQUE,                           // smooth_stone
+    BF_SOLID | BF_OPAQUE,                           // stone_bricks
+    BF_SOLID | BF_OPAQUE,                           // mossy_cobblestone
+    BF_SOLID | BF_OPAQUE,                           // obsidian
+    BF_SOLID | BF_OPAQUE,                           // tnt
+    BF_SOLID | BF_OPAQUE,                           // crafting_table
+    BF_SOLID | BF_OPAQUE,                           // furnace
+    BF_SOLID | BF_OPAQUE,                           // bookshelf
+    BF_SOLID | BF_OPAQUE,                           // white_wool
+    BF_SOLID | BF_OPAQUE,                           // red_wool
+    BF_SOLID | BF_OPAQUE,                           // blue_wool
+    BF_SOLID | BF_OPAQUE,                           // lime_wool
+    BF_SOLID | BF_OPAQUE,                           // yellow_wool
+    BF_SOLID | BF_OPAQUE,                           // black_wool
+    BF_LIQUID,                                      // water
+    BF_SOLID | BF_OPAQUE,                           // ice
+    BF_SOLID | BF_OPAQUE,                           // clay
+    BF_SOLID | BF_OPAQUE,                           // snow
+};
+
+// Vanilla grass/foliage/water textures are grayscale and biome-tinted by
+// Java at runtime. Bake the exact plains colors sampled from the 26.3
+// colormaps (grass #8EB971, foliage #71A74D, water #3F76E4) so no shader
+// tint path is needed.
+static void TintTile(uint8_t* px, int r, int g, int b, int rows, uint8_t alpha) {
+    for (int y = 0; y < rows; ++y) {
         for (int x = 0; x < ATLAS_TILE; ++x) {
             uint8_t* p = px + (y * ATLAS_TILE + x) * 4;
-            p[0] = uint8_t(p[0] * 145 / 255);
-            p[1] = uint8_t(p[1] * 189 / 255);
-            p[2] = uint8_t(p[2] * 89 / 255);
+            p[0] = uint8_t(p[0] * r / 255);
+            p[1] = uint8_t(p[1] * g / 255);
+            p[2] = uint8_t(p[2] * b / 255);
+            if (alpha) p[3] = uint8_t(p[3] * alpha / 255);
         }
+    }
+}
+
+static void ApplyBiomeTint(const std::string& name, uint8_t* px) {
+    if (name.find("grass_block_top") != std::string::npos) {
+        TintTile(px, 0x8E, 0xB9, 0x71, ATLAS_TILE, 0);
+    } else if (name.find("grass_block_side") != std::string::npos) {
+        TintTile(px, 0x8E, 0xB9, 0x71, 4, 0); // overlay strip only; rest is dirt
+    } else if (name.find("oak_leaves") != std::string::npos ||
+               name.find("birch_leaves") != std::string::npos) {
+        TintTile(px, 0x71, 0xA7, 0x4D, ATLAS_TILE, 0);
+    } else if (name.find("spruce_leaves") != std::string::npos) {
+        TintTile(px, 0x61, 0x99, 0x61, ATLAS_TILE, 0);
+    } else if (name.find("water_still") != std::string::npos) {
+        TintTile(px, 0x3F, 0x76, 0xE4, ATLAS_TILE, 170);
+    } else if (name.find("/ice.png") != std::string::npos) {
+        for (int i = 0; i < ATLAS_TILE * ATLAS_TILE; ++i) px[i * 4 + 3] = 255;
     }
 }
 
@@ -321,7 +430,7 @@ int BuildBlockAtlas(AssetStore& store, Atlas& atlas) {
         std::vector<uint8_t> bytes;
         if (!store.ReadFile(name, bytes)) continue;
         if (!DecodePNG16(bytes, px)) continue;
-        ApplyGrassTint(name, px);
+        ApplyBiomeTint(name, px);
         if (atlas.AddTile(name, px) >= 0) ++loaded;
     }
     return loaded;

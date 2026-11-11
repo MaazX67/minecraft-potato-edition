@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <random>
 #include <utility>
@@ -121,6 +122,56 @@ public:
 
     void Look(float dx, float dy);
     void Update(const InputState& in, float dt);
+};
+
+// Walk-mode player body: 0.6 x 1.8 AABB, axis-separated voxel collision with
+// substepping (no tunneling at terminal velocity). Vanilla speeds: walk
+// 4.317, sprint 5.612, sneak 1.31 m/s; gravity 32, jump ~1.25 blocks.
+// Flying (creative) keeps the old noclip-style free movement but still
+// collides. The camera follows at eye height and inherits vy for crits.
+struct PlayerBody {
+    float x = 8.5f, y = 90.0f, z = 8.5f; // feet position
+    float vx = 0, vy = 0, vz = 0;
+    bool onGround = false, flying = true, sprinting = false, sneaking = false;
+    bool inWater = false;
+    static constexpr float HALF = 0.3f, HEIGHT = 1.8f, EYE = 1.62f;
+
+    void Update(const InputState& in, float dt, FlyCamera& cam,
+                const std::function<uint8_t(int, int, int)>& getBlock);
+};
+
+// Survival meters: 20 hp / 20 hunger, fall damage, slow exhaustion, regen
+// when fed, starvation down to 1 hp. Drives the vanilla heart/hunger HUD.
+struct SurvivalState {
+    int health = 20, hunger = 20;
+    float exhaustion = 0, regenTimer = 0, starveTimer = 0;
+    bool dead = false;
+
+    void OnLand(float fallDistance) {
+        const int dmg = int(fallDistance) - 3;
+        if (dmg > 0) health -= dmg;
+        if (health < 0) health = 0;
+    }
+    void Update(float dt, bool moving, bool sprinting) {
+        exhaustion += dt * (sprinting ? 4.0f : (moving ? 1.0f : 0.15f));
+        if (exhaustion >= 40.0f) {
+            exhaustion -= 40.0f;
+            if (hunger > 0) --hunger;
+        }
+        if (hunger >= 18 && health > 0 && health < 20) {
+            regenTimer += dt;
+            if (regenTimer >= 4.0f) { regenTimer = 0; ++health; exhaustion += 6.0f; }
+        } else {
+            regenTimer = 0;
+        }
+        if (hunger == 0 && health > 1) {
+            starveTimer += dt;
+            if (starveTimer >= 4.0f) { starveTimer = 0; --health; }
+        } else {
+            starveTimer = 0;
+        }
+        dead = health <= 0;
+    }
 };
 
 // Minecraft 1.9+ attack cooldown: swing recharge gates damage.
