@@ -433,12 +433,29 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
 
     const bool storeOk = gStore.LoadIndex(assetsPath);
-    const int tilesLoaded = storeOk ? BuildBlockAtlas(gStore, gAtlas) : 0;
+    // Textures/GUI/font live in the client jar, not the asset index.
+    std::string jarPath = DefaultClientJarPath();
+    const char* jflag = strstr(GetCommandLineA(), "--jar");
+    if (jflag) {
+        const char* p = jflag + 5;
+        while (*p == ' ' || *p == '=') ++p;
+        std::string parsed;
+        if (*p == '"') {
+            ++p;
+            while (*p && *p != '"') { parsed += *p; ++p; }
+        } else {
+            while (*p && *p != ' ') { parsed += *p; ++p; }
+        }
+        if (!parsed.empty()) jarPath = parsed;
+    }
+    const bool jarOk = !jarPath.empty() && gStore.LoadJar(jarPath);
+    const int tilesLoaded = (storeOk || jarOk) ? BuildBlockAtlas(gStore, gAtlas) : 0;
     if (tilesLoaded == 0) {
         gAtlas.AddCheckerTile("__missing");
         MessageBoxA(hwnd,
-                    "Minecraft asset index not found or empty.\n"
-                    "Running with checker textures. Use --assets <path-to-index.json> to override.",
+                    "Minecraft assets not found.\n"
+                    "Expected the Migurinth launcher asset index and client jar under %APPDATA%.\n"
+                    "Running with checker textures. Overrides: --assets <index.json> --jar <client.jar>",
                     "Potato Edition - assets missing", MB_ICONWARNING);
     }
     gRC.atlasSRV = CreateTextureSRV(gRC, gAtlas.Pixels(), ATLAS_SIZE, ATLAS_SIZE);

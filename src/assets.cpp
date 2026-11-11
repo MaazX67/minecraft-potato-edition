@@ -1,4 +1,5 @@
 #include "assets.h"
+#include <windows.h>
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -71,6 +72,126 @@ std::string DefaultAssetIndexPath() {
     return "C:/Users/Admin/AppData/Roaming/Migurinth/meta/assets/indexes/34.json";
 }
 
+std::string DefaultClientJarPath() {
+    const char* appdata = getenv("APPDATA");
+    const std::string base = std::string(appdata && appdata[0] ? appdata : "C:/Users/Admin/AppData/Roaming")
+                           + "/Migurinth/meta/versions";
+    std::string best, bestDir;
+    WIN32_FIND_DATAA fd = {};
+    HANDLE h = FindFirstFileA((base + "/*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return best;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        const std::string dir = fd.cFileName;
+        if (dir == "." || dir == "..") continue;
+        const std::string jar = base + "/" + dir + "/" + dir + ".jar";
+        if (GetFileAttributesA(jar.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+        if (dir > bestDir) { bestDir = dir; best = jar; }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return best;
+}
+
+// ---------------------------------------------------------------------------
+// ZipArchive (read-only jar)
+// ---------------------------------------------------------------------------
+
+bool ZipArchive::Open(const std::string& path) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f.is_open()) return false;
+    const size_t size = size_t(f.tellg());
+    if (size < 22) return false;
+    const size_t scan = std::min(size, size_t(22 + 65535));
+    std::vector<uint8_t> tail(scan);
+    f.seekg(std::streamoff(size - scan));
+    f.read(reinterpret_cast<char*>(tail.data()), std::streamsize(scan));
+    if (!f) return false;
+    size_t eocd = SIZE_MAX;
+    for (size_t i = scan - 22; ; --i) {
+        if (tail[i] == 0x50 && tail[i + 1] == 0x4B && tail[i + 2] == 0x05 && tail[i + 3] == 0x06) {
+            eocd = i;
+            break;
+        }
+        if (i == 0) break;
+    }
+    if (eocd == SIZE_MAX) return false;
+    auto rd32 = [&](size_t p) {
+        return uint32_t(tail[p]) | (uint32_t(tail[p + 1]) << 8) |
+               (uint32_t(tail[p + 2]) << 16) | (uint32_t(tail[p + 3]) << 24);
+    };
+    const uint32_t cdSize = rd32(eocd + 12), cdOff = rd32(eocd + 16);
+    if (cdSize == 0 || size_t(cdOff) + cdSize > size) return false;
+    std::vector<uint8_t> cd(cdSize);
+    f.seekg(std::streamoff(cdOff));
+    f.read(reinterpret_cast<char*>(cd.data()), std::streamsize(cdSize));
+    if (!f) return false;
+    size_t p = 0;
+    while (p + 46 <= cd.size()) {
+        if (!(cd[p] == 0x50 && cd[p + 1] == 0x4B && cd[p + 2] == 0x01 && cd[p + 3] == 0x02)) break;
+        auto c16 = [&](size_t q) { return uint16_t(cd[q] | (uint16_t(cd[q + 1]) << 8)); };
+        auto c32 = [&](size_t q) {
+            return uint32_t(cd[q]) | (uint32_t(cd[q + 1]) << 8) |
+                   (uint32_t(cd[q + 2]) << 16) | (uint32_t(cd[q + 3]) << 24);
+        };
+        Entry e;
+        e.method = c16(p + 10);
+        e.compSize = c32(p + 20);
+        e.uncompSize = c32(p + 24);
+        e.localOffset = c32(p + 42);
+        const uint16_t nameLen = c16(p + 28), extraLen = c16(p + 30), commentLen = c16(p + 32);
+        if (p + 46 + nameLen > cd.size()) break;
+        std::string name(reinterpret_cast<const char*>(&cd[p + 46]), nameLen);
+        if (!name.empty() && name.back() != '/') mEntries.emplace(std::move(name), e);
+        p += size_t(46) + nameLen + extraLen + commentLen;
+    }
+    if (mEntries.empty()) return false;
+    mPath = path;
+    return true;
+}
+
+bool ZipArchive::Read(const std::string& name, std::vector<uint8_t>& out) const {
+    const auto it = mEntries.find(name);
+    if (it == mEntries.end()) return false;
+    const Entry& e = it->second;
+    std::ifstream f(mPath, std::ios::binary);
+    if (!f.is_open()) return false;
+    uint8_t lh[30];
+    f.seekg(std::streamoff(e.localOffset));
+    f.read(reinterpret_cast<char*>(lh), 30);
+    if (!f || !(lh[0] == 0x50 && lh[1] == 0x4B && lh[2] == 0x03 && lh[3] == 0x04)) return false;
+    const uint16_t nameLen = uint16_t(lh[26] | (uint16_t(lh[27]) << 8));
+    const uint16_t extraLen = uint16_t(lh[28] | (uint16_t(lh[29]) << 8));
+    f.seekg(std::streamoff(uint64_t(e.localOffset) + 30 + nameLen + extraLen));
+    if (e.method == 0) {
+        out.resize(e.uncompSize);
+        f.read(reinterpret_cast<char*>(out.data()), std::streamsize(out.size()));
+        return bool(f) && !out.empty();
+    }
+    if (e.method != 8 || e.compSize == 0) return false;
+    std::vector<uint8_t> comp(e.compSize);
+    f.read(reinterpret_cast<char*>(comp.data()), std::streamsize(comp.size()));
+    if (!f) return false;
+    int outLen = 0;
+    char* raw = stbi_zlib_decode_malloc_guesssize_headerflag(
+        reinterpret_cast<const char*>(comp.data()), int(comp.size()),
+        int(e.uncompSize > 0 ? e.uncompSize : 16384), &outLen, 0); // 0 = raw deflate
+    if (!raw || outLen <= 0) {
+        if (raw) stbi_image_free(raw);
+        return false;
+    }
+    out.assign(reinterpret_cast<uint8_t*>(raw), reinterpret_cast<uint8_t*>(raw) + outLen);
+    stbi_image_free(raw);
+    return true;
+}
+
+std::vector<std::string> ZipArchive::List() const {
+    std::vector<std::string> names;
+    names.reserve(mEntries.size());
+    for (const auto& kv : mEntries) names.push_back(kv.first);
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
 bool AssetStore::LoadIndex(const std::string& indexPath) {
     try {
         std::ifstream f(indexPath);
@@ -94,19 +215,29 @@ bool AssetStore::LoadIndex(const std::string& indexPath) {
 
 bool AssetStore::ReadFile(const std::string& name, std::vector<uint8_t>& out) const {
     const auto it = mObjects.find(name);
-    if (it == mObjects.end() || it->second.size() < 3) return false;
-    const std::string& hash = it->second;
-    const std::string path = mObjectsDir + "/" + hash.substr(0, 2) + "/" + hash;
-    std::ifstream f(path, std::ios::binary);
-    if (!f.is_open()) return false;
-    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    return !out.empty();
+    if (it != mObjects.end() && it->second.size() >= 3) {
+        const std::string& hash = it->second;
+        const std::string path = mObjectsDir + "/" + hash.substr(0, 2) + "/" + hash;
+        std::ifstream f(path, std::ios::binary);
+        if (f.is_open()) {
+            out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+            if (!out.empty()) return true;
+        }
+    }
+    return mJar.Read("assets/" + name, out);
 }
 
 std::vector<std::string> AssetStore::ListPrefix(const std::string& prefix) const {
     std::vector<std::string> names;
     for (const auto& kv : mObjects) {
         if (kv.first.compare(0, prefix.size(), prefix) == 0) names.push_back(kv.first);
+    }
+    for (const std::string& jarName : mJar.List()) {
+        if (jarName.compare(0, 7, "assets/") != 0) continue;
+        const std::string name = jarName.substr(7);
+        if (name.compare(0, prefix.size(), prefix) == 0 && mObjects.find(name) == mObjects.end()) {
+            names.push_back(std::move(name));
+        }
     }
     std::sort(names.begin(), names.end());
     return names;

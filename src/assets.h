@@ -11,6 +11,29 @@ namespace potato {
 // Resolved from %APPDATA% at runtime so any Windows username works.
 std::string DefaultAssetIndexPath();
 
+// The asset index only carries sounds/misc; every texture, font and GUI
+// sprite lives inside the client jar (assets/minecraft/...). This finds the
+// newest installed version jar under Migurinth/meta/versions.
+std::string DefaultClientJarPath();
+
+// Minimal read-only ZIP (jar) archive: central directory parsed at open,
+// entries inflated on demand with stb's raw-deflate decoder. No dependency.
+class ZipArchive {
+public:
+    bool Open(const std::string& path);
+    bool Read(const std::string& name, std::vector<uint8_t>& out) const;
+    std::vector<std::string> List() const;
+    size_t EntryCount() const { return mEntries.size(); }
+
+private:
+    struct Entry {
+        uint32_t localOffset = 0, compSize = 0, uncompSize = 0;
+        uint16_t method = 0;
+    };
+    std::string mPath;
+    std::unordered_map<std::string, Entry> mEntries;
+};
+
 constexpr int ATLAS_SIZE = 1024;
 constexpr int ATLAS_TILE = 16;
 constexpr int ATLAS_COLS = ATLAS_SIZE / ATLAS_TILE;
@@ -38,13 +61,15 @@ private:
 class AssetStore {
 public:
     bool LoadIndex(const std::string& indexPath);
+    bool LoadJar(const std::string& jarPath) { return mJar.Open(jarPath); }
     bool ReadFile(const std::string& name, std::vector<uint8_t>& out) const;
     std::vector<std::string> ListPrefix(const std::string& prefix) const;
-    size_t EntryCount() const { return mObjects.size(); }
+    size_t EntryCount() const { return mObjects.size() + mJar.EntryCount(); }
 
 private:
     std::unordered_map<std::string, std::string> mObjects; // logical name -> sha1
     std::string mObjectsDir;
+    ZipArchive mJar; // textures/GUI/font, names prefixed with "assets/"
 };
 
 enum BlockId : uint8_t {
