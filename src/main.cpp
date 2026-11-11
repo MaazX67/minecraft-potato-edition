@@ -288,6 +288,9 @@ static void HandleGameFrame(float dt) {
 
     const bool wasGround = gBody.onGround;
     gBody.Update(gInput, dt, gCamera, getBlock);
+    gCamera.x = gBody.x;
+    gCamera.y = gBody.y + PlayerBody::EYE;
+    gCamera.z = gBody.z;
     if (gBody.onGround) {
         if (!wasGround && !gBody.flying && !gBody.inWater) {
             const float dist = gFallStartY - gBody.y;
