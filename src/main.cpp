@@ -1329,8 +1329,10 @@ static void RenderFrame() {
         gMenu.Draw(gGui, gScreen, gSettings, gCreate, gInput.typed,
                    gInput.mouseX, gInput.mouseY, gInput.leftDown, gSplash, gTimeSec, gProfileDraft);
         if (gMenu.ConsumeChanged()) ApplySettings();
-        if (gNowMs < gActionBarUntil)
-            gGui.DrawTextCentered(gActionBar, SCREEN_W * 0.5f, SCREEN_H - 40.0f, 2, 15, true);
+        if (gNowMs < gActionBarUntil) {
+            const float messageY = gScreen == Screen::CreateWorld ? SCREEN_H - 68.0f : SCREEN_H - 96.0f;
+            gGui.DrawTextCentered(gActionBar, SCREEN_W * 0.5f, messageY, 2, 15, true);
+        }
     }
     gGui.Flush(gRC);
     gRC.swapChain->Present(gSettings.vsync ? 1 : 0, 0);

@@ -211,7 +211,8 @@ try {
   } finally { [System.IO.File]::WriteAllBytes($saveFile.FullName, $original) }
   Launch '--show-worlds'
   Click 683 736
-  for ($i = 0; $i -lt 9; $i++) { Key 0x08 }
+  for ($i = 0; $i -lt 9; $i++) { Post 0x102 8 }
+  Start-Sleep -Milliseconds 180
   TypeText 'Creation regression'
   Click 683 72
   Click 683 146
