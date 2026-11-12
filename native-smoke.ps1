@@ -83,6 +83,14 @@ function CloseGame {
   Check ($script:p.ExitCode -eq 0) 'game closes without crashing'
 }
 try {
+  Launch '--show-worlds'
+  Capture 'empty-world-list' 11
+  Check ($state.worldCount -eq 0 -and $state.selectedWorld -eq -1) 'empty Select World list has no playable selection'
+  Click 683 736
+  Capture 'empty-create-form' 1
+  Key 0x1B
+  Capture 'empty-create-cancel' 11
+  CloseGame
   Launch '--autostart --inventory-test --save-test --debug'
   Capture '00-ground' 4
   Check ([Math]::Abs($state.yaw) -lt 0.001) 'fixture camera is not altered by desktop mouse input'
@@ -201,6 +209,53 @@ try {
     Check ($state.actionBar -like '*Could not load world*') 'unsupported block edits are rejected without entering the world'
     CloseGame
   } finally { [System.IO.File]::WriteAllBytes($saveFile.FullName, $original) }
+  Launch '--show-worlds'
+  Click 683 736
+  for ($i = 0; $i -lt 9; $i++) { Key 0x08 }
+  TypeText 'Creation regression'
+  Click 683 72
+  Click 683 146
+  TypeText '424242'
+  Click 423 72
+  Click 683 206
+  Click 683 282
+  Capture '20-creation-form' 1
+  Check ($state.seed -eq '424242' -and $state.draftDifficulty -eq 3) 'world form preserves seed and draft difficulty across tabs'
+  Click 683 620
+  Start-Sleep -Seconds 5
+  Capture '21-created-world' 4
+  Check ($state.worldName -eq 'Creation regression' -and $state.worldSeed -eq 424242 -and $state.mode -eq 1 -and $state.difficulty -eq 3) 'Create New World applies name, seed, Creative mode and Hard difficulty'
+  Key 0x1B
+  Click 683 296
+  CloseGame
+  Launch '--show-worlds'
+  Capture '22-two-worlds' 11
+  Check ($state.worldCount -eq 2 -and $state.selectedWorld -eq 0) 'new world is listed first without overwriting the earlier save'
+  Click 413 736
+  Start-Sleep -Seconds 5
+  Capture '23-created-world-reload' 4
+  Check ($state.worldName -eq 'Creation regression' -and $state.worldSeed -eq 424242 -and $state.mode -eq 1 -and $state.difficulty -eq 3) 'created world reopens with its persisted creation settings'
+  Key 0x1B
+  Click 683 296
+  CloseGame
+  for ($i = 0; $i -lt 4; $i++) {
+    $copyDir = Join-Path (Join-Path $out 'saves') ('world-page-fixture-' + $i)
+    New-Item -ItemType Directory -Path $copyDir | Out-Null
+    Copy-Item $saveFile.FullName (Join-Path $copyDir 'world.potato')
+  }
+  Launch '--show-worlds'
+  Capture '24-six-worlds' 11
+  Check ($state.worldCount -eq 6 -and $state.worldPage -eq 0) 'world list includes all six saves'
+  Click 1023 632
+  Capture '25-world-page-two' 11
+  Check ($state.worldPage -eq 1) 'Next page reveals saved worlds beyond the first five'
+  Click 683 110
+  Capture '26-selected-last-world' 11
+  Check ($state.selectedWorld -eq 5) 'page-two row selects the correct global world index'
+  Click 343 632
+  Capture '27-world-page-one' 11
+  Check ($state.worldPage -eq 0) 'Previous page returns to the first five entries'
+  CloseGame
   Write-Host "CAPTURES=$out"
 } finally {
   if ($script:p -and !$script:p.HasExited) {

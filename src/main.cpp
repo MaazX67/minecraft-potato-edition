@@ -805,7 +805,7 @@ static void SaveTestState(const char* screenshot) {
         {"fov", gSettings.fov}, {"renderDistance", gSettings.renderDistance},
         {"volume", gSettings.soundVolume}, {"sensitivity", gSettings.sensitivity},
         {"assetVersion", gAssetVersion}, {"skinLoaded", gGui.texSkin.srv != nullptr},
-        {"worldName", gWorldName}, {"worldSeed", gWorldSeed}, {"worldCount", gMenu.worlds.size()},
+        {"worldName", gWorldName}, {"worldSeed", gWorldSeed}, {"mode", gGameMode}, {"worldCount", gMenu.worlds.size()},
         {"worldPage", gMenu.worldPage}, {"selectedWorld", gMenu.selectedWorld}, {"resumePending", gResumePending},
         {"health", gSurvival.health}, {"hunger", gSurvival.hunger},
         {"fixtureBlock", gWorld ? gWorld->GetBlock(8, 64, 6) : 0},
