@@ -682,6 +682,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
     gWorld = new World(1337, gSettings.renderDistance);
     gWorld->SetBlockTiles(gTiles);
+    if (strstr(GetCommandLineA(), "--autostart")) StartGame();
 
     DeltaClock clock;
     float fpsTimer = 0;
