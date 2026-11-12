@@ -168,6 +168,59 @@ void GuiRenderer::DrawTextCentered(const std::string& text, float cx, float y, f
     DrawText(text, cx - TextWidth(text, scale) * 0.5f, y, scale, shade, shadow, cr, cg, cb);
 }
 
+void GuiRenderer::DrawQuadPts(const GuiTexture* tex, const float p[4][2],
+                              float u0, float v0, float u1, float v1, float shade,
+                              float cr, float cg, float cb) {
+    Batch* batch = nullptr;
+    if (!mBatches.empty() && mBatches.back().tex == tex) batch = &mBatches.back();
+    if (!batch) {
+        mBatches.push_back({tex, {}});
+        batch = &mBatches.back();
+    }
+    const MeshVertex quad[6] = {
+        {p[0][0], p[0][1], 0, 0, 0, u0, v0, shade, cr, cg, cb},
+        {p[1][0], p[1][1], 0, 0, 0, u1, v0, shade, cr, cg, cb},
+        {p[2][0], p[2][1], 0, 0, 0, u1, v1, shade, cr, cg, cb},
+        {p[0][0], p[0][1], 0, 0, 0, u0, v0, shade, cr, cg, cb},
+        {p[2][0], p[2][1], 0, 0, 0, u1, v1, shade, cr, cg, cb},
+        {p[3][0], p[3][1], 0, 0, 0, u0, v1, shade, cr, cg, cb},
+    };
+    batch->verts.insert(batch->verts.end(), quad, quad + 6);
+}
+
+void GuiRenderer::DrawTextRotated(const std::string& text, float cx, float cy, float scale,
+                                  float angle, float shade, bool shadow,
+                                  float cr, float cg, float cb) {
+    if (!texFont.srv || texFont.w < 16) return;
+    const float cell = float(texFont.w / 16);
+    const float invW = 1.0f / float(texFont.w), invH = 1.0f / float(texFont.h);
+    const float ca = cosf(angle), sa = sinf(angle);
+    const float halfW = TextWidth(text, scale) * 0.5f;
+    for (int pass = shadow ? 0 : 1; pass < 2; ++pass) {
+        const float ox = pass == 0 ? scale : 0.0f, oy = pass == 0 ? scale : 0.0f;
+        const float pr = pass == 0 ? cr * 0.25f : cr;
+        const float pg = pass == 0 ? cg * 0.25f : cg;
+        const float pb = pass == 0 ? cb * 0.25f : cb;
+        float pen = -halfW;
+        for (char c : text) {
+            if (c >= 32 && c <= 126) {
+                const int col = c % 16, row = c / 16;
+                const float u0 = col * cell * invW, v0 = row * cell * invH;
+                const float u1 = (col + 1) * cell * invW, v1 = (row + 1) * cell * invH;
+                const float w = cell * scale, h = cell * scale;
+                const float local[4][2] = {{pen, 0}, {pen + w, 0}, {pen + w, h}, {pen, h}};
+                float pts[4][2];
+                for (int i = 0; i < 4; ++i) {
+                    pts[i][0] = cx + ox + local[i][0] * ca - local[i][1] * sa;
+                    pts[i][1] = cy + oy + local[i][0] * sa + local[i][1] * ca;
+                }
+                DrawQuadPts(&texFont, pts, u0, v0, u1, v1, shade, pr, pg, pb);
+            }
+            pen += CharWidth(c) * scale;
+        }
+    }
+}
+
 void GuiRenderer::Flush(RenderContext& rc) {
     if (mBatches.empty()) return;
     rc.device->PSSetShader(rc.psUI);
@@ -217,10 +270,10 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, const Settings& settings,
     if (screen == Screen::Title) {
         if (ui.texPanoramaOverlay.srv)
             ui.DrawQuad(&ui.texPanoramaOverlay, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
-        ui.DrawSprite(&ui.texLogo, cx - ui.texLogo.w * 0.25f, 40, 0.5f, 15);
-        ui.DrawTextCentered("POTATO EDITION", cx, 40 + ui.texLogo.h * 0.5f + 6, 3, 15, true);
+        ui.DrawSprite(&ui.texLogo, cx - ui.texLogo.w, 60, 2.0f, 15);
+        ui.DrawTextCentered("POTATO EDITION", cx, 60 + ui.texLogo.h * 2.0f + 4, 2, 15, true);
         const float pulse = 2.0f * (1.0f + 0.06f * sinf(timeSec * 6.0f));
-        ui.DrawTextCentered(splash, cx + 185, 150, pulse, 15, true, 1, 1, 0);
+        ui.DrawTextRotated(splash, cx + 190, 140, pulse, -0.349f, 15, true, 1, 1, 0);
         mButtons.push_back({cx - 200, 288, 400, 40, "Singleplayer", ACT_SINGLEPLAYER, true});
         mButtons.push_back({cx - 200, 336, 400, 40, "Multiplayer", ACT_NONE, false});
         mButtons.push_back({cx - 200, 456, 196, 40, "Options...", ACT_OPTIONS, true});

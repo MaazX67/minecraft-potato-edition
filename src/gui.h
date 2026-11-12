@@ -39,6 +39,12 @@ public:
                   float cr = 1.0f, float cg = 1.0f, float cb = 1.0f);
     void DrawTextCentered(const std::string& text, float cx, float y, float scale, float shade, bool shadow,
                           float cr = 1.0f, float cg = 1.0f, float cb = 1.0f);
+    void DrawQuadPts(const GuiTexture* tex, const float p[4][2],
+                     float u0, float v0, float u1, float v1, float shade,
+                     float cr = 1.0f, float cg = 1.0f, float cb = 1.0f);
+    void DrawTextRotated(const std::string& text, float cx, float cy, float scale,
+                         float angle, float shade, bool shadow,
+                         float cr = 1.0f, float cg = 1.0f, float cb = 1.0f);
     float TextWidth(const std::string& text, float scale) const;
 
     GuiTexture texButton, texButtonHi, texButtonDisabled, texLogo, texCrosshair;

@@ -683,6 +683,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     gWorld = new World(1337, gSettings.renderDistance);
     gWorld->SetBlockTiles(gTiles);
     if (strstr(GetCommandLineA(), "--autostart")) StartGame();
+    if (strstr(GetCommandLineA(), "--debug")) gDebug = true;
+    if (strstr(GetCommandLineA(), "--show-options")) {
+        gOptionsReturn = Screen::Title;
+        SetScreen(hwnd, Screen::Options);
+    }
+    if (strstr(GetCommandLineA(), "--show-inv")) SetScreen(hwnd, Screen::Inventory);
 
     DeltaClock clock;
     float fpsTimer = 0;

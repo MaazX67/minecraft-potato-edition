@@ -138,6 +138,20 @@ int main() {
     CHECK((BLOCK_FLAGS[BLOCK_GLASS] & BF_CUTOUT) && !(BLOCK_FLAGS[BLOCK_GLASS] & BF_OPAQUE),
           "glass is cutout, not opaque");
 
+    // --- Greedy mesher emits all six face directions ---
+    {
+        std::vector<uint8_t> cube(CHUNK_VOL, 0);
+        for (int y = 0; y < 16; ++y)
+            for (int z = 0; z < 16; ++z)
+                for (int x = 0; x < 16; ++x)
+                    cube[x + 16 * z + 256 * y] = BLOCK_STONE;
+        BlockTiles bt;
+        MeshData cm;
+        BuildChunkMeshCPU(cube.data(), nullptr, nullptr, nullptr, nullptr, bt, cm);
+        CHECK(cm.vertices.size() == 24, "solid cube meshes to exactly 6 quads");
+        CHECK(cm.indices.size() == 36, "solid cube index count");
+    }
+
     // --- Liquid mesh partition ---
     std::vector<uint8_t> water(CHUNK_VOL, 0);
     water[5 + 16 * 5 + 256 * 64] = BLOCK_WATER;
