@@ -35,6 +35,7 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 | Right click | Place the selected block |
 | `1`–`9`, mouse wheel | Select hotbar slot |
 | `E` | Inventory |
+| `F2` | Screenshot (saved to `screenshots/`) |
 | `F3` | Debug overlay |
 | `Esc` | Pause menu |
 

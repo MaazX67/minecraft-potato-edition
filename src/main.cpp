@@ -63,6 +63,7 @@ static float gTimeSec = 0;
 static float gFps = 0;
 static bool gRunning = true;
 static bool gDebug = false;
+static bool gFlyHook = false;
 static bool gSpawned = false;
 static float gFallStartY = 0;
 static float gLastSpaceMs = -1000;
@@ -302,6 +303,65 @@ static void UploadMeshes() {
     if (it == gGpu.end()) gSweepCursor = 0;
 }
 
+static void SaveScreenshot() {
+    ID3D10Texture2D* back = nullptr;
+    if (FAILED(gRC.swapChain->GetBuffer(0, IID_PPV_ARGS(&back))) || !back) return;
+    D3D10_TEXTURE2D_DESC bd;
+    back->GetDesc(&bd);
+    D3D10_TEXTURE2D_DESC sd = bd;
+    sd.Usage = D3D10_USAGE_STAGING;
+    sd.BindFlags = 0;
+    sd.CPUAccessFlags = D3D10_CPU_ACCESS_READ;
+    sd.MiscFlags = 0;
+    ID3D10Texture2D* stage = nullptr;
+    HRESULT hr = gRC.device->CreateTexture2D(&sd, nullptr, &stage);
+    if (SUCCEEDED(hr)) {
+        gRC.device->CopyResource(stage, back);
+        D3D10_MAPPED_TEXTURE2D map = {};
+        if (SUCCEEDED(stage->Map(0, D3D10_MAP_READ, 0, &map))) {
+            CreateDirectoryA("screenshots", nullptr);
+            static int shotIdx = 0;
+            char path[128];
+            snprintf(path, sizeof(path), "screenshots/shot_%03d.bmp", shotIdx++);
+            FILE* f = fopen(path, "wb");
+            if (f) {
+                const uint32_t w = bd.Width, h = bd.Height;
+                const uint32_t rowBytes = (w * 3 + 3) & ~3u;
+                const uint32_t imgBytes = rowBytes * h;
+                uint8_t hdr[54] = {};
+                hdr[0] = 'B'; hdr[1] = 'M';
+                const uint32_t total = 54 + imgBytes;
+                memcpy(hdr + 2, &total, 4);
+                const uint32_t off = 54;
+                memcpy(hdr + 10, &off, 4);
+                const uint32_t ihdr = 40;
+                memcpy(hdr + 14, &ihdr, 4);
+                memcpy(hdr + 18, &w, 4);
+                memcpy(hdr + 22, &h, 4);
+                hdr[26] = 1; hdr[28] = 24;
+                memcpy(hdr + 34, &imgBytes, 4);
+                fwrite(hdr, 1, 54, f);
+                std::vector<uint8_t> row(rowBytes);
+                for (uint32_t y = h; y-- > 0;) {
+                    const uint8_t* src = static_cast<const uint8_t*>(map.pData) + size_t(y) * map.RowPitch;
+                    for (uint32_t x = 0; x < w; ++x) {
+                        row[x * 3 + 0] = src[x * 4 + 0];
+                        row[x * 3 + 1] = src[x * 4 + 1];
+                        row[x * 3 + 2] = src[x * 4 + 2];
+                    }
+                    fwrite(row.data(), 1, rowBytes, f);
+                }
+                fclose(f);
+                gActionBar = "Saved screenshot";
+                gActionBarUntil = gNowMs + 2000;
+            }
+            stage->Unmap(0);
+        }
+        stage->Release();
+    }
+    back->Release();
+}
+
 static void HandleGameFrame(float dt) {
     gCamera.Look(gInput.mouseDX, gInput.mouseDY);
     const float cp = cosf(gCamera.pitch);
@@ -320,6 +380,11 @@ static void HandleGameFrame(float dt) {
         gBody.x = 8.5f; gBody.z = 8.5f; gBody.y = float(sy + 1);
         gBody.vx = gBody.vy = gBody.vz = 0;
         gBody.flying = false;
+        if (gFlyHook) {
+            gBody.y = float(sy + 40);
+            gBody.flying = true;
+            gCamera.pitch = -1.1f;
+        }
         gFallStartY = gBody.y;
         gSpawned = true;
     }
@@ -382,6 +447,7 @@ static void HandleGameFrame(float dt) {
         gHotbarSlot = (gHotbarSlot + (gInput.wheel > 0 ? -1 : 1) + 9) % 9;
     }
     if (gInput.KeyPressed('E')) { SetScreen(gHwnd, Screen::Inventory); return; }
+    if (gInput.KeyPressed(VK_F2)) SaveScreenshot();
     if (gInput.KeyPressed(VK_F3)) gDebug = !gDebug;
 
     int hx, hy, hz, nx, ny, nz;
@@ -570,7 +636,7 @@ static void DrawWorld() {
 
 static void DrawDebug() {
     char line[160];
-    gGui.DrawQuad(&gGui.texBlack, 2, 2, 360, 176, 0, 0, 1, 1, 15);
+    gGui.DrawQuad(&gGui.texBlack, 2, 2, 360, 196, 0, 0, 1, 1, 15);
     int y = 6;
     auto row = [&](const char* s) { gGui.DrawText(s, 6, float(y), 2, 15, true); y += 20; };
     row("Minecraft Potato Edition (DX10 / FL 10_0)");
@@ -589,8 +655,12 @@ static void DrawDebug() {
              BLOCK_DEFS[gHotbar[gHotbarSlot]].name);
     row(line);
     if (gHaveTarget) {
+        const uint8_t tb = gWorld->GetBlock(gTargetX, gTargetY, gTargetZ);
         snprintf(line, sizeof(line), "Target: %d %d %d (%s)", gTargetX, gTargetY, gTargetZ,
-                 BLOCK_DEFS[gWorld->GetBlock(gTargetX, gTargetY, gTargetZ)].name);
+                 BLOCK_DEFS[tb].name);
+        row(line);
+        snprintf(line, sizeof(line), "Tiles T/S/B: %d/%d/%d", gTiles.top[tb], gTiles.side[tb],
+                 gTiles.bottom[tb]);
         row(line);
     } else {
         row("Target: -");
@@ -749,6 +819,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     gWorld->SetBlockTiles(gTiles);
     if (strstr(GetCommandLineA(), "--autostart")) StartGame();
     if (strstr(GetCommandLineA(), "--debug")) gDebug = true;
+    if (strstr(GetCommandLineA(), "--fly")) gFlyHook = true;
     if (strstr(GetCommandLineA(), "--show-options")) {
         gOptionsReturn = Screen::Title;
         SetScreen(hwnd, Screen::Options);
