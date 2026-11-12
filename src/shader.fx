@@ -54,8 +54,13 @@ float4 PSMain(PSIn input) : SV_TARGET
     float2 atlasUV = input.tile + (frac(input.uv) * 16.0f + 0.5f) / 1024.0f;
     float4 tex = gAtlas.Sample(gPoint, atlasUV);
     clip(tex.a - 0.5f);
-    float lit = input.shade * clamp(0.35f + 1.3f * gBrightness, 0.15f, 1.0f);
-    return float4(tex.rgb * lit * input.tint, tex.a);
+    float lit = input.shade * clamp(0.6f + 0.8f * gBrightness, 0.3f, 1.0f);
+    float3 col = tex.rgb * lit * input.tint;
+    // Distance fog blends the render-distance edge into the sky so the world
+    // never ends in a hard cliff. pos.w is view-space depth in RH clip.
+    float fog = smoothstep(96.0f, 144.0f, input.pos.w);
+    col = lerp(col, float3(0.47f, 0.65f, 1.0f), fog);
+    return float4(col, tex.a);
 }
 
 // UI pass: plain textured quad (bound texture is a GUI sprite, not the atlas).
