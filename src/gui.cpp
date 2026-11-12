@@ -40,7 +40,6 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texButtonHi       = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/button_highlighted.png");
     texButtonDisabled = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/button_disabled.png");
     texLogo           = LoadGui(rc, store, "minecraft/textures/gui/title/minecraft.png");
-    texEdition        = LoadGui(rc, store, "minecraft/textures/gui/title/edition.png");
     texCrosshair      = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair.png");
     texHotbar         = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/hotbar.png");
     texHotbarSel      = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/hotbar_selection.png");
@@ -77,7 +76,7 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
 }
 
 void GuiRenderer::Shutdown() {
-    GuiTexture* all[] = {&texButton, &texButtonHi, &texButtonDisabled, &texLogo, &texEdition,
+    GuiTexture* all[] = {&texButton, &texButtonHi, &texButtonDisabled, &texLogo,
                         &texCrosshair, &texHotbar, &texHotbarSel, &texFont, &texDirt,
                         &texWhite, &texBlack, &texAttackBg, &texAttackProgress, &texPanoramaOverlay,
                         &texHeart[0], &texHeart[1], &texHeart[2],
@@ -98,10 +97,11 @@ void GuiRenderer::BeginFrame() {
 void GuiRenderer::DrawQuad(const GuiTexture* tex, float x, float y, float w, float h,
                           float u0, float v0, float u1, float v1, float shade,
                           float cr, float cg, float cb) {
+    // Preserve submission order: only coalesce with the immediately previous
+    // batch. Keying batches globally by texture would let an early font batch
+    // (splash) draw before later button quads, hiding the button labels.
     Batch* batch = nullptr;
-    for (Batch& b : mBatches) {
-        if (b.tex == tex) { batch = &b; break; }
-    }
+    if (!mBatches.empty() && mBatches.back().tex == tex) batch = &mBatches.back();
     if (!batch) {
         mBatches.push_back({tex, {}});
         batch = &mBatches.back();
@@ -218,7 +218,7 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, const Settings& settings,
         if (ui.texPanoramaOverlay.srv)
             ui.DrawQuad(&ui.texPanoramaOverlay, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
         ui.DrawSprite(&ui.texLogo, cx - ui.texLogo.w * 0.25f, 40, 0.5f, 15);
-        ui.DrawSprite(&ui.texEdition, cx - ui.texEdition.w * 0.5f, 40 + ui.texLogo.h * 0.5f + 2, 1, 15);
+        ui.DrawTextCentered("POTATO EDITION", cx, 40 + ui.texLogo.h * 0.5f + 6, 3, 15, true);
         const float pulse = 2.0f * (1.0f + 0.06f * sinf(timeSec * 6.0f));
         ui.DrawTextCentered(splash, cx + 185, 150, pulse, 15, true, 1, 1, 0);
         mButtons.push_back({cx - 200, 288, 400, 40, "Singleplayer", ACT_SINGLEPLAYER, true});

@@ -373,7 +373,7 @@ static void DrawSkybox() {
     const float yaw = gTimeSec * 0.06f;
     const XMMATRIX view = XMMatrixMultiply(XMMatrixRotationY(yaw), XMMatrixRotationX(-0.12f));
     const XMMATRIX proj = XMMatrixPerspectiveFovRH(
-        1.22f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 100.0f);
+        1.6f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 100.0f);
     SetViewProj(gRC, XMMatrixMultiply(view, proj));
     gRC.device->PSSetShader(gRC.psSky);
     gRC.device->PSSetShaderResources(1, 1, &gRC.panoramaSRV);
