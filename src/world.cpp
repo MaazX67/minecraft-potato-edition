@@ -575,6 +575,10 @@ void World::WorkerLoop() {
                                   mj.posZ ? mj.posZ->blocks : nullptr,
                                   mTiles, md);
             }
+            // Vertices are chunk-local; bake the chunk's world offset so each
+            // chunk lands at its own position instead of stacking at origin.
+            const float ox = float(mj.cx * CHUNK_X), oz = float(mj.cz * CHUNK_Z);
+            for (MeshVertex& v : md.vertices) { v.x += ox; v.z += oz; }
             {
                 std::lock_guard<std::mutex> lk(mQueueMutex);
                 mj.chunk->meshQueued = false;
