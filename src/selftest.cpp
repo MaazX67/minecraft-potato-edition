@@ -55,6 +55,11 @@ int main() {
     one[5 + 16 * 5 + 256 * 64] = BLOCK_STONE;
     BuildChunkMeshCPU(one.data(), nullptr, nullptr, nullptr, nullptr, tiles, md);
     CHECK(md.vertices.size() == 24, "isolated voxel -> 6 quads");
+    bool inPlace = true;
+    for (const MeshVertex& v : md.vertices) {
+        if (v.x < 5 || v.x > 6 || v.y < 64 || v.y > 65 || v.z < 5 || v.z > 6) inPlace = false;
+    }
+    CHECK(inPlace, "voxel quads sit on the voxel (no plane-origin drift)");
 
     std::vector<uint8_t> two(CHUNK_VOL, 0);
     two[5 + 16 * 5 + 256 * 64] = BLOCK_STONE;
@@ -210,7 +215,18 @@ int main() {
         }
         printf("generated chunk mesh: %zu verts, %zu idx, Y=%d X=%d Z=%d\n",
                gm.vertices.size(), gm.indices.size(), qy, qx, qz);
-        CHECK(qy >= 64, "generated chunk meshes surface top faces");
+        int exposedTop = 0;
+        for (int z = 0; z < CHUNK_Z; ++z) {
+            for (int x = 0; x < CHUNK_X; ++x) {
+                for (int y = 0; y < CHUNK_Y - 1; ++y) {
+                    const uint8_t a = cb[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
+                    const uint8_t b = cb[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * (y + 1)];
+                    if ((BLOCK_FLAGS[a] & BF_SOLID) && !(BLOCK_FLAGS[b] & BF_SOLID)) ++exposedTop;
+                }
+            }
+        }
+        printf("exposed top cells: %d\n", exposedTop);
+        CHECK(qy > 0 && qy * 256 >= exposedTop, "greedy top quads cover the exposed surface");
         CHECK(qx + qz > 0, "generated chunk meshes side faces");
     }
 

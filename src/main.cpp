@@ -169,9 +169,9 @@ static uint32_t ParseSeed(const std::string& text) {
     char* end = nullptr;
     const long long v = strtoll(text.c_str(), &end, 10);
     if (end != text.c_str() && *end == '\0') return uint32_t(v);
-    int32_t h = 0;
-    for (char c : text) h = 31 * h + int32_t(uint8_t(c));
-    return uint32_t(h);
+    uint32_t h = 0;
+    for (char c : text) h = 31u * h + uint32_t(uint8_t(c));
+    return h;
 }
 
 static int ResolveTile(const char* tex) {
