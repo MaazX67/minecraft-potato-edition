@@ -7,6 +7,9 @@ cbuffer PerFrame : register(b0)
 {
     row_major float4x4 gViewProj;
     float gBrightness;
+    float gFogStart;
+    float gFogEnd;
+    float gPad;
 };
 
 Texture2D gAtlas : register(t0);
@@ -31,6 +34,7 @@ struct PSIn
     float  shade : TEXCOORD2;
     float3 tint  : TEXCOORD3;
     float3 dir   : TEXCOORD4;  // object-space direction (skybox only)
+    float fogDepth : TEXCOORD5;
 };
 
 PSIn VSMain(VSIn input)
@@ -42,23 +46,29 @@ PSIn VSMain(VSIn input)
     o.shade = input.light / 15.0f;
     o.tint  = input.color;
     o.dir   = input.pos;
+    o.fogDepth = o.pos.w;
     return o;
 }
 
 // World pass: repeat the 16x16 tile across merged greedy quads.
-// frac() gives per-block tiling; +0.5 texel keeps point sampling inside the tile.
+// Quantize to texel centers within each tile at the selected mip level.
 // Alpha test handles cutout blocks (leaves/glass); liquid faces keep their
 // alpha and are drawn in a second blended pass.
 float4 PSMain(PSIn input) : SV_TARGET
 {
-    float2 atlasUV = input.tile + (frac(input.uv) * 16.0f + 0.5f) / 1024.0f;
-    float4 tex = gAtlas.Sample(gPoint, atlasUV);
+    float2 dx = ddx(input.uv) * 16.0f;
+    float2 dy = ddy(input.uv) * 16.0f;
+    float footprint2 = max(dot(dx, dx), dot(dy, dy));
+    float lod = clamp(floor(0.5f * log2(max(footprint2, 1.0f)) + 0.5f), 0.0f, 4.0f);
+    float scale = exp2(lod);
+    float tileSize = 16.0f / scale;
+    float2 atlasUV = input.tile + (floor(frac(input.uv) * tileSize) + 0.5f) * scale / 1024.0f;
+    float4 tex = gAtlas.SampleLevel(gPoint, atlasUV, lod);
     clip(tex.a - 0.5f);
     float lit = input.shade * clamp(0.6f + 0.8f * gBrightness, 0.3f, 1.0f);
     float3 col = tex.rgb * lit * input.tint;
-    // Distance fog blends the render-distance edge into the sky so the world
-    // never ends in a hard cliff. pos.w is view-space depth in RH clip.
-    float fog = smoothstep(96.0f, 144.0f, input.pos.w);
+    float fog = 0.0f;
+    if (gFogEnd > 0.0f) fog = smoothstep(gFogStart, gFogEnd, input.fogDepth);
     col = lerp(col, float3(0.47f, 0.65f, 1.0f), fog);
     return float4(col, tex.a);
 }

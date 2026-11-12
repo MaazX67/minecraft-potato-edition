@@ -32,4 +32,5 @@ target_include_directories(PotatoEdition PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen
 target_link_libraries(PotatoEdition PRIVATE potato_core d3d10 dxgi d3dcompiler dxguid xaudio2)
 
 add_executable(PotatoSelfTest src/selftest.cpp)
-target_link_libraries(PotatoSelfTest PRIVATE potato_core)
+target_include_directories(PotatoSelfTest PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_link_libraries(PotatoSelfTest PRIVATE potato_core d3dcompiler)

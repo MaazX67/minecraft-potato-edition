@@ -1,6 +1,9 @@
 #include "assets.h"
 #include "engine.h"
 #include "world.h"
+#include "shader_embed.h"
+#include <d3dcompiler.h>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -16,7 +19,194 @@ static int gFail = 0;
     else { printf("FAIL: %s\n", msg); ++gFail; } \
 } while (0)
 
+static void TestShaders() {
+    struct Shader { const char* entry; const char* profile; };
+    const Shader shaders[] = {
+        {"VSMain", "vs_4_0"}, {"PSMain", "ps_4_0"},
+        {"PSMainUI", "ps_4_0"}, {"PSMainSky", "ps_4_0"}
+    };
+    for (const Shader& shader : shaders) {
+        ID3DBlob* code = nullptr;
+        ID3DBlob* errors = nullptr;
+        const HRESULT result = D3DCompile(gShaderSource, strlen(gShaderSource), "shader.fx",
+            nullptr, nullptr, shader.entry, shader.profile, D3DCOMPILE_OPTIMIZATION_LEVEL3,
+            0, &code, &errors);
+        if (FAILED(result) && errors)
+            fwrite(errors->GetBufferPointer(), 1, errors->GetBufferSize(), stderr);
+        char label[128];
+        snprintf(label, sizeof(label), "embedded %s compiles as %s", shader.entry, shader.profile);
+        CHECK(SUCCEEDED(result) && code && code->GetBufferSize() > 0, label);
+        if (errors) errors->Release();
+        if (code) code->Release();
+    }
+}
+
+static void TestFrusta() {
+    using namespace DirectX;
+    Frustum unit;
+    ExtractFrustum(XMMatrixIdentity(), unit);
+    CHECK(AABBInFrustum(unit, -1, -1, 0, 1, 1, 1), "identity frustum includes D3D clip volume boundaries");
+    CHECK(!AABBInFrustum(unit, 0, 0, -0.1f, 0, 0, -0.1f), "D3D near plane rejects negative clip Z");
+    CHECK(!AABBInFrustum(unit, 0, 0, 1.1f, 0, 0, 1.1f), "D3D far plane rejects Z greater than W");
+
+    struct CameraCase { float x, y, z, yaw, pitch; };
+    const CameraCase cameras[] = {
+        {0, 0, 0, 0, 0},
+        {8.5f, 65.62f, 8.5f, -28, -19.5f},
+        {8.5f, 65.62f, 8.5f, 0, 0},
+        {8.5f, 65.62f, 8.5f, 90, 0},
+        {8.5f, 65.62f, 8.5f, 180, 0},
+        {8.5f, 65.62f, 8.5f, -90, 0},
+        {-47, 92, 133, 0, 90},
+        {-47, 92, 133, 0, -90},
+        {-123.5f, 180.25f, -41.75f, 133, 27},
+    };
+    const float aspect = 1366.0f / 768.0f;
+    const float fov = XMConvertToRadians(70.0f);
+    const XMMATRIX projection = XMMatrixPerspectiveFovRH(fov, aspect, 0.1f, 1000.0f);
+    bool normalized = true, visible = true, rejected = true, intersecting = true;
+    bool planeEquivalent = true, pointEquivalent = true;
+    int insidePoints = 0, outsidePoints = 0;
+    for (const CameraCase& camera : cameras) {
+        const float yaw = XMConvertToRadians(camera.yaw), pitch = XMConvertToRadians(camera.pitch);
+        const XMVECTOR eye = XMVectorSet(camera.x, camera.y, camera.z, 1);
+        const XMVECTOR forward = XMVectorSet(sinf(yaw) * cosf(pitch), sinf(pitch),
+                                             -cosf(yaw) * cosf(pitch), 0);
+        const XMVECTOR up = fabsf(camera.pitch) == 90.0f ? XMVectorSet(0, 0, 1, 0)
+                                                                       : XMVectorSet(0, 1, 0, 0);
+        const XMMATRIX view = XMMatrixLookAtRH(eye, XMVectorAdd(eye, forward), up);
+        const XMMATRIX vp = XMMatrixMultiply(view, projection);
+        const XMMATRIX inverseView = XMMatrixInverse(nullptr, view);
+        Frustum frustum;
+        ExtractFrustum(vp, frustum);
+        for (const XMFLOAT4& plane : frustum.planes) {
+            const float length = sqrtf(plane.x * plane.x + plane.y * plane.y + plane.z * plane.z);
+            if (fabsf(length - 1.0f) > 1e-5f) normalized = false;
+        }
+        auto worldPoint = [&](float x, float y, float depth) {
+            XMFLOAT3 point;
+            XMStoreFloat3(&point, XMVector3TransformCoord(XMVectorSet(x, y, -depth, 1), inverseView));
+            return point;
+        };
+        auto boxVisible = [&](float x, float y, float depth, float half) {
+            const XMFLOAT3 p = worldPoint(x, y, depth);
+            return AABBInFrustum(frustum, p.x - half, p.y - half, p.z - half,
+                                 p.x + half, p.y + half, p.z + half);
+        };
+        if (!boxVisible(0, 0, 8, 0.25f) || !boxVisible(0, 0, 800, 1)) visible = false;
+        if (boxVisible(0, 0, -8, 0.25f) || boxVisible(0, 0, 0.025f, 0.005f) ||
+            boxVisible(0, 0, 1200, 1) || boxVisible(-40, 0, 8, 0.25f) ||
+            boxVisible(40, 0, 8, 0.25f) || boxVisible(0, -40, 8, 0.25f) ||
+            boxVisible(0, 40, 8, 0.25f)) rejected = false;
+        if (!boxVisible(0, 0, 0.1f, 0.025f) || !boxVisible(0, 0, 1000, 2)) intersecting = false;
+        if (camera.x == 8.5f) {
+            CHECK(AABBInFrustum(frustum, 0, 0, 0, float(CHUNK_X), float(CHUNK_Y), float(CHUNK_Z)),
+                  "spawn chunk remains visible for pitched and cardinal cameras at (8.5,65.62,8.5)");
+        }
+        const float depths[] = {-0.5f, 0.025f, 0.2f, 4, 100, 800, 1200};
+        const float offsets[] = {-2, -0.75f, 0, 0.75f, 2};
+        for (float depth : depths) {
+            for (float ox : offsets) {
+                for (float oy : offsets) {
+                    const float height = depth * tanf(fov * 0.5f);
+                    const XMFLOAT3 p = worldPoint(ox * height * aspect, oy * height, depth);
+                    XMFLOAT4 clip;
+                    XMStoreFloat4(&clip, XMVector4Transform(XMVectorSet(p.x, p.y, p.z, 1), vp));
+                    const float distances[6] = {clip.w + clip.x, clip.w - clip.x,
+                        clip.w + clip.y, clip.w - clip.y, clip.z, clip.w - clip.z};
+                    bool clipInside = true;
+                    for (int i = 0; i < 6; ++i) {
+                        const XMFLOAT4& plane = frustum.planes[i];
+                        const float distance = plane.x * p.x + plane.y * p.y + plane.z * p.z + plane.w;
+                        if ((distance >= 0) != (distances[i] >= 0)) planeEquivalent = false;
+                        if (distances[i] < 0) clipInside = false;
+                    }
+                    if (clipInside) ++insidePoints; else ++outsidePoints;
+                    if (AABBInFrustum(frustum, p.x, p.y, p.z, p.x, p.y, p.z) != clipInside)
+                        pointEquivalent = false;
+                }
+            }
+        }
+    }
+    CHECK(normalized, "translated and rotated frusta have normalized planes");
+    CHECK(visible, "forward AABBs are visible in all six cardinal and oblique orientations");
+    CHECK(rejected, "AABBs behind, before near, beyond far and outside each side are rejected");
+    CHECK(intersecting, "AABBs crossing near and far planes remain visible");
+    CHECK(planeEquivalent, "all six extracted plane signs match homogeneous D3D clip inequalities");
+    CHECK(pointEquivalent && insidePoints > 0 && outsidePoints > 0,
+          "point AABB visibility matches direct clip-space tests for translated and rotated cameras");
+}
+
+static void CheckBoxMesh(const MeshData& mesh, float minX, float minY, float minZ,
+                         float maxX, float maxY, float maxZ) {
+    CHECK(mesh.vertices.size() == 24 && mesh.indices.size() == 36, "box mesh has six indexed quads");
+    if (mesh.vertices.size() != 24 || mesh.indices.size() != 36) return;
+    const float lo[3] = {minX, minY, minZ}, hi[3] = {maxX, maxY, maxZ};
+    int faces[6] = {};
+    bool winding = true, vertical = true, horizontal = true, extents = true, bounds = true;
+    for (size_t q = 0; q < mesh.vertices.size(); q += 4) {
+        const MeshVertex* v = &mesh.vertices[q];
+        int axis = -1;
+        for (int d = 0; d < 3; ++d) {
+            const float position = d == 0 ? v[0].x : (d == 1 ? v[0].y : v[0].z);
+            bool planar = true;
+            for (int k = 1; k < 4; ++k) {
+                if ((d == 0 ? v[k].x : (d == 1 ? v[k].y : v[k].z)) != position) planar = false;
+            }
+            if (planar) axis = d;
+        }
+        if (axis < 0) { bounds = false; continue; }
+        const float position = axis == 0 ? v[0].x : (axis == 1 ? v[0].y : v[0].z);
+        const int sign = position == lo[axis] ? -1 : (position == hi[axis] ? 1 : 0);
+        if (sign == 0) { bounds = false; continue; }
+        ++faces[axis * 2 + (sign > 0 ? 1 : 0)];
+        for (int t = 0; t < 6; t += 3) {
+            const size_t index = q / 4 * 6 + t;
+            const uint32_t ia = mesh.indices[index], ib = mesh.indices[index + 1], ic = mesh.indices[index + 2];
+            if (ia < q || ia >= q + 4 || ib < q || ib >= q + 4 || ic < q || ic >= q + 4) {
+                winding = false;
+                continue;
+            }
+            const MeshVertex& a = mesh.vertices[ia];
+            const MeshVertex& b = mesh.vertices[ib];
+            const MeshVertex& c = mesh.vertices[ic];
+            const float ab[3] = {b.x - a.x, b.y - a.y, b.z - a.z};
+            const float ac[3] = {c.x - a.x, c.y - a.y, c.z - a.z};
+            const float normal[3] = {ab[1] * ac[2] - ab[2] * ac[1],
+                ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]};
+            if (normal[axis] * sign <= 0 || normal[(axis + 1) % 3] != 0 ||
+                normal[(axis + 2) % 3] != 0) winding = false;
+        }
+        float minU = v[0].u, maxU = v[0].u, minV = v[0].v, maxV = v[0].v;
+        for (int k = 0; k < 4; ++k) {
+            const float p[3] = {v[k].x, v[k].y, v[k].z};
+            for (int d = 0; d < 3; ++d) if (p[d] != lo[d] && p[d] != hi[d]) bounds = false;
+            minU = std::min(minU, v[k].u); maxU = std::max(maxU, v[k].u);
+            minV = std::min(minV, v[k].v); maxV = std::max(maxV, v[k].v);
+            for (int j = 0; j < 4; ++j) {
+                const float dx = v[j].x - v[k].x, dy = v[j].y - v[k].y, dz = v[j].z - v[k].z;
+                const float du = v[j].u - v[k].u, dv = v[j].v - v[k].v;
+                if (axis != 1 && dv != -dy) vertical = false;
+                const float expectedU = axis == 0 ? -sign * dz : sign * (axis == 1 ? dz : dx);
+                if (du != expectedU) horizontal = false;
+            }
+        }
+        const float width = axis == 2 ? maxX - minX : maxZ - minZ;
+        const float height = axis == 1 ? maxX - minX : maxY - minY;
+        if (minU != 0 || minV != 0 || maxU != width || maxV != height) extents = false;
+    }
+    for (int count : faces) if (count != 1) bounds = false;
+    CHECK(bounds, "box has exactly one quad on each positive and negative face");
+    CHECK(winding, "both indexed triangles on every box face have outward cross products");
+    CHECK(vertical, "side-face V decreases one tile per block as Y increases on both X and Z faces");
+    CHECK(horizontal, "face U follows horizontal distance with consistent opposite-face mirroring");
+    CHECK(extents, "merged quad UV extents preserve one tile per block on both axes");
+}
+
 int main() {
+    TestShaders();
+    TestFrusta();
+
     // --- Perlin determinism and bounds ---
     PerlinNoise a(1337), b(1337), c(7);
     bool same = true, bounded = true, differs = false;
@@ -50,6 +240,7 @@ int main() {
         if (v.light == 8) hasBottom = true;
     }
     CHECK(hasTop && hasBottom, "face light levels present (top 15, bottom 8)");
+    CheckBoxMesh(md, 0, 0, 0, float(CHUNK_X), float(CHUNK_Y), float(CHUNK_Z));
 
     std::vector<uint8_t> one(CHUNK_VOL, 0);
     one[5 + 16 * 5 + 256 * 64] = BLOCK_STONE;
@@ -66,12 +257,27 @@ int main() {
         }
     }
     CHECK(inPlace, "voxel quads sit on the voxel (no plane-origin drift)");
+    CheckBoxMesh(md, 5, 64, 5, 6, 65, 6);
 
     std::vector<uint8_t> two(CHUNK_VOL, 0);
     two[5 + 16 * 5 + 256 * 64] = BLOCK_STONE;
     two[6 + 16 * 5 + 256 * 64] = BLOCK_STONE;
     BuildChunkMeshCPU(two.data(), nullptr, nullptr, nullptr, nullptr, tiles, md);
     CHECK(md.vertices.size() == 24, "two adjacent voxels merge to 6 quads (10 faces -> 6)");
+    CheckBoxMesh(md, 5, 64, 5, 7, 65, 6);
+
+    {
+        std::vector<uint8_t> prism(CHUNK_VOL, BLOCK_AIR);
+        for (int y = 60; y < 65; ++y)
+            for (int z = 4; z < 11; ++z)
+                for (int x = 3; x < 6; ++x)
+                    prism[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = BLOCK_GRASS;
+        MeshData merged;
+        BuildChunkMeshCPU(prism.data(), nullptr, nullptr, nullptr, nullptr, tiles, merged);
+        CHECK(merged.vertices.size() == 24 && merged.indices.size() == 36,
+              "3x5x7 grass prism merges to six non-square quads");
+        CheckBoxMesh(merged, 3, 60, 4, 6, 65, 11);
+    }
 
     // --- Raycast ---
     auto get = [&](int, int y, int) -> uint8_t {
@@ -305,6 +511,7 @@ int main() {
     BuildChunkMeshCPU(water.data(), nullptr, nullptr, nullptr, nullptr, tiles, wm);
     CHECK(wm.opaqueIndexCount == 0 && wm.indices.size() == 36,
           "isolated water block meshes to 6 liquid quads (opaque count 0)");
+    CheckBoxMesh(wm, 5, 64, 5, 6, 65, 6);
 
     // --- Player physics: gravity, landing, jump ---
     {

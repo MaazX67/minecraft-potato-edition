@@ -4,6 +4,35 @@
 
 namespace potato {
 
+void ExtractFrustum(const DirectX::XMMATRIX& vp, Frustum& f) {
+    using namespace DirectX;
+    const XMMATRIX columns = XMMatrixTranspose(vp);
+    const XMVECTOR c0 = columns.r[0], c1 = columns.r[1], c2 = columns.r[2], c3 = columns.r[3];
+    const XMVECTOR p[6] = {
+        XMVectorAdd(c3, c0),       // left
+        XMVectorSubtract(c3, c0),  // right
+        XMVectorAdd(c3, c1),       // bottom
+        XMVectorSubtract(c3, c1),  // top
+        c2,                       // near: z >= 0
+        XMVectorSubtract(c3, c2),  // far: w - z >= 0
+    };
+    for (int i = 0; i < 6; ++i) {
+        XMStoreFloat4(&f.planes[i], XMPlaneNormalize(p[i]));
+    }
+}
+
+bool AABBInFrustum(const Frustum& f, float minX, float minY, float minZ,
+                   float maxX, float maxY, float maxZ) {
+    for (int i = 0; i < 6; ++i) {
+        const DirectX::XMFLOAT4& pl = f.planes[i];
+        const float px = pl.x >= 0 ? maxX : minX;
+        const float py = pl.y >= 0 ? maxY : minY;
+        const float pz = pl.z >= 0 ? maxZ : minZ;
+        if (pl.x * px + pl.y * py + pl.z * pz + pl.w < 0) return false;
+    }
+    return true;
+}
+
 float SystemTimeMs() {
     static LARGE_INTEGER freq = [] {
         LARGE_INTEGER f;

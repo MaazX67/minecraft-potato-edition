@@ -248,18 +248,23 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
                         vert.z = p[2] + e1[2] * fx + e2[2] * fy;
                         vert.tu = tileU;
                         vert.tv = tileV;
-                        vert.u = corners[c][0];
-                        vert.v = corners[c][1];
+                        if (d == 0) {
+                            vert.u = cell.sign > 0 ? float(h) - corners[c][1] : corners[c][1];
+                            vert.v = float(w) - corners[c][0];
+                        } else {
+                            vert.u = cell.sign > 0 ? corners[c][0] : float(w) - corners[c][0];
+                            vert.v = d == 2 ? float(h) - corners[c][1] : corners[c][1];
+                        }
                         vert.light = float(cell.light);
                         vert.cr = vert.cg = vert.cb = 1.0f;
                         dst.vertices.push_back(vert);
                     }
                     dst.indices.push_back(base);
-                    dst.indices.push_back(base + 1);
-                    dst.indices.push_back(base + 2);
+                    dst.indices.push_back(base + (cell.sign > 0 ? 1 : 2));
+                    dst.indices.push_back(base + (cell.sign > 0 ? 2 : 1));
                     dst.indices.push_back(base);
-                    dst.indices.push_back(base + 2);
-                    dst.indices.push_back(base + 3);
+                    dst.indices.push_back(base + (cell.sign > 0 ? 2 : 3));
+                    dst.indices.push_back(base + (cell.sign > 0 ? 3 : 2));
 
                     for (int hh = 0; hh < h; ++hh)
                         for (int ww = 0; ww < w; ++ww)

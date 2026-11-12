@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <DirectXMath.h>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -18,6 +19,13 @@ constexpr int MAX_UPLOADS_PER_FRAME = 8;    // mesh GPU uploads
 constexpr int MAX_EVICTS_PER_FRAME = 4;     // subchunk memory cleanup sweeps
 constexpr int MAX_GPU_SWEEP_PER_FRAME = 32; // evicted-GPU-entry checks
 constexpr int MAX_PARTICLES = 256;
+
+struct Frustum {
+    DirectX::XMFLOAT4 planes[6];
+};
+void ExtractFrustum(const DirectX::XMMATRIX& vp, Frustum& f);
+bool AABBInFrustum(const Frustum& f, float minX, float minY, float minZ,
+                   float maxX, float maxY, float maxZ);
 
 // Raw QueryPerformanceCounter milliseconds. Combat timing uses this directly
 // so a clamped render delta can never skew the 1.9+ cooldown math.

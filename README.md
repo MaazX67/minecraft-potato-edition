@@ -13,18 +13,22 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 ## What works so far
 
 - Infinite world with Perlin terrain, beaches, caves, ores, oak trees and water
-- Create New World screen: world name, seed (blank = random, numbers and text seeds follow Java's rules) and Survival/Creative game modes
+- Create New World: Game / World / More tabs, name, seed, draft difficulty and Survival/Creative modes; unavailable features stay disabled
+- Seeds currently use a 32-bit generator; terrain and seed results do not match Java Edition
 - Chunk streaming with a render-distance setting, two worker threads, greedy meshing and frustum culling
 - Survival: health, hunger, fall damage, sprinting and swimming — no flying
 - Creative: double-tap-space flight, no hearts/hunger on the HUD
-- 1.9-style combat — damage scales with the attack cooldown, and hitting above 90% strength while falling crits
+- Tested attack-cooldown math; there are not yet mobs or entity combat
 - Break and place blocks, selection outline, positioned 3D sound
 - Footsteps per material, water splash, fall-damage hurt and UI click sounds
 - Menus: title screen with rotating splash text and the panorama background, pause menu, death screen
-- Options with the vanilla slider widgets: FOV, render distance, sensitivity, sound/music volume, brightness, view bobbing, vsync, fullscreen, difficulty
+- Separate video, sound and controls pages with persistent FOV, render distance, sensitivity, master volume, brightness, view bobbing, VSync and fullscreen
+- Local/offline profiles with username, nine installed default skins, wide/slim models, and a textured inventory preview; no Microsoft account integration
+- Survival inventory and crafting table: stack counts, splitting, shift transfers, ingredient consumption, and safe return of cursor/crafting items
 - HUD with hearts, hunger, hotbar and the attack-cooldown indicator
 - 50 blocks using the real vanilla textures
-- A headless test suite (48 checks) that runs on every CI build
+- Headless regression tests run on every cloud build, covering camera frusta, mesh orientation, item conservation, crafting and survival rules
+- Native Windows smoke tests exercise real clicks and compare screenshot sidecars against expected inventory state
 
 ## Controls
 
@@ -34,7 +38,7 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 | `Space` / `Shift` | Jump / sneak (Creative: double-tap `Space` toggles flight) |
 | Mouse | Look |
 | Left click | Break block, or attack |
-| Right click | Place the selected block |
+| Right click | Place a block or open a crafting table; `Shift` bypasses opening |
 | `1`–`9`, mouse wheel | Select hotbar slot |
 | `E` | Inventory |
 | `F2` | Screenshot (saved to `screenshots/`) |
@@ -53,14 +57,25 @@ cmake --build build --config Release --parallel
 
 Every push to `main` runs the same thing on GitHub Actions: configure, release build, run the
 headless tests, upload the exe as a build artifact, and publish it to the `v1.0.0-Alpha`
-release. So the download is always the current commit.
+release. The release executable is the last successful cloud build; hardware testing runs separately.
+
+Run the native checks on Windows with the downloaded executable and an existing output directory:
+
+```powershell
+.\native-smoke.ps1 -Exe C:\Games\PotatoEdition.exe -OutputRoot C:\Temp
+```
+
+The script launches its own isolated test instance, keeps fresh screenshots and state assertions, and closes it normally. Test profiles stay in the output directory; regular preferences live under `%APPDATA%\MinecraftPotatoEdition\preferences.json`.
 
 ## Still to do
 
-- Mobs and the item/crafting system
-- A proper Java-style inventory screen
-- Day/night cycle, weather, and world save/load
-- Subtitles
+- World save/load; block edits currently disappear after chunk eviction or application exit
+- Java terrain/biomes, structures, 64-bit seed parity and flowing liquids
+- Mobs, entities, tool-aware mining, loot, equipment, furnaces and the full item/recipe registry
+- Armor/offhand mechanics, third-person player rendering, custom skin import and account integration
+- Day/night cycle, weather, music, subtitles, multiplayer, game rules, data packs and experiments
+
+[Java 26.3](https://www.minecraft.net/en-us/article/minecraft-java-edition-26-3) is the reference baseline, not a claim of full compatibility. The version is checked against [Mojang's release manifest](https://piston-meta.mojang.com/mc/game/version_manifest_v2.json) and the locally installed client. This remains an incomplete implementation.
 
 ## Engine notes
 
@@ -73,8 +88,7 @@ A few decisions worth writing down, since they aren't obvious from the code:
   in one blended pass after the opaque geometry.
 - **Streaming** is time-sliced: uploads, chunk evictions and the GPU buffer sweep all have
   per-frame budgets, so a big chunk load never stalls the render thread.
-- **Atlas** is a single 1024×1024 point-sampled texture holding all 16×16 block tiles. Cutout
-  blocks (leaves, glass) are alpha-tested in the pixel shader.
+- **Atlas** is a 1024×1024 texture with five tile-aligned mip levels. The shader samples texel centers inside each tile, reducing distant shimmer without bleeding neighboring textures. Cutout blocks remain alpha-tested.
 - **Audio** is XAudio2 with a pool of pre-created voices. Sound requests go through a lock-free
   ring queue to a background thread, so the render thread never touches the audio device.
 

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "sound.h"
 #include "gui.h"
 #include "shader_embed.h"
+#include "json.hpp"
 
 using namespace potato;
 using namespace DirectX;
@@ -35,6 +37,10 @@ static HWND gHwnd = nullptr;
 static Screen gScreen = Screen::Title;
 static Screen gOptionsReturn = Screen::Title;
 static Settings gSettings;
+static PlayerProfile gProfile;
+static PlayerProfile gProfileDraft;
+static Screen gProfileReturn = Screen::Title;
+static bool gProfileNameSelected = false;
 static FlyCamera gCamera;
 static PlayerBody gBody;
 static SurvivalState gSurvival;
@@ -44,6 +50,7 @@ static ParticleSystem gParticles;
 static RenderContext gRC;
 static Atlas gAtlas;
 static AssetStore gStore;
+static std::string gAssetVersion = "unknown";
 static BlockTiles gTiles;
 static GuiRenderer gGui;
 static MenuSystem gMenu;
@@ -79,15 +86,44 @@ static uint32_t gWorldSeed = 1337;
 static InventoryState gInventory;
 static bool gCraftTable = false;
 static bool gInventoryTest = false;
+static bool gAutomation = false;
+static bool gFocused = true;
+static bool gCursorCaptured = false;
 static std::string gInventoryMessage;
+
+static void SetScreen(HWND hwnd, Screen s);
+static void UpdateCursorCapture(HWND hwnd);
 
 static bool IsWorldScreen(Screen s) {
     return s == Screen::Game || s == Screen::Pause || s == Screen::Inventory || s == Screen::Death;
 }
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (gAutomation) {
+        if (msg == WM_APP + 1) {
+            gInput.mouseDX += float(int(wp));
+            gInput.mouseDY += float(int(lp));
+            return 0;
+        }
+        if (msg >= WM_APP + WM_KEYFIRST && msg <= WM_APP + WM_MOUSELAST) {
+            msg -= WM_APP;
+        } else if ((msg >= WM_KEYFIRST && msg <= WM_KEYLAST) ||
+                   (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST)) {
+            return 0;
+        }
+    }
     switch (msg) {
+        case WM_ACTIVATEAPP:
+            gFocused = wp != 0;
+            if (!gFocused && !gAutomation) {
+                gInput = InputState{};
+                if (gScreen == Screen::Game) SetScreen(hwnd, Screen::Pause);
+            }
+            UpdateCursorCapture(hwnd);
+            return 0;
         case WM_INPUT: {
+            if (gAutomation || !gFocused || gScreen != Screen::Game)
+                return DefWindowProcA(hwnd, msg, wp, lp);
             UINT size = 0;
             GetRawInputData(reinterpret_cast<HRAWINPUT>(lp), RID_INPUT, nullptr, &size,
                             sizeof(RAWINPUTHEADER));
@@ -100,7 +136,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 gInput.mouseDX += float(ri->data.mouse.lLastX);
                 gInput.mouseDY += float(ri->data.mouse.lLastY);
             }
-            return 0;
+            return DefWindowProcA(hwnd, msg, wp, lp);
         }
         case WM_MOUSEMOVE:
             gInput.mouseX = GET_X_LPARAM(lp);
@@ -134,13 +170,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         default:
             return DefWindowProcA(hwnd, msg, wp, lp);
     }
+    return DefWindowProcA(hwnd, msg, wp, lp);
 }
 
-static void SetScreen(HWND hwnd, Screen s) {
-    gScreen = s;
-    const bool inGame = s == Screen::Game;
-    ShowCursor(inGame ? FALSE : TRUE);
-    if (inGame) {
+static void UpdateCursorCapture(HWND hwnd) {
+    const bool capture = gScreen == Screen::Game && gFocused && !gAutomation;
+    if (capture == gCursorCaptured) return;
+    gCursorCaptured = capture;
+    ShowCursor(capture ? FALSE : TRUE);
+    if (capture) {
         RECT client;
         GetClientRect(hwnd, &client);
         POINT tl = {0, 0};
@@ -152,6 +190,14 @@ static void SetScreen(HWND hwnd, Screen s) {
     } else {
         ClipCursor(nullptr);
     }
+}
+
+static void SetScreen(HWND hwnd, Screen s) {
+    gScreen = s;
+    gInput.mouseDX = gInput.mouseDY = 0;
+    gInput.leftClick = gInput.rightClick = false;
+    gInput.wheel = 0;
+    UpdateCursorCapture(hwnd);
 }
 
 static void StartGame() {
@@ -215,10 +261,77 @@ static void ApplyFullscreen() {
     }
 }
 
+static std::string PreferencesPath() {
+    if (gAutomation) return "preferences.json";
+    char appData[MAX_PATH] = {};
+    const DWORD length = GetEnvironmentVariableA("APPDATA", appData, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return {};
+    const std::string directory = std::string(appData) + "/MinecraftPotatoEdition";
+    if (!CreateDirectoryA(directory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return {};
+    return directory + "/preferences.json";
+}
+
+static bool SavePreferences() {
+    const std::string path = PreferencesPath();
+    if (path.empty()) return false;
+    const nlohmann::json data = {
+        {"name", gProfile.name}, {"skin", gProfile.skin}, {"slim", gProfile.slim},
+        {"renderDistance", gSettings.renderDistance}, {"fov", gSettings.fov},
+        {"sensitivity", gSettings.sensitivity}, {"sound", gSettings.sound},
+        {"soundVolume", gSettings.soundVolume}, {"brightness", gSettings.brightness},
+        {"viewBobbing", gSettings.viewBobbing}, {"vsync", gSettings.vsync},
+        {"fullscreen", gSettings.fullscreen}, {"difficulty", gSettings.difficulty}
+    };
+    const std::string pending = path + ".tmp";
+    std::ofstream file(pending, std::ios::binary | std::ios::trunc);
+    file << data.dump(2);
+    file.close();
+    return !file.fail() && MoveFileExA(pending.c_str(), path.c_str(),
+                                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+}
+
+static void LoadPreferences() {
+    std::ifstream file(PreferencesPath(), std::ios::binary);
+    if (!file) return;
+    const nlohmann::json data = nlohmann::json::parse(file, nullptr, false);
+    if (!data.is_object()) return;
+    try {
+        PlayerProfile profile;
+        Settings settings;
+        profile.name = data.value("name", profile.name);
+        if (!IsValidPlayerName(profile.name)) profile.name = "Player";
+        profile.skin = std::clamp(data.value("skin", 0), 0, 8);
+        profile.slim = data.value("slim", false);
+        settings.renderDistance = std::clamp(data.value("renderDistance", 8), 2, 16);
+        settings.fov = std::clamp(data.value("fov", 70.0f), 30.0f, 110.0f);
+        settings.sensitivity = std::clamp(data.value("sensitivity", 0.0025f), 0.0f, 0.005f);
+        settings.sound = data.value("sound", true);
+        settings.soundVolume = std::clamp(data.value("soundVolume", 1.0f), 0.0f, 1.0f);
+        settings.brightness = std::clamp(data.value("brightness", 0.5f), 0.0f, 1.0f);
+        settings.viewBobbing = data.value("viewBobbing", true);
+        settings.vsync = data.value("vsync", false);
+        settings.fullscreen = data.value("fullscreen", false);
+        settings.difficulty = std::clamp(data.value("difficulty", 2), 0, 3);
+        gProfile = profile;
+        gSettings = settings;
+    } catch (const nlohmann::json::exception&) {
+        return;
+    }
+}
+
+static void ProfileSkinChanged(const PlayerProfile& previous) {
+    if (!gGui.LoadPlayerSkin(gRC, gStore, gProfileDraft)) {
+        gProfileDraft = previous;
+        gActionBar = "Selected skin could not be loaded from the local Java assets.";
+        gActionBarUntil = gNowMs + 4000;
+    }
+}
+
 static void HandleMenuAction(int action) {
     if (action != ACT_NONE) gSound.Play(SND_CLICK);
     switch (action) {
         case ACT_SINGLEPLAYER:
+            gCreate.difficulty = gSettings.difficulty;
             SetScreen(gHwnd, Screen::CreateWorld);
             break;
         case ACT_RESPAWN:
@@ -237,6 +350,7 @@ static void HandleMenuAction(int action) {
             gWorld = new World(gWorldSeed, gSettings.renderDistance);
             gWorld->SetBlockTiles(gTiles);
             gGameMode = gCreate.gameMode & 1;
+            gSettings.difficulty = gCreate.difficulty;
             gInventory = InventoryState{};
             gCraftTable = false;
             gInventoryMessage.clear();
@@ -258,6 +372,9 @@ static void HandleMenuAction(int action) {
         case ACT_CREATE_TAB_WORLD:
             gCreate.tab = 1; gCreate.focus = 2;
             break;
+        case ACT_CREATE_TAB_MORE:
+            gCreate.tab = 2; gCreate.focus = 0;
+            break;
         case ACT_RESUME:
             SetScreen(gHwnd, Screen::Game);
             break;
@@ -266,8 +383,54 @@ static void HandleMenuAction(int action) {
             SetScreen(gHwnd, Screen::Options);
             break;
         case ACT_OPTIONS_DONE:
-            SetScreen(gHwnd, gOptionsReturn);
+            if (!SavePreferences()) {
+                gActionBar = "Could not save preferences.";
+                gActionBarUntil = gNowMs + 4000;
+            }
+            SetScreen(gHwnd, gScreen == Screen::Options ? gOptionsReturn : Screen::Options);
             break;
+        case ACT_VIDEO_OPTIONS:
+            SetScreen(gHwnd, Screen::VideoOptions);
+            break;
+        case ACT_SOUND_OPTIONS:
+            SetScreen(gHwnd, Screen::SoundOptions);
+            break;
+        case ACT_CONTROLS_OPTIONS:
+            SetScreen(gHwnd, Screen::ControlsOptions);
+            break;
+        case ACT_PROFILE:
+            gProfileReturn = gScreen;
+            gProfileDraft = gProfile;
+            gProfileNameSelected = false;
+            SetScreen(gHwnd, Screen::Profile);
+            break;
+        case ACT_PROFILE_DONE: {
+            if (!IsValidPlayerName(gProfileDraft.name)) break;
+            const PlayerProfile previous = gProfile;
+            gProfile = gProfileDraft;
+            if (!SavePreferences()) {
+                gProfile = previous;
+                gActionBar = "Could not save the local profile.";
+                gActionBarUntil = gNowMs + 4000;
+                break;
+            }
+            SetScreen(gHwnd, gProfileReturn);
+            break;
+        }
+        case ACT_PROFILE_CANCEL:
+            gProfileDraft = gProfile;
+            gGui.LoadPlayerSkin(gRC, gStore, gProfile);
+            SetScreen(gHwnd, gProfileReturn);
+            break;
+        case ACT_SKIN_PREV:
+        case ACT_SKIN_NEXT:
+        case ACT_SKIN_MODEL: {
+            const PlayerProfile previous = gProfileDraft;
+            if (action == ACT_SKIN_MODEL) gProfileDraft.slim = !gProfileDraft.slim;
+            else gProfileDraft.skin = (gProfileDraft.skin + (action == ACT_SKIN_NEXT ? 1 : 8)) % 9;
+            ProfileSkinChanged(previous);
+            break;
+        }
         case ACT_QUIT:
             gRunning = false;
             break;
@@ -307,7 +470,8 @@ static void HandleMenuAction(int action) {
             ApplyFullscreen();
             break;
         case ACT_CYCLE_DIFF:
-            gSettings.difficulty = (gSettings.difficulty + 1) & 3;
+            if (gScreen == Screen::CreateWorld) gCreate.difficulty = (gCreate.difficulty + 1) & 3;
+            else gSettings.difficulty = (gSettings.difficulty + 1) & 3;
             break;
         default:
             break;
@@ -398,6 +562,31 @@ static void UploadMeshes() {
     if (it == gGpu.end()) gSweepCursor = 0;
 }
 
+static void SaveTestState(const char* screenshot) {
+    if (!gAutomation) return;
+    auto slotJson = [](const ItemSlot& slot) {
+        return nlohmann::json{{"item", slot.Empty() ? "air" : BLOCK_DEFS[slot.id].name},
+                              {"count", slot.count}};
+    };
+    nlohmann::json state = {
+        {"screen", int(gScreen)}, {"table", gCraftTable}, {"selected", gHotbarSlot},
+        {"cursor", slotJson(gInventory.cursor)}, {"result", slotJson(gInventory.Result(gCraftTable))},
+        {"position", {gBody.x, gBody.y, gBody.z}}, {"yaw", gCamera.yaw}, {"pitch", gCamera.pitch},
+        {"draftDifficulty", gCreate.difficulty}, {"difficulty", gSettings.difficulty},
+        {"tab", gCreate.tab}, {"seed", gCreate.seed}, {"profileName", gProfile.name},
+        {"draftName", gProfileDraft.name}, {"skin", gProfileDraft.skin}, {"slim", gProfileDraft.slim},
+        {"fov", gSettings.fov}, {"renderDistance", gSettings.renderDistance},
+        {"volume", gSettings.soundVolume}, {"sensitivity", gSettings.sensitivity},
+        {"assetVersion", gAssetVersion}, {"skinLoaded", gGui.texSkin.srv != nullptr}
+    };
+    state["slots"] = nlohmann::json::array();
+    for (const auto& slot : gInventory.slots) state["slots"].push_back(slotJson(slot));
+    state["craft"] = nlohmann::json::array();
+    for (const auto& slot : gInventory.craft) state["craft"].push_back(slotJson(slot));
+    std::ofstream file(std::string(screenshot) + ".json", std::ios::binary);
+    file << state.dump(2);
+}
+
 static void SaveScreenshot() {
     ID3D10Texture2D* back = nullptr;
     if (FAILED(gRC.swapChain->GetBuffer(0, IID_PPV_ARGS(&back))) || !back) return;
@@ -417,7 +606,8 @@ static void SaveScreenshot() {
             CreateDirectoryA("screenshots", nullptr);
             static int shotIdx = 0;
             char path[128];
-            snprintf(path, sizeof(path), "screenshots/shot_%03d.bmp", shotIdx++);
+            snprintf(path, sizeof(path), "screenshots/shot_%llu_%03d.bmp",
+                     static_cast<unsigned long long>(GetTickCount64()), shotIdx++);
             FILE* f = fopen(path, "wb");
             if (f) {
                 const uint32_t w = bd.Width, h = bd.Height;
@@ -449,6 +639,7 @@ static void SaveScreenshot() {
                     fwrite(row.data(), 1, rowBytes, f);
                 }
                 fclose(f);
+                SaveTestState(path);
                 gActionBar = "Saved screenshot";
                 gActionBarUntil = gNowMs + 2000;
             }
@@ -744,7 +935,7 @@ static void DrawWorld() {
     const XMMATRIX vp = XMMatrixMultiply(view, proj);
     Frustum frustum;
     ExtractFrustum(vp, frustum);
-    SetViewProj(gRC, vp);
+    SetViewProj(gRC, vp, float(gSettings.renderDistance * CHUNK_X));
     gRC.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
     gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
@@ -843,6 +1034,8 @@ static void DrawDebug() {
     row(line);
     snprintf(line, sizeof(line), "Mode: %s  Seed: %u", gGameMode ? "Creative" : "Survival", gWorldSeed);
     row(line);
+    snprintf(line, sizeof(line), "Local player: %s  Assets: Java %s", gProfile.name.c_str(), gAssetVersion.c_str());
+    row(line);
     if (gHaveTarget) {
         const uint8_t tb = gWorld->GetBlock(gTargetX, gTargetY, gTargetZ);
         snprintf(line, sizeof(line), "Target: %d %d %d (%s)", gTargetX, gTargetY, gTargetZ,
@@ -861,7 +1054,7 @@ static void RenderFrame() {
     gRC.device->ClearRenderTargetView(gRC.rtv, sky);
     gRC.device->ClearDepthStencilView(gRC.dsv, D3D10_CLEAR_DEPTH, 1.0f, 0);
 
-    const bool menuBg = (gScreen == Screen::Title || gScreen == Screen::Options);
+    const bool menuBg = !IsWorldScreen(gScreen);
     if (menuBg && gRC.panoramaSRV) {
         DrawSkybox();
     } else if (IsWorldScreen(gScreen)) {
@@ -885,13 +1078,15 @@ static void RenderFrame() {
         else
             DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gHotbarSlot, gHotbar);
     } else {
-        if (gScreen == Screen::CreateWorld || (menuBg && !gRC.panoramaSRV)) {
+        if (menuBg && !gRC.panoramaSRV) {
             gGui.DrawQuad(&gGui.texDirt, 0, 0, SCREEN_W, SCREEN_H, 0, 0,
                           SCREEN_W / 64.0f, SCREEN_H / 64.0f, 8);
         }
         gMenu.Draw(gGui, gScreen, gSettings, gCreate, gInput.typed,
-                   gInput.mouseX, gInput.mouseY, gInput.leftDown, gSplash, gTimeSec);
+                   gInput.mouseX, gInput.mouseY, gInput.leftDown, gSplash, gTimeSec, gProfileDraft);
         if (gMenu.ConsumeChanged()) ApplySettings();
+        if (gNowMs < gActionBarUntil)
+            gGui.DrawTextCentered(gActionBar, SCREEN_W * 0.5f, SCREEN_H - 40.0f, 2, 15, true);
     }
     gGui.Flush(gRC);
     gRC.swapChain->Present(gSettings.vsync ? 1 : 0, 0);
@@ -911,7 +1106,11 @@ static void LoadSplash() {
 }
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
+    gAutomation = strstr(GetCommandLineA(), "--automation") != nullptr;
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    LoadPreferences();
+    gProfileDraft = gProfile;
+    gCreate.difficulty = gSettings.difficulty;
 
     WNDCLASSEXA wc = {};
     wc.cbSize = sizeof(wc);
@@ -964,6 +1163,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (!parsed.empty()) jarPath = parsed;
     }
     const bool jarOk = !jarPath.empty() && gStore.LoadJar(jarPath);
+    if (jarOk) {
+        ZipArchive versionArchive;
+        std::vector<uint8_t> versionBytes;
+        if (versionArchive.Open(jarPath) && versionArchive.Read("version.json", versionBytes)) {
+            const auto version = nlohmann::json::parse(versionBytes.begin(), versionBytes.end(), nullptr, false);
+            if (version.is_object() && version.contains("id") && version["id"].is_string())
+                gAssetVersion = version["id"].get<std::string>();
+        }
+    }
     const int tilesLoaded = (storeOk || jarOk) ? BuildBlockAtlas(gStore, gAtlas) : 0;
     if (tilesLoaded == 0) {
         gAtlas.AddCheckerTile("__missing");
@@ -973,7 +1181,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                     "Running with checker textures. Overrides: --assets <index.json> --jar <client.jar>",
                     "Potato Edition - assets missing", MB_ICONWARNING);
     }
-    gRC.atlasSRV = CreateTextureSRV(gRC, gAtlas.Pixels(), ATLAS_SIZE, ATLAS_SIZE);
+    gRC.atlasSRV = CreateBlockAtlasSRV(gRC, gAtlas.Pixels(), ATLAS_SIZE, ATLAS_SIZE);
     if (strstr(GetCommandLineA(), "--dump-atlas")) DumpAtlas();
     for (int b = 1; b < BLOCK_COUNT; ++b) {
         gTiles.top[b] = ResolveTile(BLOCK_DEFS[b].top);
@@ -982,6 +1190,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
 
     if (!gGui.Init(gRC, gStore)) return 1;
+    if (!gGui.LoadPlayerSkin(gRC, gStore, gProfile)) {
+        gActionBar = "Player skin missing from the local Java assets.";
+        gActionBarUntil = SystemTimeMs() + 4000;
+    }
     gSound.Init(gStore);
     CreatePanorama(gRC, gStore); // optional; null falls back to dirt title
     LoadSplash();
@@ -1014,6 +1226,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     gWorld = new World(1337, gSettings.renderDistance);
     gWorld->SetBlockTiles(gTiles);
     ApplySettings();
+    if (gSettings.fullscreen && !gAutomation) ApplyFullscreen();
     gInventoryTest = strstr(GetCommandLineA(), "--inventory-test") != nullptr;
     if (gInventoryTest) {
         gInventory.slots[27] = {BLOCK_LOG, 1};
@@ -1029,6 +1242,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
     if (strstr(GetCommandLineA(), "--show-inv")) SetScreen(hwnd, Screen::Inventory);
     if (strstr(GetCommandLineA(), "--show-create")) SetScreen(hwnd, Screen::CreateWorld);
+    if (strstr(GetCommandLineA(), "--show-profile")) HandleMenuAction(ACT_PROFILE);
 
     DeltaClock clock;
     float fpsTimer = 0;
@@ -1053,14 +1267,31 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                 if (gGameMode == 0 || gCraftTable) CloseInventory();
                 else SetScreen(hwnd, Screen::Game);
             }
-            else if (gScreen == Screen::Options) SetScreen(hwnd, gOptionsReturn);
+            else if (gScreen == Screen::Options || gScreen == Screen::VideoOptions ||
+                     gScreen == Screen::SoundOptions || gScreen == Screen::ControlsOptions)
+                HandleMenuAction(ACT_OPTIONS_DONE);
+            else if (gScreen == Screen::Profile) HandleMenuAction(ACT_PROFILE_CANCEL);
             else if (gScreen == Screen::CreateWorld) SetScreen(hwnd, Screen::Title);
         }
         if (gInput.KeyPressed(VK_F2)) SaveScreenshot();
 
+        if (gScreen == Screen::Profile) {
+            if (gInput.keys[VK_CONTROL] && gInput.KeyPressed('A')) gProfileNameSelected = true;
+            for (char c : gInput.typed) {
+                if (c == 13) { HandleMenuAction(ACT_PROFILE_DONE); break; }
+                const bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                     (c >= '0' && c <= '9') || c == '_';
+                if (c != 8 && !allowed) continue;
+                if (gProfileNameSelected) gProfileDraft.name.clear();
+                else if (c == 8 && !gProfileDraft.name.empty()) gProfileDraft.name.pop_back();
+                gProfileNameSelected = false;
+                if (allowed && gProfileDraft.name.size() < 16) gProfileDraft.name += c;
+            }
+        }
         if (gScreen == Screen::CreateWorld && !gInput.typed.empty()) {
             for (char c : gInput.typed) {
                 if (c == 9) continue;
+                if (gCreate.focus == 0) continue;
                 if (c == 13) { HandleMenuAction(ACT_CREATE_WORLD); break; }
                 std::string& field = gCreate.focus == 2 ? gCreate.seed : gCreate.name;
                 if (c == 8) { if (!field.empty()) field.pop_back(); }
@@ -1115,6 +1346,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         SafeRelease(kv.second.ib);
     }
     gGpu.clear();
+    SetScreen(hwnd, Screen::Title);
+    if (!gAutomation) SavePreferences();
     delete gWorld;
     gSound.Shutdown();
     gGui.Shutdown();

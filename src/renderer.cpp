@@ -116,7 +116,7 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     if (FAILED(hr)) return false;
 
     D3D10_BUFFER_DESC cbd = {};
-    cbd.ByteWidth = sizeof(XMFLOAT4X4) + 16; // matrix + brightness + pad
+    cbd.ByteWidth = sizeof(XMFLOAT4X4) + 16; // matrix + brightness + fog + pad
     cbd.Usage = D3D10_USAGE_DYNAMIC;
     cbd.BindFlags = D3D10_BIND_CONSTANT_BUFFER;
     cbd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
@@ -179,6 +179,7 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     rc.device->PSSetSamplers(0, 1, &rc.pointSampler);
     rc.device->PSSetSamplers(1, 1, &rc.linearSampler);
     rc.device->VSSetConstantBuffers(0, 1, &rc.perFrameCB);
+    rc.device->PSSetConstantBuffers(0, 1, &rc.perFrameCB);
     rc.device->RSSetState(rc.rasterizer);
 
     // Unit cube for the title panorama; PSMainSky samples the cubemap along
@@ -256,6 +257,51 @@ ID3D10ShaderResourceView* CreateTextureSRV(RenderContext& rc, const uint8_t* rgb
     return srv;
 }
 
+ID3D10ShaderResourceView* CreateBlockAtlasSRV(RenderContext& rc, const uint8_t* rgba, int w, int h) {
+    if (!rgba || w != ATLAS_SIZE || h != ATLAS_SIZE) return nullptr;
+    constexpr int mipCount = 5;
+    std::vector<uint8_t> mips[mipCount];
+    D3D10_SUBRESOURCE_DATA sub[mipCount] = {};
+    sub[0].pSysMem = rgba;
+    sub[0].SysMemPitch = UINT(w * 4);
+    for (int level = 1; level < mipCount; ++level) {
+        const int width = w >> level, height = h >> level;
+        const int sourceWidth = w >> (level - 1);
+        const uint8_t* source = level == 1 ? rgba : mips[level - 1].data();
+        mips[level].resize(size_t(width) * height * 4);
+        // Aligned 2x2 footprints stay inside each tile, ending at one texel per tile.
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const size_t src = (size_t(y * 2) * sourceWidth + x * 2) * 4;
+                const size_t dst = (size_t(y) * width + x) * 4;
+                for (int channel = 0; channel < 4; ++channel) {
+                    const unsigned sum = source[src + channel] + source[src + 4 + channel] +
+                        source[src + size_t(sourceWidth) * 4 + channel] +
+                        source[src + size_t(sourceWidth) * 4 + 4 + channel];
+                    mips[level][dst + channel] = uint8_t((sum + 2) / 4);
+                }
+            }
+        }
+        sub[level].pSysMem = mips[level].data();
+        sub[level].SysMemPitch = UINT(width * 4);
+    }
+    D3D10_TEXTURE2D_DESC td = {};
+    td.Width = UINT(w);
+    td.Height = UINT(h);
+    td.MipLevels = mipCount;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D10_USAGE_IMMUTABLE;
+    td.BindFlags = D3D10_BIND_SHADER_RESOURCE;
+    ID3D10Texture2D* tex = nullptr;
+    if (FAILED(rc.device->CreateTexture2D(&td, sub, &tex))) return nullptr;
+    ID3D10ShaderResourceView* srv = nullptr;
+    const HRESULT hr = rc.device->CreateShaderResourceView(tex, nullptr, &srv);
+    tex->Release();
+    return SUCCEEDED(hr) ? srv : nullptr;
+}
+
 bool CreatePanorama(RenderContext& rc, AssetStore& store) {
     // D3D10 cube array order is +X,-X,+Y,-Y,+Z,-Z. Vanilla's PanoramaRenderer
     // rotations map panorama_0..5 onto -X,+X,-Y,+Y,+Z,-Z respectively.
@@ -311,45 +357,18 @@ static float gBrightnessVal = 0.5f;
 
 void SetBrightness(RenderContext& rc, float b) { gBrightnessVal = b; }
 
-void SetViewProj(RenderContext& rc, const XMMATRIX& m) {
+void SetViewProj(RenderContext& rc, const XMMATRIX& m, float fogEnd) {
     void* data = nullptr;
     if (SUCCEEDED(rc.perFrameCB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) {
-        struct PerFrame { XMFLOAT4X4 vp; float brightness; float pad[3]; };
+        struct PerFrame { XMFLOAT4X4 vp; float brightness, fogStart, fogEnd, pad; };
         PerFrame* pf = static_cast<PerFrame*>(data);
         XMStoreFloat4x4(&pf->vp, m);
         pf->brightness = gBrightnessVal;
-        pf->pad[0] = pf->pad[1] = pf->pad[2] = 0.0f;
+        pf->fogStart = 0.65f * fogEnd;
+        pf->fogEnd = 0.9f * fogEnd;
+        pf->pad = 0.0f;
         rc.perFrameCB->Unmap();
     }
-}
-
-void ExtractFrustum(const XMMATRIX& vp, Frustum& f) {
-    // Row-vector convention (v' = v * M): clip planes from matrix rows.
-    const XMVECTOR r0 = vp.r[0], r1 = vp.r[1], r2 = vp.r[2], r3 = vp.r[3];
-    XMVECTOR p[6] = {
-        XMVectorAdd(r3, r0),        // left
-        XMVectorSubtract(r3, r0),   // right
-        XMVectorAdd(r3, r1),        // bottom
-        XMVectorSubtract(r3, r1),   // top
-        r2,                         // near (RH: z' >= 0)
-        XMVectorSubtract(r3, r2),   // far
-    };
-    for (int i = 0; i < 6; ++i) {
-        const XMVECTOR len = XMVector3Length(p[i]);
-        XMStoreFloat4(&f.planes[i], XMVectorDivide(p[i], len));
-    }
-}
-
-bool AABBInFrustum(const Frustum& f, float minX, float minY, float minZ,
-                   float maxX, float maxY, float maxZ) {
-    for (int i = 0; i < 6; ++i) {
-        const XMFLOAT4& pl = f.planes[i];
-        const float px = pl.x >= 0 ? maxX : minX;
-        const float py = pl.y >= 0 ? maxY : minY;
-        const float pz = pl.z >= 0 ? maxZ : minZ;
-        if (pl.x * px + pl.y * py + pl.z * pz + pl.w < 0) return false;
-    }
-    return true;
 }
 
 } // namespace potato

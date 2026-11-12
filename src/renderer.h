@@ -1,8 +1,8 @@
 #pragma once
 #include "assets.h"
+#include "engine.h"
 #include <objbase.h>
 #include <d3d10.h>
-#include <DirectXMath.h>
 
 namespace potato {
 
@@ -37,16 +37,10 @@ struct RenderContext {
 bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource);
 void ShutdownRenderer(RenderContext& rc);
 ID3D10ShaderResourceView* CreateTextureSRV(RenderContext& rc, const uint8_t* rgba, int w, int h);
+ID3D10ShaderResourceView* CreateBlockAtlasSRV(RenderContext& rc, const uint8_t* rgba, int w, int h);
 // Loads gui/title/background/panorama_0..5 into a TextureCube. False if missing.
 bool CreatePanorama(RenderContext& rc, AssetStore& store);
-void SetViewProj(RenderContext& rc, const DirectX::XMMATRIX& m);
+void SetViewProj(RenderContext& rc, const DirectX::XMMATRIX& m, float fogEnd = 0.0f);
 void SetBrightness(RenderContext& rc, float b);
-
-struct Frustum {
-    DirectX::XMFLOAT4 planes[6];
-};
-void ExtractFrustum(const DirectX::XMMATRIX& vp, Frustum& f);
-bool AABBInFrustum(const Frustum& f, float minX, float minY, float minZ,
-                   float maxX, float maxY, float maxZ);
 
 } // namespace potato

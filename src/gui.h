@@ -11,9 +11,26 @@ namespace potato {
 struct GuiTexture {
     ID3D10ShaderResourceView* srv = nullptr;
     int w = 0, h = 0;
+    // Logical sprite dimensions/borders from its gui.scaling mcmeta.
+    int sliceW = 0, sliceH = 0;
+    int borderLeft = 0, borderTop = 0, borderRight = 0, borderBottom = 0;
+    bool stretchInner = false;
 };
 
-enum class Screen { Title, CreateWorld, Options, Pause, Game, Inventory, Death };
+enum class Screen {
+    Title, CreateWorld, Options, Pause, Game, Inventory, Death,
+    VideoOptions, SoundOptions, ControlsOptions, Profile
+};
+
+struct PlayerProfile {
+    std::string name = "Player";
+    int skin = 0;
+    bool slim = false;
+};
+
+bool IsValidPlayerName(const std::string& name);
+// 0 Steve, 1 Alex, 2 Ari, 3 Efe, 4 Kai, 5 Makena, 6 Noor, 7 Sunny, 8 Zuri.
+const char* SkinName(int skin);
 
 struct Settings {
     int renderDistance = 8;
@@ -37,6 +54,8 @@ enum SliderId { SL_FOV = 1, SL_RD, SL_SENS, SL_SOUND, SL_MUSIC, SL_BRIGHT };
 class GuiRenderer {
 public:
     bool Init(RenderContext& rc, AssetStore& store);
+    bool LoadPlayerSkin(RenderContext& rc, AssetStore& store, const PlayerProfile& profile);
+    void DrawPlayerPreview(float cx, float feetY, float scale, int mouseX, int mouseY);
     void Shutdown();
     void BeginFrame();
     void Flush(RenderContext& rc);
@@ -44,6 +63,8 @@ public:
     void DrawQuad(const GuiTexture* tex, float x, float y, float w, float h,
                   float u0, float v0, float u1, float v1, float shade,
                   float cr = 1.0f, float cg = 1.0f, float cb = 1.0f);
+    void DrawNineSlice(const GuiTexture* tex, float x, float y, float w, float h,
+                       float scale = 2.0f, float shade = 15.0f);
     void DrawSprite(const GuiTexture* tex, float x, float y, float scale, float shade);
     void DrawText(const std::string& text, float x, float y, float scale, float shade, bool shadow,
                   float cr = 1.0f, float cg = 1.0f, float cb = 1.0f);
@@ -65,6 +86,9 @@ public:
     GuiTexture texAttackBg, texAttackProgress;
     GuiTexture texPanoramaOverlay;
     GuiTexture texSlider, texSliderHi, texSliderHandle, texSliderHandleHi;
+    GuiTexture texMenuBg, texHeaderSeparator, texFooterSeparator;
+    GuiTexture texTab, texTabHi, texTabSelected, texTabSelectedHi;
+    GuiTexture texSkin;
     GuiTexture texBlockIcon[BLOCK_COUNT];
 
 private:
@@ -76,6 +100,7 @@ private:
     void DrawTextRaw(const std::string& text, float x, float y, float scale, float shade,
                      float cr, float cg, float cb);
     std::vector<Batch> mBatches;
+    bool mSkinSlim = false;
     ID3D10Buffer* mVB = nullptr;
     static constexpr UINT VB_VERTS = 65536;
 };
@@ -86,7 +111,10 @@ enum MenuAction {
     ACT_CYCLE_RD, ACT_CYCLE_FOV, ACT_CYCLE_SENS, ACT_TOGGLE_SOUND,
     ACT_TOGGLE_BOB, ACT_TOGGLE_VSYNC, ACT_TOGGLE_FS, ACT_CYCLE_DIFF,
     ACT_CREATE_WORLD, ACT_CANCEL_CREATE, ACT_CYCLE_GAMEMODE,
-    ACT_CREATE_TAB_GAME, ACT_CREATE_TAB_WORLD
+    ACT_CREATE_TAB_GAME, ACT_CREATE_TAB_WORLD,
+    ACT_CREATE_TAB_MORE, ACT_VIDEO_OPTIONS, ACT_SOUND_OPTIONS, ACT_CONTROLS_OPTIONS,
+    ACT_PROFILE, ACT_PROFILE_DONE, ACT_PROFILE_CANCEL,
+    ACT_SKIN_PREV, ACT_SKIN_NEXT, ACT_SKIN_MODEL
 };
 
 // State of the Create New World form; main owns it and applies it on create.
@@ -95,7 +123,8 @@ struct WorldCreateInfo {
     std::string seed;
     int gameMode = 0; // 0 survival, 1 creative
     int focus = 1;    // 1 name field, 2 seed field
-    int tab = 0;      // 0 Game, 1 World
+    int tab = 0;      // 0 Game, 1 World, 2 More
+    int difficulty = 2; // Independent of the current world's difficulty
 };
 
 // Vanilla-style screens built from real GUI sprites. The 3D background
@@ -104,7 +133,7 @@ class MenuSystem {
 public:
     void Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldCreateInfo& create,
               const std::string& typed, int mouseX, int mouseY, bool leftDown,
-              const std::string& splash, float timeSec);
+              const std::string& splash, float timeSec, const PlayerProfile& profile);
     int HitTest(int mouseX, int mouseY) const;
     bool ConsumeChanged() { const bool c = mChanged; mChanged = false; return c; }
 
@@ -114,6 +143,8 @@ private:
         std::string label;
         int action;
         bool enabled;
+        bool tab = false;
+        bool selected = false;
     };
     struct Slider {
         int id;
