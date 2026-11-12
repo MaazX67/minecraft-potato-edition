@@ -54,6 +54,10 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texAttackBg       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair_attack_indicator_background.png");
     texAttackProgress = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair_attack_indicator_progress.png");
     texPanoramaOverlay= LoadGui(rc, store, "minecraft/textures/gui/title/background/panorama_overlay.png");
+    texSlider         = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/slider.png");
+    texSliderHi       = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/slider_highlighted.png");
+    texSliderHandle   = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/slider_handle.png");
+    texSliderHandleHi = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/slider_handle_highlighted.png");
 
     const uint8_t white[4] = {255, 255, 255, 255};
     texWhite.w = texWhite.h = 1;
@@ -79,6 +83,7 @@ void GuiRenderer::Shutdown() {
     GuiTexture* all[] = {&texButton, &texButtonHi, &texButtonDisabled, &texLogo,
                         &texCrosshair, &texHotbar, &texHotbarSel, &texFont, &texDirt,
                         &texWhite, &texBlack, &texAttackBg, &texAttackProgress, &texPanoramaOverlay,
+                        &texSlider, &texSliderHi, &texSliderHandle, &texSliderHandleHi,
                         &texHeart[0], &texHeart[1], &texHeart[2],
                         &texFood[0], &texFood[1], &texFood[2]};
     for (GuiTexture* t : all) {
@@ -261,9 +266,10 @@ void MenuSystem::DrawButton(GuiRenderer& ui, const Button& b, int mouseX, int mo
     ui.DrawTextCentered(b.label, b.x + b.w * 0.5f, b.y + (b.h - 16) * 0.5f, 2, 15, true, cr, cg, cb);
 }
 
-void MenuSystem::Draw(GuiRenderer& ui, Screen screen, const Settings& settings,
-                      int mouseX, int mouseY, const std::string& splash, float timeSec) {
+void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings,
+                      int mouseX, int mouseY, bool leftDown, const std::string& splash, float timeSec) {
     mButtons.clear();
+    mSliders.clear();
     const float cx = SCREEN_W * 0.5f;
     char label[96];
 
@@ -283,15 +289,25 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, const Settings& settings,
         ui.DrawText(tag, SCREEN_W - ui.TextWidth(tag, 2) - 4, SCREEN_H - 20, 2, 15, true);
     } else if (screen == Screen::Options) {
         ui.DrawTextCentered("Options", cx, 30, 2, 15, true);
-        snprintf(label, sizeof(label), "Render Distance: %d chunks", settings.renderDistance);
-        mButtons.push_back({cx - 155, 110, 310, 40, label, ACT_CYCLE_RD, true});
-        snprintf(label, sizeof(label), "FOV: %d", int(settings.fov));
-        mButtons.push_back({cx - 155, 160, 310, 40, label, ACT_CYCLE_FOV, true});
-        snprintf(label, sizeof(label), "Sensitivity: %d%%", int(settings.sensitivity / 0.0025f * 100 + 0.5f));
-        mButtons.push_back({cx - 155, 210, 310, 40, label, ACT_CYCLE_SENS, true});
-        snprintf(label, sizeof(label), "Sound: %s", settings.sound ? "ON" : "OFF");
-        mButtons.push_back({cx - 155, 260, 310, 40, label, ACT_TOGGLE_SOUND, true});
-        mButtons.push_back({cx - 155, 330, 310, 40, "Done", ACT_OPTIONS_DONE, true});
+        mSliders.push_back({SL_FOV, cx - 310, 80, 300, 40});
+        mSliders.push_back({SL_RD, cx + 10, 80, 300, 40});
+        mSliders.push_back({SL_SENS, cx - 310, 130, 300, 40});
+        mSliders.push_back({SL_SOUND, cx + 10, 130, 300, 40});
+        mSliders.push_back({SL_MUSIC, cx - 310, 180, 300, 40});
+        mSliders.push_back({SL_BRIGHT, cx + 10, 180, 300, 40});
+        snprintf(label, sizeof(label), "View Bobbing: %s", settings.viewBobbing ? "ON" : "OFF");
+        mButtons.push_back({cx - 310, 230, 300, 40, label, ACT_TOGGLE_BOB, true});
+        snprintf(label, sizeof(label), "VSync: %s", settings.vsync ? "ON" : "OFF");
+        mButtons.push_back({cx + 10, 230, 300, 40, label, ACT_TOGGLE_VSYNC, true});
+        snprintf(label, sizeof(label), "Fullscreen: %s", settings.fullscreen ? "ON" : "OFF");
+        mButtons.push_back({cx - 310, 280, 300, 40, label, ACT_TOGGLE_FS, true});
+        static const char* DIFF[] = {"Peaceful", "Easy", "Normal", "Hard"};
+        snprintf(label, sizeof(label), "Difficulty: %s", DIFF[settings.difficulty & 3]);
+        mButtons.push_back({cx + 10, 280, 300, 40, label, ACT_CYCLE_DIFF, true});
+        mButtons.push_back({cx - 310, 330, 300, 40, "Chat Settings...", ACT_NONE, false});
+        mButtons.push_back({cx + 10, 330, 300, 40, "Resource Packs...", ACT_NONE, false});
+        mButtons.push_back({cx - 200, 400, 400, 40, "Done", ACT_OPTIONS_DONE, true});
+        for (const Slider& s : mSliders) DrawSlider(ui, s, settings, mouseX, mouseY, leftDown);
     } else if (screen == Screen::Pause) {
         ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
         ui.DrawTextCentered("Game Menu", cx, 60, 2, 15, true);
@@ -308,6 +324,57 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, const Settings& settings,
     }
 
     for (const Button& b : mButtons) DrawButton(ui, b, mouseX, mouseY);
+}
+
+static float SliderT(const Settings& s, int id) {
+    switch (id) {
+        case SL_FOV: return (s.fov - 30.0f) / 80.0f;
+        case SL_RD: return (s.renderDistance - 2) / 14.0f;
+        case SL_SENS: return s.sensitivity / 0.005f;
+        case SL_SOUND: return s.soundVolume;
+        case SL_MUSIC: return s.musicVolume;
+        default: return s.brightness;
+    }
+}
+
+static void SetSliderT(Settings& s, int id, float t) {
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    switch (id) {
+        case SL_FOV: s.fov = 30.0f + t * 80.0f; break;
+        case SL_RD: s.renderDistance = 2 + int(t * 14.0f + 0.5f); break;
+        case SL_SENS: s.sensitivity = t * 0.005f; break;
+        case SL_SOUND: s.soundVolume = t; break;
+        case SL_MUSIC: s.musicVolume = t; break;
+        default: s.brightness = t; break;
+    }
+}
+
+static void SliderLabel(const Settings& s, int id, char* out, size_t n) {
+    switch (id) {
+        case SL_FOV: snprintf(out, n, "FOV: %d", int(s.fov + 0.5f)); break;
+        case SL_RD: snprintf(out, n, "Render Distance: %d", s.renderDistance); break;
+        case SL_SENS: snprintf(out, n, "Sensitivity: %d%%", int(s.sensitivity / 0.0025f * 100 + 0.5f)); break;
+        case SL_SOUND: snprintf(out, n, "Sound: %d%%", int(s.soundVolume * 100 + 0.5f)); break;
+        case SL_MUSIC: snprintf(out, n, "Music: %d%%", int(s.musicVolume * 100 + 0.5f)); break;
+        default: snprintf(out, n, "Brightness: %d%%", int(s.brightness * 100 + 0.5f)); break;
+    }
+}
+
+void MenuSystem::DrawSlider(GuiRenderer& ui, const Slider& s, Settings& settings,
+                            int mouseX, int mouseY, bool leftDown) {
+    const bool hover = mouseX >= s.x && mouseX < s.x + s.w &&
+                       mouseY >= s.y && mouseY < s.y + s.h;
+    if (leftDown && hover) {
+        SetSliderT(settings, s.id, (mouseX - s.x - 8.0f) / (s.w - 16.0f));
+        mChanged = true;
+    }
+    ui.DrawQuad(hover ? &ui.texSliderHi : &ui.texSlider, s.x, s.y, s.w, s.h, 0, 0, 1, 1, 15);
+    const float hx = s.x + SliderT(settings, s.id) * (s.w - 16.0f);
+    ui.DrawSprite(hover ? &ui.texSliderHandleHi : &ui.texSliderHandle, hx, s.y, 2, 15);
+    char label[96];
+    SliderLabel(settings, s.id, label, sizeof(label));
+    ui.DrawTextCentered(label, s.x + s.w * 0.5f, s.y + (s.h - 16) * 0.5f, 2, 15, true);
 }
 
 int MenuSystem::HitTest(int mouseX, int mouseY) const {

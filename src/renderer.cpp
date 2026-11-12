@@ -116,7 +116,7 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     if (FAILED(hr)) return false;
 
     D3D10_BUFFER_DESC cbd = {};
-    cbd.ByteWidth = sizeof(XMFLOAT4X4);
+    cbd.ByteWidth = sizeof(XMFLOAT4X4) + 16; // matrix + brightness + pad
     cbd.Usage = D3D10_USAGE_DYNAMIC;
     cbd.BindFlags = D3D10_BIND_CONSTANT_BUFFER;
     cbd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
@@ -307,10 +307,18 @@ bool CreatePanorama(RenderContext& rc, AssetStore& store) {
     return SUCCEEDED(hr);
 }
 
+static float gBrightnessVal = 0.5f;
+
+void SetBrightness(RenderContext& rc, float b) { gBrightnessVal = b; }
+
 void SetViewProj(RenderContext& rc, const XMMATRIX& m) {
     void* data = nullptr;
     if (SUCCEEDED(rc.perFrameCB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) {
-        XMStoreFloat4x4(static_cast<XMFLOAT4X4*>(data), m);
+        struct PerFrame { XMFLOAT4X4 vp; float brightness; float pad[3]; };
+        PerFrame* pf = static_cast<PerFrame*>(data);
+        XMStoreFloat4x4(&pf->vp, m);
+        pf->brightness = gBrightnessVal;
+        pf->pad[0] = pf->pad[1] = pf->pad[2] = 0.0f;
         rc.perFrameCB->Unmap();
     }
 }

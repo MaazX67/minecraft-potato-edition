@@ -68,6 +68,8 @@ static float gFallStartY = 0;
 static float gLastSpaceMs = -1000;
 static bool gHaveTarget = false;
 static int gTargetX = 0, gTargetY = 0, gTargetZ = 0;
+static float gStepTimer = 0.3f;
+static bool gWasInWater = false;
 static std::string gSplash = "Potato Edition!";
 
 static bool IsWorldScreen(Screen s) {
@@ -103,6 +105,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_LBUTTONDOWN:
             gInput.leftClick = true;
+            gInput.leftDown = true;
+            return 0;
+        case WM_LBUTTONUP:
+            gInput.leftDown = false;
             return 0;
         case WM_RBUTTONDOWN:
             gInput.rightClick = true;
@@ -155,9 +161,34 @@ static void ApplySettings() {
     gWorld->SetRenderDistance(gSettings.renderDistance);
     gCamera.sensitivity = gSettings.sensitivity;
     gSound.SetEnabled(gSettings.sound);
+    gSound.SetVolume(gSettings.soundVolume);
+    SetBrightness(gRC, gSettings.brightness);
+}
+
+static void ApplyFullscreen() {
+    static LONG_PTR savedStyle = 0;
+    static RECT savedRect = {};
+    static bool saved = false;
+    if (gSettings.fullscreen) {
+        if (!saved) {
+            savedStyle = GetWindowLongPtrW(gHwnd, GWL_STYLE);
+            GetWindowRect(gHwnd, &savedRect);
+            saved = true;
+        }
+        SetWindowLongPtrW(gHwnd, GWL_STYLE,
+                          savedStyle & ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX));
+        SetWindowPos(gHwnd, HWND_TOP, 0, 0, GetSystemMetrics(SM_CXSCREEN),
+                     GetSystemMetrics(SM_CYSCREEN), SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    } else if (saved) {
+        SetWindowLongPtrW(gHwnd, GWL_STYLE, savedStyle);
+        SetWindowPos(gHwnd, HWND_TOP, savedRect.left, savedRect.top,
+                     savedRect.right - savedRect.left, savedRect.bottom - savedRect.top,
+                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
 }
 
 static void HandleMenuAction(int action) {
+    if (action != ACT_NONE) gSound.Play(SND_CLICK);
     switch (action) {
         case ACT_SINGLEPLAYER:
         case ACT_RESPAWN:
@@ -200,6 +231,19 @@ static void HandleMenuAction(int action) {
         case ACT_TOGGLE_SOUND:
             gSettings.sound = !gSettings.sound;
             ApplySettings();
+            break;
+        case ACT_TOGGLE_BOB:
+            gSettings.viewBobbing = !gSettings.viewBobbing;
+            break;
+        case ACT_TOGGLE_VSYNC:
+            gSettings.vsync = !gSettings.vsync;
+            break;
+        case ACT_TOGGLE_FS:
+            gSettings.fullscreen = !gSettings.fullscreen;
+            ApplyFullscreen();
+            break;
+        case ACT_CYCLE_DIFF:
+            gSettings.difficulty = (gSettings.difficulty + 1) & 3;
             break;
         default:
             break;
@@ -294,14 +338,34 @@ static void HandleGameFrame(float dt) {
     if (gBody.onGround) {
         if (!wasGround && !gBody.flying && !gBody.inWater) {
             const float dist = gFallStartY - gBody.y;
+            const int hp = gSurvival.health;
             if (dist > 0) gSurvival.OnLand(dist);
+            if (gSurvival.health < hp) gSound.Play(SND_HURT);
         }
         gFallStartY = gBody.y;
     } else if (gBody.y > gFallStartY) {
         gFallStartY = gBody.y;
     }
     const bool moving = (gBody.vx * gBody.vx + gBody.vz * gBody.vz) > 0.01f;
+    if (gSettings.difficulty == 0) gSurvival.hunger = 20;
     gSurvival.Update(dt, moving, gBody.sprinting);
+    if (moving && gBody.onGround && !gBody.flying && !gBody.inWater) {
+        gStepTimer += dt;
+        if (gStepTimer >= (gBody.sprinting ? 0.28f : 0.38f)) {
+            gStepTimer = 0;
+            const uint8_t under = gWorld->GetBlock(int(floorf(gBody.x)),
+                                                   int(floorf(gBody.y - 0.5f)),
+                                                   int(floorf(gBody.z)));
+            gSound.PlayAt(SoundEngine::StepSound(under), gBody.x, gBody.y, gBody.z);
+        }
+    } else {
+        gStepTimer = 0.3f;
+    }
+    if (gBody.inWater && !gWasInWater)
+        gSound.PlayAt(SND_SPLASH, gBody.x, gBody.y, gBody.z);
+    gWasInWater = gBody.inWater;
+    if (gSettings.viewBobbing && moving && gBody.onGround && !gBody.flying)
+        gCamera.y += sinf(gTimeSec * 9.0f) * 0.05f;
     if (gSurvival.dead) { SetScreen(gHwnd, Screen::Death); return; }
 
     gWorld->Update(gCamera.x, gCamera.z);
@@ -561,10 +625,11 @@ static void RenderFrame() {
             gGui.DrawQuad(&gGui.texDirt, 0, 0, SCREEN_W, SCREEN_H, 0, 0,
                           SCREEN_W / 64.0f, SCREEN_H / 64.0f, 8);
         }
-        gMenu.Draw(gGui, gScreen, gSettings, gInput.mouseX, gInput.mouseY, gSplash, gTimeSec);
+        gMenu.Draw(gGui, gScreen, gSettings, gInput.mouseX, gInput.mouseY, gInput.leftDown, gSplash, gTimeSec);
+        if (gMenu.ConsumeChanged()) ApplySettings();
     }
     gGui.Flush(gRC);
-    gRC.swapChain->Present(0, 0);
+    gRC.swapChain->Present(gSettings.vsync ? 1 : 0, 0);
 }
 
 static void LoadSplash() {
@@ -720,7 +785,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                 const int b = InventoryHitTest(gInput.mouseX, gInput.mouseY);
                 if (b > 0) {
                     gHotbar[gHotbarSlot] = uint8_t(b);
-                    gSound.Play(SND_HIT);
+                    gSound.Play(SND_CLICK);
                 }
             }
         } else if (gInput.leftClick) {

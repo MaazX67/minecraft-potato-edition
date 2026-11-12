@@ -17,10 +17,12 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 - Survival: health, hunger, fall damage, sprinting, swimming, and double-tap-space flight
 - 1.9-style combat — damage scales with the attack cooldown, and hitting above 90% strength while falling crits
 - Break and place blocks, selection outline, positioned 3D sound
-- Menus: title screen with rotating splash text and the panorama background, options, pause menu, death screen
+- Footsteps per material, water splash, fall-damage hurt and UI click sounds
+- Menus: title screen with rotating splash text and the panorama background, pause menu, death screen
+- Options with the vanilla slider widgets: FOV, render distance, sensitivity, sound/music volume, brightness, view bobbing, vsync, fullscreen, difficulty
 - HUD with hearts, hunger, hotbar and the attack-cooldown indicator
 - 50 blocks using the real vanilla textures
-- A headless test suite (47 checks) that runs on every CI build
+- A headless test suite (49 checks) that runs on every CI build
 
 ## Controls
 
@@ -55,7 +57,6 @@ release. So the download is always the current commit.
 - Mobs and the item/crafting system
 - A proper Java-style inventory screen
 - Day/night cycle, weather, and world save/load
-- The full video settings screen instead of the current handful of options
 - Subtitles
 
 ## Engine notes

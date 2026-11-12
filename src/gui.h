@@ -19,7 +19,16 @@ struct Settings {
     float fov = 70.0f;
     float sensitivity = 0.0025f;
     bool sound = true;
+    float soundVolume = 1.0f;
+    float musicVolume = 0.5f;
+    float brightness = 0.5f;
+    bool viewBobbing = true;
+    bool vsync = false;
+    bool fullscreen = false;
+    int difficulty = 2; // 0 peaceful, 1 easy, 2 normal, 3 hard
 };
+
+enum SliderId { SL_FOV = 1, SL_RD, SL_SENS, SL_SOUND, SL_MUSIC, SL_BRIGHT };
 
 // Orthographic textured-quad renderer. One dynamic vertex buffer, batches
 // grouped by texture, drawn with PSMainUI (alpha blend, depth off). Vertex
@@ -53,6 +62,7 @@ public:
     GuiTexture texFood[3];    // empty, full, half
     GuiTexture texAttackBg, texAttackProgress;
     GuiTexture texPanoramaOverlay;
+    GuiTexture texSlider, texSliderHi, texSliderHandle, texSliderHandleHi;
     GuiTexture texBlockIcon[BLOCK_COUNT];
 
 private:
@@ -71,16 +81,18 @@ private:
 enum MenuAction {
     ACT_NONE = 0, ACT_SINGLEPLAYER, ACT_OPTIONS, ACT_QUIT, ACT_RESUME,
     ACT_QUIT_TO_TITLE, ACT_OPTIONS_DONE, ACT_RESPAWN,
-    ACT_CYCLE_RD, ACT_CYCLE_FOV, ACT_CYCLE_SENS, ACT_TOGGLE_SOUND
+    ACT_CYCLE_RD, ACT_CYCLE_FOV, ACT_CYCLE_SENS, ACT_TOGGLE_SOUND,
+    ACT_TOGGLE_BOB, ACT_TOGGLE_VSYNC, ACT_TOGGLE_FS, ACT_CYCLE_DIFF
 };
 
 // Vanilla-style screens built from real GUI sprites. The 3D background
 // (panorama skybox or frozen world) is rendered by the caller first.
 class MenuSystem {
 public:
-    void Draw(GuiRenderer& ui, Screen screen, const Settings& settings,
-              int mouseX, int mouseY, const std::string& splash, float timeSec);
+    void Draw(GuiRenderer& ui, Screen screen, Settings& settings,
+              int mouseX, int mouseY, bool leftDown, const std::string& splash, float timeSec);
     int HitTest(int mouseX, int mouseY) const;
+    bool ConsumeChanged() { const bool c = mChanged; mChanged = false; return c; }
 
 private:
     struct Button {
@@ -89,8 +101,16 @@ private:
         int action;
         bool enabled;
     };
+    struct Slider {
+        int id;
+        float x, y, w, h;
+    };
     void DrawButton(GuiRenderer& ui, const Button& b, int mouseX, int mouseY);
+    void DrawSlider(GuiRenderer& ui, const Slider& s, Settings& settings,
+                    int mouseX, int mouseY, bool leftDown);
     std::vector<Button> mButtons;
+    std::vector<Slider> mSliders;
+    bool mChanged = false;
 };
 
 // Default creative hotbar layout; the live hotbar is a mutable copy in main.

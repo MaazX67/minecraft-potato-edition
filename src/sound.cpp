@@ -57,6 +57,27 @@ bool SoundEngine::Init(AssetStore& store) {
         ++mNext[cat];
         candidates.push_back({name, cat});
     }
+    const std::vector<std::string> step = store.ListPrefix("minecraft/sounds/step/");
+    for (const std::string& name : step) {
+        if (!EndsWith(name, ".ogg")) continue;
+        SoundCat cat = SND_COUNT;
+        if (name.find("grass") != std::string::npos) cat = SND_STEP_GRASS;
+        else if (name.find("stone") != std::string::npos) cat = SND_STEP_STONE;
+        else if (name.find("wood") != std::string::npos) cat = SND_STEP_WOOD;
+        else if (name.find("gravel") != std::string::npos) cat = SND_STEP_GRAVEL;
+        else if (name.find("sand") != std::string::npos) cat = SND_STEP_SAND;
+        if (cat == SND_COUNT || mNext[cat] >= 4) continue;
+        ++mNext[cat];
+        candidates.push_back({name, cat});
+    }
+    const std::vector<std::string> hurt = store.ListPrefix("minecraft/sounds/entity/player/hurt");
+    for (const std::string& name : hurt) {
+        if (!EndsWith(name, ".ogg") || mNext[SND_HURT] >= 4) continue;
+        ++mNext[SND_HURT];
+        candidates.push_back({name, SND_HURT});
+    }
+    candidates.push_back({"minecraft/sounds/random/click.ogg", SND_CLICK});
+    candidates.push_back({"minecraft/sounds/liquid/splash.ogg", SND_SPLASH});
     memset(mNext, 0, sizeof(mNext)); // reuse as round-robin playback cursors
 
     // Decode pass: ogg -> PCM temps (freed immediately after arena copy).
@@ -172,6 +193,16 @@ void SoundEngine::Dispatch(const PlayRequest& req) {
     if (!mEnabled.load(std::memory_order_relaxed)) return;
     SoundCat cat = req.cat;
     if (mSounds[cat].empty() && cat == SND_DIRT) cat = SND_GRASS;
+    if (mSounds[cat].empty()) {
+        switch (cat) {
+            case SND_STEP_GRASS: cat = SND_GRASS; break;
+            case SND_STEP_STONE: cat = SND_STONE; break;
+            case SND_STEP_WOOD: cat = SND_WOOD; break;
+            case SND_STEP_GRAVEL: cat = SND_GRAVEL; break;
+            case SND_STEP_SAND: cat = SND_SAND; break;
+            default: break;
+        }
+    }
     if (mSounds[cat].empty()) cat = SND_STONE;
     std::vector<Sound>& v = mSounds[cat];
     if (v.empty()) return;
@@ -221,7 +252,12 @@ void SoundEngine::Dispatch(const PlayRequest& req) {
 
 void SoundEngine::SetEnabled(bool on) {
     mEnabled.store(on, std::memory_order_relaxed);
-    if (mMaster) mMaster->SetVolume(on ? 1.0f : 0.0f);
+    if (mMaster) mMaster->SetVolume(on ? mVolume : 0.0f);
+}
+
+void SoundEngine::SetVolume(float v) {
+    mVolume = v;
+    if (mMaster && mEnabled.load(std::memory_order_relaxed)) mMaster->SetVolume(v);
 }
 
 SoundCat SoundEngine::BlockSound(uint8_t block) {
@@ -233,6 +269,18 @@ SoundCat SoundEngine::BlockSound(uint8_t block) {
         case BLOCK_SAND: return SND_SAND;
         case BLOCK_GRAVEL: return SND_GRAVEL;
         default: return SND_STONE;
+    }
+}
+
+SoundCat SoundEngine::StepSound(uint8_t block) {
+    switch (block) {
+        case BLOCK_GRASS:
+        case BLOCK_DIRT: return SND_STEP_GRASS;
+        case BLOCK_PLANKS:
+        case BLOCK_LOG: return SND_STEP_WOOD;
+        case BLOCK_SAND: return SND_STEP_SAND;
+        case BLOCK_GRAVEL: return SND_STEP_GRAVEL;
+        default: return SND_STEP_STONE;
     }
 }
 

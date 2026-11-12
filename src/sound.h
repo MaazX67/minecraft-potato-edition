@@ -14,7 +14,9 @@ namespace potato {
 
 enum SoundCat {
     SND_STONE, SND_GRASS, SND_DIRT, SND_WOOD, SND_SAND, SND_GRAVEL,
-    SND_HIT, SND_CRIT, SND_COUNT
+    SND_HIT, SND_CRIT, SND_CLICK, SND_HURT, SND_SPLASH,
+    SND_STEP_GRASS, SND_STEP_STONE, SND_STEP_WOOD, SND_STEP_GRAVEL, SND_STEP_SAND,
+    SND_COUNT
 };
 
 // Native audio architecture: every vanilla sound is located through the
@@ -31,7 +33,9 @@ public:
     void SetListener(float px, float py, float pz,
                      float fwdX, float fwdY, float fwdZ, float rightX, float rightZ);
     void SetEnabled(bool on);
+    void SetVolume(float v);
     static SoundCat BlockSound(uint8_t block);
+    static SoundCat StepSound(uint8_t block);
 
 private:
     struct PlayRequest {
@@ -68,6 +72,7 @@ private:
     bool mStop = false;
     std::thread mWorker;
     std::atomic<bool> mEnabled{true};
+    float mVolume = 1.0f;
     std::mutex mListenerMutex;
     Listener mListener;
 };

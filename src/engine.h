@@ -91,11 +91,12 @@ struct InputState {
     float mouseDX, mouseDY;
     float wheel;
     bool leftClick, rightClick;
+    bool leftDown;
     int mouseX, mouseY;
 
     InputState()
         : keys{}, prevKeys{}, mouseDX(0), mouseDY(0), wheel(0),
-          leftClick(false), rightClick(false), mouseX(0), mouseY(0) {}
+          leftClick(false), rightClick(false), leftDown(false), mouseX(0), mouseY(0) {}
 
     bool KeyPressed(int vk) const { return keys[vk & 0xFF] && !prevKeys[vk & 0xFF]; }
 

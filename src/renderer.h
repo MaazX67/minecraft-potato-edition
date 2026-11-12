@@ -40,6 +40,7 @@ ID3D10ShaderResourceView* CreateTextureSRV(RenderContext& rc, const uint8_t* rgb
 // Loads gui/title/background/panorama_0..5 into a TextureCube. False if missing.
 bool CreatePanorama(RenderContext& rc, AssetStore& store);
 void SetViewProj(RenderContext& rc, const DirectX::XMMATRIX& m);
+void SetBrightness(RenderContext& rc, float b);
 
 struct Frustum {
     DirectX::XMFLOAT4 planes[6];
