@@ -345,6 +345,18 @@ static void UploadMeshes() {
                 fprintf(f, "chunk %d %d: %zu verts %u opaque %u liquid Y=%d X=%d Z=%d\n",
                         KeyCX(key), KeyCZ(key), md.vertices.size(), gc.opaqueIndexCount,
                         gc.indexCount - gc.opaqueIndexCount, qy, qx, qz);
+                if (logged <= 6) {
+                    for (size_t q = 0; q + 3 < md.vertices.size() && q < 16; q += 4) {
+                        const MeshVertex& v0 = md.vertices[q];
+                        fprintf(f, "  quad %zu: (%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f) tile %.3f,%.3f light %.0f\n",
+                                q / 4,
+                                double(md.vertices[q].x), double(md.vertices[q].y), double(md.vertices[q].z),
+                                double(md.vertices[q+1].x), double(md.vertices[q+1].y), double(md.vertices[q+1].z),
+                                double(md.vertices[q+2].x), double(md.vertices[q+2].y), double(md.vertices[q+2].z),
+                                double(md.vertices[q+3].x), double(md.vertices[q+3].y), double(md.vertices[q+3].z),
+                                double(v0.tu), double(v0.tv), double(v0.light));
+                    }
+                }
                 fclose(f);
             }
         }
@@ -428,6 +440,38 @@ static void SaveScreenshot() {
         stage->Release();
     }
     back->Release();
+}
+
+static void DumpAtlas() {
+    FILE* f = fopen("atlas.bmp", "wb");
+    if (!f) return;
+    const uint32_t w = ATLAS_SIZE, h = ATLAS_SIZE;
+    const uint32_t rowBytes = (w * 3 + 3) & ~3u;
+    const uint32_t imgBytes = rowBytes * h;
+    uint8_t hdr[54] = {};
+    hdr[0] = 'B'; hdr[1] = 'M';
+    const uint32_t total = 54 + imgBytes;
+    memcpy(hdr + 2, &total, 4);
+    const uint32_t off = 54;
+    memcpy(hdr + 10, &off, 4);
+    const uint32_t ihdr = 40;
+    memcpy(hdr + 14, &ihdr, 4);
+    memcpy(hdr + 18, &w, 4);
+    memcpy(hdr + 22, &h, 4);
+    hdr[26] = 1; hdr[28] = 24;
+    memcpy(hdr + 34, &imgBytes, 4);
+    fwrite(hdr, 1, 54, f);
+    const uint8_t* px = gAtlas.Pixels();
+    std::vector<uint8_t> row(rowBytes);
+    for (uint32_t y = h; y-- > 0;) {
+        for (uint32_t x = 0; x < w; ++x) {
+            row[x * 3 + 0] = px[(size_t(y) * w + x) * 4 + 2];
+            row[x * 3 + 1] = px[(size_t(y) * w + x) * 4 + 1];
+            row[x * 3 + 2] = px[(size_t(y) * w + x) * 4 + 0];
+        }
+        fwrite(row.data(), 1, rowBytes, f);
+    }
+    fclose(f);
 }
 
 static void HandleGameFrame(float dt) {
@@ -851,6 +895,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                     "Potato Edition - assets missing", MB_ICONWARNING);
     }
     gRC.atlasSRV = CreateTextureSRV(gRC, gAtlas.Pixels(), ATLAS_SIZE, ATLAS_SIZE);
+    if (strstr(GetCommandLineA(), "--dump-atlas")) DumpAtlas();
     for (int b = 1; b < BLOCK_COUNT; ++b) {
         gTiles.top[b] = ResolveTile(BLOCK_DEFS[b].top);
         gTiles.side[b] = ResolveTile(BLOCK_DEFS[b].side);
