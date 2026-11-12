@@ -219,11 +219,13 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
                         ++h;
                     }
 
-                    // One quad on plane x[d], spanning w along u and h along v.
-                    // x[u]/x[v] are stale (== dimU/dimV) after the mask loops,
-                    // so the plane origin must come from x[d] alone.
+                    // One quad on plane x[d], spanning w along u and h along v
+                    // from mask cell (i, j). x[u]/x[v] are stale after the mask
+                    // loops, so the origin is rebuilt from d, i and j.
                     float p[3] = {0, 0, 0};
                     p[d] = float(x[d]);
+                    p[u] = float(i);
+                    p[v] = float(j);
                     float e1[3] = {0, 0, 0}, e2[3] = {0, 0, 0};
                     e1[u] = float(w);
                     e2[v] = float(h);

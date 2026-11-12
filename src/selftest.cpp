@@ -59,6 +59,12 @@ int main() {
     for (const MeshVertex& v : md.vertices) {
         if (v.x < 5 || v.x > 6 || v.y < 64 || v.y > 65 || v.z < 5 || v.z > 6) inPlace = false;
     }
+    if (!inPlace) {
+        for (size_t i = 0; i < md.vertices.size(); i += 4) {
+            const MeshVertex& v = md.vertices[i];
+            printf("quad %zu corner: %.1f %.1f %.1f\n", i / 4, double(v.x), double(v.y), double(v.z));
+        }
+    }
     CHECK(inPlace, "voxel quads sit on the voxel (no plane-origin drift)");
 
     std::vector<uint8_t> two(CHUNK_VOL, 0);
