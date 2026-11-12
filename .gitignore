@@ -3,3 +3,6 @@ out/
 .vs/
 *.user
 CMakeSettings.json
+ci*/
+ci-artifact*/
+*.exe
