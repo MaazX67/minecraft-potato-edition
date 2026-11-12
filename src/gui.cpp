@@ -58,6 +58,8 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texSliderHi       = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/slider_highlighted.png");
     texSliderHandle   = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/slider_handle.png");
     texSliderHandleHi = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/slider_handle_highlighted.png");
+    texInvBg          = LoadGui(rc, store, "minecraft/textures/gui/container/inventory.png");
+    texCraftBg        = LoadGui(rc, store, "minecraft/textures/gui/container/crafting_table.png");
 
     const uint8_t white[4] = {255, 255, 255, 255};
     texWhite.w = texWhite.h = 1;
@@ -84,6 +86,7 @@ void GuiRenderer::Shutdown() {
                         &texCrosshair, &texHotbar, &texHotbarSel, &texFont, &texDirt,
                         &texWhite, &texBlack, &texAttackBg, &texAttackProgress, &texPanoramaOverlay,
                         &texSlider, &texSliderHi, &texSliderHandle, &texSliderHandleHi,
+                        &texInvBg, &texCraftBg,
                         &texHeart[0], &texHeart[1], &texHeart[2],
                         &texFood[0], &texFood[1], &texFood[2]};
     for (GuiTexture* t : all) {
@@ -307,26 +310,54 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         const char* tag = "DX10 / Feature Level 10_0";
         ui.DrawText(tag, SCREEN_W - ui.TextWidth(tag, 2) - 4, SCREEN_H - 20, 2, 15, true);
     } else if (screen == Screen::CreateWorld) {
-        ui.DrawTextCentered("Create New World", cx, 30, 2, 15, true);
+        ui.DrawTextCentered("Create New World", cx, 24, 2, 15, true);
         const float fx = cx - 200, fw = 400, fh = 40;
-        ui.DrawText("World Name", fx, 70, 2, 15, true, 0.627f, 0.627f, 0.627f);
-        DrawTextField(ui, create.name, fx, 92, fw, fh, create.focus == 1, timeSec);
-        ui.DrawText("Seed for the world generator", fx, 150, 2, 15, true, 0.627f, 0.627f, 0.627f);
-        DrawTextField(ui, create.seed, fx, 172, fw, fh, create.focus == 2, timeSec);
-        ui.DrawText("Leave blank for a random seed", fx, 218, 2, 15, true, 0.627f, 0.627f, 0.627f);
-        static const char* MODES[] = {"Survival", "Creative"};
-        snprintf(label, sizeof(label), "Game Mode: %s", MODES[create.gameMode & 1]);
-        mButtons.push_back({fx, 260, fw, fh, label, ACT_CYCLE_GAMEMODE, true});
-        const char* desc = (create.gameMode & 1)
-            ? "Unlimited resources, free flying and destroy blocks instantly"
-            : "Search for resources, craft, gain levels, health and hunger";
-        ui.DrawTextCentered(desc, cx, 308, 2, 15, true, 0.627f, 0.627f, 0.627f);
-        mButtons.push_back({fx, 380, fw, fh, "Create New World", ACT_CREATE_WORLD, !create.name.empty()});
-        mButtons.push_back({fx, 428, fw, fh, "Cancel", ACT_CANCEL_CREATE, true});
-        if (leftDown && mouseX >= fx && mouseX < fx + fw) {
-            if (mouseY >= 92 && mouseY < 92 + fh) create.focus = 1;
-            else if (mouseY >= 172 && mouseY < 172 + fh) create.focus = 2;
+        const float tabY = 56, tabH = 32;
+        if (create.tab == 0) {
+            ui.DrawQuad(&ui.texButtonHi, fx, tabY, 196, tabH, 0, 0, 1, 1, 15);
+            ui.DrawTextCentered("Game", fx + 98, tabY + 8, 2, 15, true, 1, 1, 0.627f);
+            mButtons.push_back({cx + 4, tabY, 196, tabH, "World", ACT_CREATE_TAB_WORLD, true});
+        } else {
+            ui.DrawQuad(&ui.texButtonHi, cx + 4, tabY, 196, tabH, 0, 0, 1, 1, 15);
+            ui.DrawTextCentered("World", cx + 102, tabY + 8, 2, 15, true, 1, 1, 0.627f);
+            mButtons.push_back({fx, tabY, 196, tabH, "Game", ACT_CREATE_TAB_GAME, true});
         }
+        static const char* MODES[] = {"Survival", "Creative"};
+        static const char* DIFF[] = {"Peaceful", "Easy", "Normal", "Hard"};
+        if (create.tab == 0) {
+            ui.DrawText("World Name", fx, 104, 2, 15, true, 0.627f, 0.627f, 0.627f);
+            DrawTextField(ui, create.name, fx, 126, fw, fh, create.focus == 1, timeSec);
+            snprintf(label, sizeof(label), "Game Mode: %s", MODES[create.gameMode & 1]);
+            mButtons.push_back({fx, 186, fw, fh, label, ACT_CYCLE_GAMEMODE, true});
+            const char* desc = (create.gameMode & 1)
+                ? "Unlimited resources, free flying and destroy blocks instantly"
+                : "Search for resources, craft, gain levels, health and hunger";
+            ui.DrawTextCentered(desc, cx, 232, 2, 15, true, 0.627f, 0.627f, 0.627f);
+            snprintf(label, sizeof(label), "Difficulty: %s", DIFF[settings.difficulty & 3]);
+            mButtons.push_back({fx, 262, fw, fh, label, ACT_CYCLE_DIFF, true});
+            static const char* DDESC[] = {
+                "No hostile mobs. Health regenerates. Hunger never depletes.",
+                "Hostile mobs deal less damage. Starvation drains to 5 hearts.",
+                "Hostile mobs deal standard damage. Starvation drains to half a heart.",
+                "Hostile mobs deal more damage. Starvation can kill."};
+            ui.DrawTextCentered(DDesc[settings.difficulty & 3], cx, 308, 2, 15, true,
+                                0.627f, 0.627f, 0.627f);
+            snprintf(label, sizeof(label), "Allow Cheats: %s", create.allowCheats ? "ON" : "OFF");
+            mButtons.push_back({fx, 338, fw, fh, label, ACT_TOGGLE_CHEATS, true});
+        } else {
+            ui.DrawText("Seed for the world generator", fx, 104, 2, 15, true, 0.627f, 0.627f, 0.627f);
+            DrawTextField(ui, create.seed, fx, 126, fw, fh, create.focus == 2, timeSec);
+            ui.DrawText("Leave blank for a random seed", fx, 172, 2, 15, true, 0.627f, 0.627f, 0.627f);
+            snprintf(label, sizeof(label), "Generate Structures: %s", create.structures ? "ON" : "OFF");
+            mButtons.push_back({fx, 210, fw, fh, label, ACT_TOGGLE_STRUCTURES, true});
+            snprintf(label, sizeof(label), "Bonus Chest: %s", create.bonusChest ? "ON" : "OFF");
+            mButtons.push_back({fx, 258, fw, fh, label, ACT_TOGGLE_BONUS, true});
+            mButtons.push_back({fx, 306, fw, fh, "World Type: Default", ACT_NONE, false});
+        }
+        mButtons.push_back({fx, 600, fw, fh, "Create New World", ACT_CREATE_WORLD, !create.name.empty()});
+        mButtons.push_back({fx, 648, fw, fh, "Cancel", ACT_CANCEL_CREATE, true});
+        if (leftDown && mouseX >= fx && mouseX < fx + fw && mouseY >= 126 && mouseY < 126 + fh)
+            create.focus = create.tab == 0 ? 1 : 2;
     } else if (screen == Screen::Options) {
         ui.DrawTextCentered("Options", cx, 30, 2, 15, true);
         mSliders.push_back({SL_FOV, cx - 310, 80, 300, 40});
@@ -548,6 +579,85 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, co
     }
 
     DrawHotbar(ui, selectedSlot, hotbar);
+}
+
+// ---------------------------------------------------------------------------
+// Survival inventory + crafting
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr float INV_S = 2.0f; // GUI scale
+constexpr float INV_W = 176 * INV_S, INV_H = 166 * INV_S;
+
+// Slot item positions copied from InventoryMenu / CraftingMenu (176x166 GUI).
+void SlotPos(int index, bool table, float& x, float& y) {
+    if (index >= 45) {
+        x = table ? 124 : 154; y = table ? 35 : 28;
+    } else if (index >= 36) {
+        const int g = index - 36;
+        x = (table ? 30 : 98) + (g % 3) * 18;
+        y = (table ? 17 : 18) + (g / 3) * 18;
+    } else if (index >= 27) {
+        x = 8 + (index - 27) * 18; y = 142;
+    } else {
+        x = 8 + (index % 9) * 18; y = 84 + (index / 9) * 18;
+    }
+    x *= INV_S; y *= INV_S;
+}
+
+void DrawStack(GuiRenderer& ui, float x, float y, const ItemSlot& s) {
+    if (s.Empty()) return;
+    ui.DrawSprite(&ui.texBlockIcon[s.id], x, y, INV_S, 15);
+    if (s.count > 1) {
+        char n[8]; snprintf(n, sizeof(n), "%d", s.count);
+        ui.DrawText(n, x + 16 * INV_S - ui.TextWidth(n, INV_S), y + 9 * INV_S, INV_S, 15, true);
+    }
+}
+} // namespace
+
+int SurvivalInvHitTest(int mouseX, int mouseY, bool table) {
+    const float px = (SCREEN_W - INV_W) * 0.5f;
+    const float py = (SCREEN_H - INV_H) * 0.5f;
+    for (int i = 0; i < 46; ++i) {
+        if (i >= 36 && i < 45 && !table) {
+            const int g = i - 36;
+            if (g % 3 == 2 || g / 3 == 2) continue; // 2x2 hides third row/col
+        }
+        float x, y; SlotPos(i, table, x, y);
+        x += px - INV_S; y += py - INV_S; // 18px cell around the 16px item
+        if (mouseX >= x && mouseX < x + 18 * INV_S &&
+            mouseY >= y && mouseY < y + 18 * INV_S) return i;
+    }
+    return -1;
+}
+
+void DrawSurvivalInventory(GuiRenderer& ui, const ItemSlot* inv, const ItemSlot* craft,
+                           const ItemSlot& result, const ItemSlot& cursor, bool table,
+                           int mouseX, int mouseY, int selectedSlot) {
+    (void)selectedSlot;
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - INV_W) * 0.5f;
+    const float py = (SCREEN_H - INV_H) * 0.5f;
+    const GuiTexture& bg = table ? ui.texCraftBg : ui.texInvBg;
+    ui.DrawQuad(&bg, px, py, INV_W, INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText(table ? "Crafting" : "Inventory", px + 8 * INV_S, py + 6 * INV_S,
+                INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+
+    const int hovered = SurvivalInvHitTest(mouseX, mouseY, table);
+    for (int i = 0; i < 46; ++i) {
+        if (i >= 36 && i < 45 && !table) {
+            const int g = i - 36;
+            if (g % 3 == 2 || g / 3 == 2) continue;
+        }
+        float x, y; SlotPos(i, table, x, y);
+        x += px; y += py;
+        if (i == hovered)
+            ui.DrawQuad(&ui.texWhite, x, y, 16 * INV_S, 16 * INV_S, 0, 0, 1, 1, 15,
+                        0.85f, 0.85f, 0.85f);
+        const ItemSlot& s = i == 45 ? result : (i >= 36 ? craft[i - 36] : inv[i]);
+        DrawStack(ui, x, y, s);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, cursor);
 }
 
 } // namespace potato

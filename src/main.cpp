@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <objbase.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -75,6 +76,12 @@ static std::string gSplash = "Potato Edition!";
 static WorldCreateInfo gCreate;
 static int gGameMode = 0; // 0 survival, 1 creative
 static uint32_t gWorldSeed = 1337;
+static ItemSlot gInv[36];   // 0..26 storage, 27..35 hotbar
+static ItemSlot gCraft[9];
+static ItemSlot gCursor;
+static ItemSlot gResult;
+static bool gCraftTable = false;
+static bool gBonusGiven = false;
 
 static bool IsWorldScreen(Screen s) {
     return s == Screen::Game || s == Screen::Pause || s == Screen::Inventory || s == Screen::Death;
@@ -232,6 +239,15 @@ static void HandleMenuAction(int action) {
             gWorld = new World(gWorldSeed, gSettings.renderDistance);
             gWorld->SetBlockTiles(gTiles);
             gGameMode = gCreate.gameMode & 1;
+            gWorld->SetGenerateStructures(gCreate.structures);
+            for (int i = 0; i < 36; ++i) gInv[i] = ItemSlot{};
+            for (int i = 0; i < 9; ++i) gCraft[i] = ItemSlot{};
+            gCursor = ItemSlot{};
+            gResult = ItemSlot{};
+            gBonusGiven = false;
+            gHotbarSlot = 0;
+            if (gGameMode == 1) memcpy(gHotbar, HOTBAR_BLOCKS, sizeof(gHotbar));
+            else memset(gHotbar, 0, sizeof(gHotbar));
             StartGame();
             break;
         }
@@ -240,6 +256,21 @@ static void HandleMenuAction(int action) {
             break;
         case ACT_CYCLE_GAMEMODE:
             gCreate.gameMode ^= 1;
+            break;
+        case ACT_CREATE_TAB_GAME:
+            gCreate.tab = 0; gCreate.focus = 1;
+            break;
+        case ACT_CREATE_TAB_WORLD:
+            gCreate.tab = 1; gCreate.focus = 2;
+            break;
+        case ACT_TOGGLE_CHEATS:
+            gCreate.allowCheats = !gCreate.allowCheats;
+            break;
+        case ACT_TOGGLE_STRUCTURES:
+            gCreate.structures = !gCreate.structures;
+            break;
+        case ACT_TOGGLE_BONUS:
+            gCreate.bonusChest = !gCreate.bonusChest;
             break;
         case ACT_RESUME:
             SetScreen(gHwnd, Screen::Game);
@@ -474,9 +505,117 @@ static void DumpAtlas() {
     fclose(f);
 }
 
+// --- Survival inventory / crafting --------------------------------------
+static void SyncHotbar() {
+    for (int i = 0; i < 9; ++i) gHotbar[i] = gInv[27 + i].id;
+}
+
+static void AddItem(uint8_t id, int count) {
+    if (id == 0 || count <= 0) return;
+    for (int pass = 0; pass < 2 && count > 0; ++pass) {
+        for (int i = 0; i < 36 && count > 0; ++i) {
+            ItemSlot& s = gInv[i];
+            if (pass == 0 && s.id == id && s.count < 64) {
+                const int take = std::min(64 - s.count, count);
+                s.count += take; count -= take;
+            } else if (pass == 1 && s.Empty()) {
+                s.id = id; s.count = std::min(64, count); count -= s.count;
+            }
+        }
+    }
+    SyncHotbar();
+}
+
+static uint8_t BlockDrop(uint8_t b) {
+    switch (b) {
+        case BLOCK_STONE: return BLOCK_COBBLE;
+        case BLOCK_GRASS: return BLOCK_DIRT;
+        case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES:
+        case BLOCK_GLASS: case BLOCK_ICE: return 0;
+        default: return b;
+    }
+}
+
+struct Recipe { int w, h; uint8_t cells[9]; uint8_t out; int count; };
+static const Recipe RECIPES[] = {
+    {1,1,{BLOCK_LOG},BLOCK_PLANKS,4},
+    {1,1,{BLOCK_SPRUCE_LOG},BLOCK_SPRUCE_PLANKS,4},
+    {1,1,{BLOCK_BIRCH_LOG},BLOCK_BIRCH_PLANKS,4},
+    {2,2,{BLOCK_PLANKS,BLOCK_PLANKS,BLOCK_PLANKS,BLOCK_PLANKS},BLOCK_CRAFTING_TABLE,1},
+    {2,2,{BLOCK_STONE,BLOCK_STONE,BLOCK_STONE,BLOCK_STONE},BLOCK_STONE_BRICKS,4},
+    {2,2,{BLOCK_SAND,BLOCK_SAND,BLOCK_SAND,BLOCK_SAND},BLOCK_SANDSTONE,1},
+    {3,3,{BLOCK_COBBLE,BLOCK_COBBLE,BLOCK_COBBLE,BLOCK_COBBLE,0,BLOCK_COBBLE,BLOCK_COBBLE,BLOCK_COBBLE,BLOCK_COBBLE},BLOCK_FURNACE,1},
+};
+
+static void UpdateCrafting() {
+    uint8_t g[9] = {};
+    if (gCraftTable) {
+        for (int i = 0; i < 9; ++i) g[i] = gCraft[i].id;
+    } else {
+        g[0] = gCraft[0].id; g[1] = gCraft[1].id;
+        g[3] = gCraft[3].id; g[4] = gCraft[4].id;
+    }
+    int minR = 3, maxR = -1, minC = 3, maxC = -1;
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) if (g[r*3+c]) {
+        minR = std::min(minR,r); maxR = std::max(maxR,r);
+        minC = std::min(minC,c); maxC = std::max(maxC,c);
+    }
+    gResult = ItemSlot{};
+    if (maxR < 0) return;
+    const int h = maxR-minR+1, w = maxC-minC+1;
+    for (const Recipe& rec : RECIPES) {
+        if (rec.w != w || rec.h != h) continue;
+        bool ok = true;
+        for (int r = 0; r < h && ok; ++r) for (int c = 0; c < w; ++c)
+            if (g[(minR+r)*3+(minC+c)] != rec.cells[r*rec.w+c]) { ok = false; break; }
+        if (ok) { gResult.id = rec.out; gResult.count = rec.count; return; }
+    }
+}
+
+static void CloseInventory() {
+    if (!gCursor.Empty()) { AddItem(gCursor.id, gCursor.count); gCursor = ItemSlot{}; }
+    for (int i = 0; i < 9; ++i) if (!gCraft[i].Empty()) { AddItem(gCraft[i].id, gCraft[i].count); gCraft[i] = ItemSlot{}; }
+    UpdateCrafting();
+    SetScreen(gHwnd, Screen::Game);
+}
+
+static void HandleInventoryClick(int idx, bool right) {
+    if (idx < 0) return;
+    if (idx == 45) {
+        if (!gResult.Empty() && (gCursor.Empty() || (gCursor.id == gResult.id && gCursor.count + gResult.count <= 64))) {
+            gCursor.id = gResult.id; gCursor.count += gResult.count;
+            for (int i = 0; i < 9; ++i) if (gCraft[i].count > 0) --gCraft[i].count;
+            UpdateCrafting(); gSound.Play(SND_CLICK);
+        }
+        return;
+    }
+    ItemSlot& s = idx >= 36 ? gCraft[idx-36] : gInv[idx];
+    if (!right) {
+        if (gCursor.Empty()) { gCursor = s; s = ItemSlot{}; }
+        else if (s.Empty()) { s = gCursor; gCursor = ItemSlot{}; }
+        else if (s.id == gCursor.id) {
+            const int take = std::min(64 - s.count, gCursor.count);
+            s.count += take; gCursor.count -= take;
+            if (gCursor.count == 0) gCursor = ItemSlot{};
+        } else { std::swap(s, gCursor); }
+    } else {
+        if (gCursor.Empty() && !s.Empty()) {
+            const int take = (s.count + 1) / 2;
+            gCursor.id = s.id; gCursor.count = take; s.count -= take;
+            if (s.count == 0) s = ItemSlot{};
+        } else if (!gCursor.Empty() && (s.Empty() || (s.id == gCursor.id && s.count < 64))) {
+            if (s.Empty()) s.id = gCursor.id;
+            ++s.count; --gCursor.count;
+            if (gCursor.count == 0) gCursor = ItemSlot{};
+        }
+    }
+    if (idx >= 36) UpdateCrafting();
+    SyncHotbar();
+    gSound.Play(SND_CLICK);
+}
+
 static void HandleGameFrame(float dt) {
     gCamera.Look(gInput.mouseDX, gInput.mouseDY);
-    const float cp = cosf(gCamera.pitch);
     gCamera.fwdX = sinf(gCamera.yaw) * cp;
     gCamera.fwdY = sinf(gCamera.pitch);
     gCamera.fwdZ = -cosf(gCamera.yaw) * cp;
@@ -499,6 +638,12 @@ static void HandleGameFrame(float dt) {
         }
         gFallStartY = gBody.y;
         gSpawned = true;
+        if (gGameMode == 0 && gCreate.bonusChest && !gBonusGiven) {
+            gBonusGiven = true;
+            AddItem(BLOCK_LOG, 8);
+            AddItem(BLOCK_PLANKS, 16);
+            AddItem(BLOCK_COBBLE, 16);
+        }
     }
 
     // Vanilla creative double-tap-space toggles flight; survival can never fly.
@@ -560,7 +705,12 @@ static void HandleGameFrame(float dt) {
     if (gInput.wheel != 0) {
         gHotbarSlot = (gHotbarSlot + (gInput.wheel > 0 ? -1 : 1) + 9) % 9;
     }
-    if (gInput.KeyPressed('E')) { SetScreen(gHwnd, Screen::Inventory); return; }
+    if (gInput.KeyPressed('E')) {
+        gCraftTable = false;
+        UpdateCrafting();
+        SetScreen(gHwnd, Screen::Inventory);
+        return;
+    }
     if (gInput.KeyPressed(VK_F3)) gDebug = !gDebug;
 
     int hx, hy, hz, nx, ny, nz;
@@ -572,6 +722,7 @@ static void HandleGameFrame(float dt) {
     if (gInput.leftClick) {
         if (gHaveTarget) {
             const uint8_t old = gWorld->GetBlock(hx, hy, hz);
+            if (gGameMode == 0 && old == BLOCK_BEDROCK) return;
             const float strength = gCooldown.Strength(gNowMs);
             float dmg = gCooldown.Swing(gNowMs);
             const bool crit = strength > 0.9f && gCamera.vy < 0;
@@ -583,6 +734,7 @@ static void HandleGameFrame(float dt) {
                 gSound.Play(SND_HIT);
             }
             gWorld->SetBlock(hx, hy, hz, BLOCK_AIR);
+            if (gGameMode == 0) AddItem(BlockDrop(old), 1);
             gSound.PlayAt(SoundEngine::BlockSound(old),
                           float(hx) + 0.5f, float(hy) + 0.5f, float(hz) + 0.5f);
             char buf[64];
@@ -596,6 +748,12 @@ static void HandleGameFrame(float dt) {
     }
 
     if (gInput.rightClick && gHaveTarget && (nx || ny || nz)) {
+        if (gGameMode == 0 && gWorld->GetBlock(hx, hy, hz) == BLOCK_CRAFTING_TABLE) {
+            gCraftTable = true;
+            UpdateCrafting();
+            SetScreen(gHwnd, Screen::Inventory);
+            return;
+        }
         const int px = hx + nx, py = hy + ny, pz = hz + nz;
         if (py >= 0 && py < CHUNK_Y && gWorld->GetBlock(px, py, pz) == BLOCK_AIR) {
             const bool insideBody =
@@ -604,7 +762,13 @@ static void HandleGameFrame(float dt) {
                 py + 1 > gBody.y && py < gBody.y + PlayerBody::HEIGHT;
             if (!insideBody) {
                 const uint8_t block = gHotbar[gHotbarSlot];
+                if (block == BLOCK_AIR) return;
                 gWorld->SetBlock(px, py, pz, block);
+                if (gGameMode == 0) {
+                    ItemSlot& s = gInv[27 + gHotbarSlot];
+                    if (--s.count <= 0) s = ItemSlot{};
+                    SyncHotbar();
+                }
                 gSound.PlayAt(SoundEngine::BlockSound(block),
                               float(px) + 0.5f, float(py) + 0.5f, float(pz) + 0.5f);
             }
@@ -804,7 +968,11 @@ static void RenderFrame() {
                 gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1);
         if (gDebug) DrawDebug();
     } else if (gScreen == Screen::Inventory) {
-        DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gHotbarSlot, gHotbar);
+        if (gGameMode == 0)
+            DrawSurvivalInventory(gGui, gInv, gCraft, gResult, gCursor, gCraftTable,
+                                  gInput.mouseX, gInput.mouseY, gHotbarSlot);
+        else
+            DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gHotbarSlot, gHotbar);
     } else {
         if (gScreen == Screen::CreateWorld || (menuBg && !gRC.panoramaSRV)) {
             gGui.DrawQuad(&gGui.texDirt, 0, 0, SCREEN_W, SCREEN_H, 0, 0,
@@ -906,7 +1074,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     gSound.Init(gStore);
     CreatePanorama(gRC, gStore); // optional; null falls back to dirt title
     LoadSplash();
-    memcpy(gHotbar, HOTBAR_BLOCKS, sizeof(gHotbar));
+    if (gGameMode == 1) memcpy(gHotbar, HOTBAR_BLOCKS, sizeof(gHotbar));
 
     {
         std::vector<uint8_t> bytes, px;
@@ -964,7 +1132,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (gInput.KeyPressed(VK_ESCAPE)) {
             if (gScreen == Screen::Game) SetScreen(hwnd, Screen::Pause);
             else if (gScreen == Screen::Pause) SetScreen(hwnd, Screen::Game);
-            else if (gScreen == Screen::Inventory) SetScreen(hwnd, Screen::Game);
+            else if (gScreen == Screen::Inventory) {
+                if (gGameMode == 0) CloseInventory();
+                else SetScreen(hwnd, Screen::Game);
+            }
             else if (gScreen == Screen::Options) SetScreen(hwnd, gOptionsReturn);
             else if (gScreen == Screen::CreateWorld) SetScreen(hwnd, Screen::Title);
         }
@@ -983,7 +1154,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (gScreen == Screen::Game) {
             HandleGameFrame(dt);
         } else if (gScreen == Screen::Inventory) {
-            if (gInput.leftClick) {
+            if (gGameMode == 0) {
+                if (gInput.leftClick || gInput.rightClick)
+                    HandleInventoryClick(
+                        SurvivalInvHitTest(gInput.mouseX, gInput.mouseY, gCraftTable),
+                        gInput.rightClick);
+            } else if (gInput.leftClick) {
                 const int b = InventoryHitTest(gInput.mouseX, gInput.mouseY);
                 if (b > 0) {
                     gHotbar[gHotbarSlot] = uint8_t(b);

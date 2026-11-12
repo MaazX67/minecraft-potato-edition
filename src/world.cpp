@@ -304,7 +304,8 @@ bool RaycastDDA(const std::function<uint8_t(int, int, int)>& getBlock,
     nx = ny = nz = 0;
 
     for (int i = 0; i < 512; ++i) {
-        if (getBlock(x, y, z) != 0) {
+        const uint8_t b = getBlock(x, y, z);
+        if (b != 0 && !(BLOCK_FLAGS[b] & BF_LIQUID)) {
             hx = x; hy = y; hz = z;
             return true;
         }
@@ -459,7 +460,7 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
 
     // Oak trees. Trunks stay 2 blocks inside the chunk border so the radius-2
     // canopy never writes into a neighbor (no cross-chunk gen writes needed).
-    for (int x = 2; x < CHUNK_X - 2; ++x) {
+    for (int x = 2; mStructures && x < CHUNK_X - 2; ++x) {
         for (int z = 2; z < CHUNK_Z - 2; ++z) {
             const int h = heights[x][z];
             if (h <= SEA + 1 || h + 9 >= CHUNK_Y) continue;

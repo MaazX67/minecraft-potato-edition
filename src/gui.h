@@ -58,6 +58,7 @@ public:
 
     GuiTexture texButton, texButtonHi, texButtonDisabled, texLogo, texCrosshair;
     GuiTexture texHotbar, texHotbarSel, texFont, texDirt, texWhite, texBlack;
+    GuiTexture texInvBg, texCraftBg;
     GuiTexture texHeart[3];   // container, full, half
     GuiTexture texFood[3];    // empty, full, half
     GuiTexture texAttackBg, texAttackProgress;
@@ -83,7 +84,9 @@ enum MenuAction {
     ACT_QUIT_TO_TITLE, ACT_OPTIONS_DONE, ACT_RESPAWN,
     ACT_CYCLE_RD, ACT_CYCLE_FOV, ACT_CYCLE_SENS, ACT_TOGGLE_SOUND,
     ACT_TOGGLE_BOB, ACT_TOGGLE_VSYNC, ACT_TOGGLE_FS, ACT_CYCLE_DIFF,
-    ACT_CREATE_WORLD, ACT_CANCEL_CREATE, ACT_CYCLE_GAMEMODE
+    ACT_CREATE_WORLD, ACT_CANCEL_CREATE, ACT_CYCLE_GAMEMODE,
+    ACT_CREATE_TAB_GAME, ACT_CREATE_TAB_WORLD, ACT_TOGGLE_CHEATS,
+    ACT_TOGGLE_STRUCTURES, ACT_TOGGLE_BONUS
 };
 
 // State of the Create New World form; main owns it and applies it on create.
@@ -92,6 +95,10 @@ struct WorldCreateInfo {
     std::string seed;
     int gameMode = 0; // 0 survival, 1 creative
     int focus = 1;    // 1 name field, 2 seed field
+    int tab = 0;      // 0 Game, 1 World
+    bool allowCheats = false;
+    bool structures = true;
+    bool bonusChest = false;
 };
 
 // Vanilla-style screens built from real GUI sprites. The 3D background
@@ -135,5 +142,19 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
                    const uint8_t* hotbar);
 int InventoryHitTest(int mouseX, int mouseY);
+
+// Survival inventory: a stack of one block type plus a count.
+struct ItemSlot {
+    uint8_t id = 0;
+    int count = 0;
+    bool Empty() const { return id == 0 || count <= 0; }
+};
+
+// Slot indices for the survival screen: 0..26 storage, 27..35 hotbar,
+// 36..44 crafting grid (3x3; the 2x2 uses 36,37,39,40), 45 = craft result.
+void DrawSurvivalInventory(GuiRenderer& ui, const ItemSlot* inv, const ItemSlot* craft,
+                           const ItemSlot& result, const ItemSlot& cursor, bool table,
+                           int mouseX, int mouseY, int selectedSlot);
+int SurvivalInvHitTest(int mouseX, int mouseY, bool table);
 
 } // namespace potato
