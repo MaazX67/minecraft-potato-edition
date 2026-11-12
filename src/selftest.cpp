@@ -83,6 +83,141 @@ int main() {
     hit = RaycastDDA(get, 8, 300, 8, 0, 1, 0, 500, hx, hy, hz, nx, ny, nz);
     CHECK(!hit, "raycast up misses");
 
+    {
+        auto liquidThenStone = [](int, int y, int) -> uint8_t {
+            if (y == 65) return BLOCK_WATER;
+            return y == 64 ? BLOCK_STONE : BLOCK_AIR;
+        };
+        hit = RaycastDDA(liquidThenStone, 8, 70, 8, 0, -1, 0, 10, hx, hy, hz, nx, ny, nz);
+        CHECK(hit && hy == 64, "selection ray skips water and hits the solid block below");
+    }
+
+    {
+        InventoryState inv;
+        CHECK(inv.Add(BLOCK_LOG, 65) == 0 && inv.slots[27].count == 64 && inv.slots[28].count == 1,
+              "pickup fills hotbar first and caps stacks at 64");
+        CHECK(inv.Click(28, true, false) && inv.cursor.count == 1 && inv.slots[28].id == 0,
+              "right-clicking one item clears the emptied slot id");
+        CHECK(inv.Click(36, false, false) && inv.cursor.Empty(), "move log into 2x2 crafting grid");
+        CHECK(inv.Result(false).id == BLOCK_PLANKS && inv.Result(false).count == 4,
+              "one log previews four planks");
+        CHECK(inv.Click(45, false, false) && inv.cursor.count == 4 && inv.craft[0].id == 0,
+              "taking output consumes and clears the ingredient");
+        CHECK(inv.Result(false).Empty() && !inv.Click(45, false, false) && inv.cursor.count == 4,
+              "repeated output click cannot duplicate exhausted ingredients");
+        CHECK(inv.Click(28, false, false), "place crafted stack in hotbar");
+        inv.slots[0] = {BLOCK_PLANKS, 63};
+        CHECK(inv.Click(28, false, false, true) && inv.slots[0].count == 64 && inv.slots[1].count == 3,
+              "shift-click merges before filling empty storage cells");
+        CHECK(inv.Click(1, true, false) && inv.cursor.count == 2 && inv.slots[1].count == 1,
+              "right-click splits an odd stack with ceiling half on cursor");
+        CHECK(inv.Click(2, true, false) && inv.slots[2].count == 1 && inv.cursor.count == 1,
+              "right-click places exactly one item");
+        CHECK(inv.Close() && inv.cursor.Empty() && inv.craft[0].Empty(),
+              "closing inventory returns cursor and crafting items");
+    }
+    {
+        InventoryState inv;
+        inv.craft[0] = {BLOCK_PLANKS, 1};
+        inv.craft[1] = {BLOCK_SPRUCE_PLANKS, 1};
+        inv.craft[3] = {BLOCK_BIRCH_PLANKS, 1};
+        inv.craft[4] = {BLOCK_PLANKS, 1};
+        CHECK(inv.Result(false).id == BLOCK_CRAFTING_TABLE,
+              "crafting table accepts mixed plank species");
+        inv.cursor = {BLOCK_DIRT, 1};
+        CHECK(!inv.Click(45, false, false) && inv.craft[0].count == 1,
+              "incompatible cursor does not consume ingredients");
+        inv.cursor = {BLOCK_CRAFTING_TABLE, 64};
+        CHECK(!inv.Click(45, false, false) && inv.craft[4].count == 1,
+              "full cursor does not consume ingredients");
+        inv.cursor = {};
+        CHECK(inv.Click(45, true, false) && inv.cursor.count == 1 && inv.Result(false).Empty(),
+              "right-clicking output crafts exactly once");
+        inv = InventoryState{};
+        inv.craft[4] = {BLOCK_LOG, 2};
+        CHECK(inv.Result(false).id == BLOCK_PLANKS, "single-cell recipes work away from grid origin");
+        inv.craft[4] = {BLOCK_LOG, 0};
+        CHECK(inv.Result(false).Empty(), "zero-count slot never participates in a recipe");
+        CHECK(!inv.Click(-1, false, false) && !inv.Click(46, false, false) && !inv.Click(38, false, false),
+              "outside and hidden 2x2 cells cannot be clicked");
+    }
+    {
+        InventoryState inv;
+        for (int i = 0; i < 9; ++i) if (i != 4) inv.craft[i] = {BLOCK_COBBLE, 2};
+        CHECK(inv.Result(false).Empty() && inv.Result(true).id == BLOCK_FURNACE,
+              "furnace recipe requires the 3x3 crafting table");
+        inv.craft[4] = {BLOCK_COBBLE, 1};
+        CHECK(inv.Result(true).Empty(), "filled center invalidates furnace recipe");
+        inv.craft[4] = {};
+        CHECK(inv.Click(45, false, true, true) && inv.slots[27].id == BLOCK_FURNACE &&
+              inv.slots[27].count == 2 && inv.Result(true).Empty(),
+              "shift-click crafts only as many furnaces as ingredients allow");
+    }
+    {
+        InventoryState inv;
+        for (ItemSlot& slot : inv.slots) slot = {BLOCK_STONE, 64};
+        CHECK(inv.Add(BLOCK_DIRT, 5) == 5 && inv.Capacity(BLOCK_DIRT) == 0,
+              "full inventory returns uninserted items instead of deleting them");
+        inv.cursor = {BLOCK_LOG, 1};
+        inv.craft[0] = {BLOCK_LOG, 1};
+        CHECK(!inv.Close() && inv.cursor.count == 1 && inv.craft[0].count == 1,
+              "failed close preserves cursor and crafting grid");
+        CHECK(!inv.Click(45, false, false, true) && inv.craft[0].count == 1,
+              "shift-crafting into a full inventory consumes nothing");
+        inv.slots[0] = {BLOCK_PLANKS, 61};
+        CHECK(!inv.Click(45, false, false, true) && inv.slots[0].count == 61,
+              "craft output is atomic when only part of a batch would fit");
+        inv.slots[0].count = 60;
+        CHECK(inv.Click(45, false, false, true) && inv.slots[0].count == 64 && inv.craft[0].Empty(),
+              "craft output succeeds at exact available capacity");
+        inv.craft[0] = {BLOCK_LOG, 1};
+        inv.slots[1] = {BLOCK_LOG, 63};
+        CHECK(!inv.Close() && inv.slots[1].count == 63 && inv.cursor.count == 1 && inv.craft[0].count == 1,
+              "close is all-or-nothing when only cursor fits");
+    }
+    {
+        InventoryState inv;
+        inv.slots[0] = {BLOCK_DIRT, 37};
+        inv.slots[27] = {BLOCK_LOG, 64};
+        inv.slots[28] = {BLOCK_STONE, 13};
+        std::mt19937 rng(451);
+        bool conserved = true;
+        for (int n = 0; n < 2000; ++n) {
+            const bool table = (rng() & 1) != 0;
+            inv.Click(int(rng() % 45), (rng() & 1) != 0, table, (rng() & 1) != 0);
+            if (n % 11 == 0) inv.Close();
+            int totals[BLOCK_COUNT] = {};
+            auto countSlot = [&](const ItemSlot& slot) {
+                if (slot.Empty()) { if (slot.id != 0 || slot.count != 0) conserved = false; }
+                else {
+                    if (slot.count > 64 || slot.id >= BLOCK_COUNT) conserved = false;
+                    else totals[slot.id] += slot.count;
+                }
+            };
+            for (const ItemSlot& slot : inv.slots) countSlot(slot);
+            for (const ItemSlot& slot : inv.craft) countSlot(slot);
+            countSlot(inv.cursor);
+            if (totals[BLOCK_DIRT] != 37 || totals[BLOCK_LOG] != 64 || totals[BLOCK_STONE] != 13)
+                conserved = false;
+        }
+        CHECK(conserved, "2000 randomized slot operations preserve items and canonical stack bounds");
+    }
+    {
+        SurvivalState easy, normal, hard, peaceful;
+        easy.hunger = normal.hunger = hard.hunger = peaceful.hunger = 0;
+        peaceful.health = 5;
+        for (int tick = 0; tick < 2000; ++tick) {
+            easy.Update(0.1f, false, false, 1);
+            normal.Update(0.1f, false, false, 2);
+            hard.Update(0.1f, false, false, 3);
+            peaceful.Update(0.1f, false, false, 0);
+        }
+        CHECK(easy.health == 10 && normal.health == 1 && hard.dead && hard.health == 0,
+              "difficulty controls starvation floor");
+        CHECK(peaceful.health == 20 && peaceful.hunger == 20 && !peaceful.dead,
+              "peaceful regenerates health without hunger depletion");
+    }
+
     // --- Atlas ---
     Atlas atlas;
     uint8_t red[16 * 16 * 4], blue[16 * 16 * 4];

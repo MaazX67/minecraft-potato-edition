@@ -1,5 +1,6 @@
 #pragma once
 #include "assets.h"
+#include "engine.h"
 #include "renderer.h"
 #include "world.h"
 #include <string>
@@ -85,8 +86,7 @@ enum MenuAction {
     ACT_CYCLE_RD, ACT_CYCLE_FOV, ACT_CYCLE_SENS, ACT_TOGGLE_SOUND,
     ACT_TOGGLE_BOB, ACT_TOGGLE_VSYNC, ACT_TOGGLE_FS, ACT_CYCLE_DIFF,
     ACT_CREATE_WORLD, ACT_CANCEL_CREATE, ACT_CYCLE_GAMEMODE,
-    ACT_CREATE_TAB_GAME, ACT_CREATE_TAB_WORLD, ACT_TOGGLE_CHEATS,
-    ACT_TOGGLE_STRUCTURES, ACT_TOGGLE_BONUS
+    ACT_CREATE_TAB_GAME, ACT_CREATE_TAB_WORLD
 };
 
 // State of the Create New World form; main owns it and applies it on create.
@@ -96,9 +96,6 @@ struct WorldCreateInfo {
     int gameMode = 0; // 0 survival, 1 creative
     int focus = 1;    // 1 name field, 2 seed field
     int tab = 0;      // 0 Game, 1 World
-    bool allowCheats = false;
-    bool structures = true;
-    bool bonusChest = false;
 };
 
 // Vanilla-style screens built from real GUI sprites. The 3D background
@@ -136,25 +133,17 @@ extern const uint8_t HOTBAR_BLOCKS[9];
 void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar);
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint8_t* hotbar, int health, int hunger,
-             const std::string& actionBar, bool creative);
+             const std::string& actionBar, bool creative, const ItemSlot* stacks);
 
 // Creative block picker (E). Returns the block id under the cursor, or -1.
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
                    const uint8_t* hotbar);
 int InventoryHitTest(int mouseX, int mouseY);
 
-// Survival inventory: a stack of one block type plus a count.
-struct ItemSlot {
-    uint8_t id = 0;
-    int count = 0;
-    bool Empty() const { return id == 0 || count <= 0; }
-};
-
 // Slot indices for the survival screen: 0..26 storage, 27..35 hotbar,
 // 36..44 crafting grid (3x3; the 2x2 uses 36,37,39,40), 45 = craft result.
-void DrawSurvivalInventory(GuiRenderer& ui, const ItemSlot* inv, const ItemSlot* craft,
-                           const ItemSlot& result, const ItemSlot& cursor, bool table,
-                           int mouseX, int mouseY, int selectedSlot);
+void DrawSurvivalInventory(GuiRenderer& ui, const InventoryState& model, bool table,
+                           int mouseX, int mouseY, const std::string& message);
 int SurvivalInvHitTest(int mouseX, int mouseY, bool table);
 
 } // namespace potato

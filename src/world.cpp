@@ -460,7 +460,7 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
 
     // Oak trees. Trunks stay 2 blocks inside the chunk border so the radius-2
     // canopy never writes into a neighbor (no cross-chunk gen writes needed).
-    for (int x = 2; mStructures && x < CHUNK_X - 2; ++x) {
+    for (int x = 2; x < CHUNK_X - 2; ++x) {
         for (int z = 2; z < CHUNK_Z - 2; ++z) {
             const int h = heights[x][z];
             if (h <= SEA + 1 || h + 9 >= CHUNK_Y) continue;

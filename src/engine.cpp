@@ -135,6 +135,159 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
     cam.vy = vy;
 }
 
+namespace {
+struct Recipe {
+    int width, height;
+    uint8_t cells[9];
+    ItemSlot result;
+};
+
+const Recipe RECIPES[] = {
+    {1, 1, {BLOCK_LOG}, {BLOCK_PLANKS, 4}},
+    {1, 1, {BLOCK_SPRUCE_LOG}, {BLOCK_SPRUCE_PLANKS, 4}},
+    {1, 1, {BLOCK_BIRCH_LOG}, {BLOCK_BIRCH_PLANKS, 4}},
+    {2, 2, {BLOCK_PLANKS, BLOCK_PLANKS, BLOCK_PLANKS, BLOCK_PLANKS}, {BLOCK_CRAFTING_TABLE, 1}},
+    {2, 2, {BLOCK_STONE, BLOCK_STONE, BLOCK_STONE, BLOCK_STONE}, {BLOCK_STONE_BRICKS, 4}},
+    {2, 2, {BLOCK_SAND, BLOCK_SAND, BLOCK_SAND, BLOCK_SAND}, {BLOCK_SANDSTONE, 1}},
+    {3, 3, {BLOCK_COBBLE, BLOCK_COBBLE, BLOCK_COBBLE, BLOCK_COBBLE, 0,
+            BLOCK_COBBLE, BLOCK_COBBLE, BLOCK_COBBLE, BLOCK_COBBLE}, {BLOCK_FURNACE, 1}},
+};
+
+bool IsCraftCell(int index, bool table) {
+    return table || (index % 3 < 2 && index / 3 < 2);
+}
+
+int InsertStack(ItemSlot* slots, int begin, int end, uint8_t id, int count) {
+    for (int pass = 0; pass < 2 && count > 0; ++pass) {
+        for (int i = begin; i < end && count > 0; ++i) {
+            ItemSlot& slot = slots[i];
+            if (pass == 0 ? (!slot.Empty() && slot.id == id) : slot.Empty()) {
+                const int moved = std::min(64 - (slot.Empty() ? 0 : slot.count), count);
+                slot = {id, (slot.Empty() ? 0 : slot.count) + moved};
+                count -= moved;
+            }
+        }
+    }
+    return count;
+}
+}
+
+int InventoryState::Capacity(uint8_t id) const {
+    if (id == BLOCK_AIR) return 0;
+    int available = 0;
+    for (const ItemSlot& slot : slots) {
+        if (slot.Empty()) available += 64;
+        else if (slot.id == id) available += 64 - slot.count;
+    }
+    return available;
+}
+
+int InventoryState::Add(uint8_t id, int count) {
+    if (id == BLOCK_AIR || count <= 0) return count;
+    // Merge throughout the inventory before filling empty hotbar slots.
+    for (ItemSlot& slot : slots) {
+        if (!slot.Empty() && slot.id == id) {
+            const int moved = std::min(64 - slot.count, count);
+            slot.count += moved;
+            count -= moved;
+        }
+    }
+    count = InsertStack(slots, 27, 36, id, count);
+    return InsertStack(slots, 0, 27, id, count);
+}
+
+ItemSlot InventoryState::Result(bool table) const {
+    int minRow = 3, maxRow = -1, minCol = 3, maxCol = -1;
+    for (int i = 0; i < 9; ++i) {
+        if (craft[i].Empty()) continue;
+        if (!IsCraftCell(i, table)) return {};
+        minRow = std::min(minRow, i / 3); maxRow = std::max(maxRow, i / 3);
+        minCol = std::min(minCol, i % 3); maxCol = std::max(maxCol, i % 3);
+    }
+    if (maxRow < 0) return {};
+    const int width = maxCol - minCol + 1, height = maxRow - minRow + 1;
+    for (const Recipe& recipe : RECIPES) {
+        if (width != recipe.width || height != recipe.height) continue;
+        bool matches = true;
+        for (int r = 0; r < height; ++r) {
+            for (int c = 0; c < width; ++c) {
+                const ItemSlot& slot = craft[(minRow + r) * 3 + minCol + c];
+                const uint8_t actual = slot.Empty() ? uint8_t(BLOCK_AIR) : slot.id;
+                const uint8_t expected = recipe.cells[r * width + c];
+                const bool plankTag = recipe.result.id == BLOCK_CRAFTING_TABLE &&
+                    (actual == BLOCK_PLANKS || actual == BLOCK_SPRUCE_PLANKS || actual == BLOCK_BIRCH_PLANKS);
+                if (actual != expected && !plankTag) matches = false;
+            }
+        }
+        if (matches) return recipe.result;
+    }
+    return {};
+}
+
+bool InventoryState::Click(int index, bool right, bool table, bool shift) {
+    if (index < 0 || index > 45) return false;
+    if (index >= 36 && index < 45 && !IsCraftCell(index - 36, table)) return false;
+    if (index == 45) {
+        bool crafted = false;
+        const ItemSlot initial = Result(table);
+        for (;;) {
+            const ItemSlot result = Result(table);
+            if (result.Empty() || result.id != initial.id) break;
+            if (shift) {
+                if (Capacity(result.id) < result.count) break;
+                Add(result.id, result.count);
+            } else {
+                if (!cursor.Empty() && (cursor.id != result.id || cursor.count + result.count > 64)) break;
+                cursor = {result.id, (cursor.Empty() ? 0 : cursor.count) + result.count};
+            }
+            for (ItemSlot& slot : craft) {
+                if (!slot.Empty() && --slot.count == 0) slot = {};
+            }
+            crafted = true;
+            if (!shift) break;
+        }
+        return crafted;
+    }
+    ItemSlot& slot = index < 36 ? slots[index] : craft[index - 36];
+    if (shift) {
+        if (slot.Empty()) return false;
+        const int before = slot.count;
+        if (index >= 36) slot.count = Add(slot.id, slot.count);
+        else slot.count = InsertStack(slots, index < 27 ? 27 : 0, index < 27 ? 36 : 27, slot.id, slot.count);
+        const bool changed = slot.count != before;
+        if (slot.count == 0) slot = {};
+        return changed;
+    }
+    if (cursor.Empty()) {
+        if (slot.Empty()) return false;
+        const int moved = right ? (slot.count + 1) / 2 : slot.count;
+        cursor = {slot.id, moved};
+        slot.count -= moved;
+        if (slot.count == 0) slot = {};
+    } else if (slot.Empty() || slot.id == cursor.id) {
+        const int moved = std::min(right ? 1 : cursor.count, 64 - (slot.Empty() ? 0 : slot.count));
+        if (moved == 0) return false;
+        slot = {cursor.id, (slot.Empty() ? 0 : slot.count) + moved};
+        cursor.count -= moved;
+        if (cursor.count == 0) cursor = {};
+    } else {
+        std::swap(slot, cursor);
+    }
+    return true;
+}
+
+bool InventoryState::Close() {
+    InventoryState returned = *this;
+    if (!returned.cursor.Empty() && returned.Add(returned.cursor.id, returned.cursor.count) != 0) return false;
+    for (const ItemSlot& slot : returned.craft) {
+        if (!slot.Empty() && returned.Add(slot.id, slot.count) != 0) return false;
+    }
+    returned.cursor = {};
+    for (ItemSlot& slot : returned.craft) slot = {};
+    *this = returned;
+    return true;
+}
+
 float AttackCooldown::Strength(float nowMs) const {
     const float periodMs = 1000.0f / attackSpeed;
     float s = (nowMs - mLastSwingMs + 25.0f) / periodMs; // +0.5 tick

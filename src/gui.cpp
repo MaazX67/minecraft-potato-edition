@@ -331,27 +331,24 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
             mButtons.push_back({fx, 186, fw, fh, label, ACT_CYCLE_GAMEMODE, true});
             const char* desc = (create.gameMode & 1)
                 ? "Unlimited resources, free flying and destroy blocks instantly"
-                : "Search for resources, craft, gain levels, health and hunger";
+                : "Gather resources, craft, manage health and hunger";
             ui.DrawTextCentered(desc, cx, 232, 2, 15, true, 0.627f, 0.627f, 0.627f);
             snprintf(label, sizeof(label), "Difficulty: %s", DIFF[settings.difficulty & 3]);
             mButtons.push_back({fx, 262, fw, fh, label, ACT_CYCLE_DIFF, true});
             static const char* DDESC[] = {
-                "No hostile mobs. Health regenerates. Hunger never depletes.",
-                "Hostile mobs deal less damage. Starvation drains to 5 hearts.",
-                "Hostile mobs deal standard damage. Starvation drains to half a heart.",
-                "Hostile mobs deal more damage. Starvation can kill."};
-            ui.DrawTextCentered(DDesc[settings.difficulty & 3], cx, 308, 2, 15, true,
+                "Health regenerates. Hunger never depletes.",
+                "Hunger depletes. Starvation stops at 5 hearts.",
+                "Hunger depletes. Starvation stops at half a heart.",
+                "Hunger depletes. Starvation can kill."};
+            ui.DrawTextCentered(DDESC[settings.difficulty & 3], cx, 308, 2, 15, true,
                                 0.627f, 0.627f, 0.627f);
-            snprintf(label, sizeof(label), "Allow Cheats: %s", create.allowCheats ? "ON" : "OFF");
-            mButtons.push_back({fx, 338, fw, fh, label, ACT_TOGGLE_CHEATS, true});
+            mButtons.push_back({fx, 338, fw, fh, "Allow Cheats: Unavailable", ACT_NONE, false});
         } else {
             ui.DrawText("Seed for the world generator", fx, 104, 2, 15, true, 0.627f, 0.627f, 0.627f);
             DrawTextField(ui, create.seed, fx, 126, fw, fh, create.focus == 2, timeSec);
             ui.DrawText("Leave blank for a random seed", fx, 172, 2, 15, true, 0.627f, 0.627f, 0.627f);
-            snprintf(label, sizeof(label), "Generate Structures: %s", create.structures ? "ON" : "OFF");
-            mButtons.push_back({fx, 210, fw, fh, label, ACT_TOGGLE_STRUCTURES, true});
-            snprintf(label, sizeof(label), "Bonus Chest: %s", create.bonusChest ? "ON" : "OFF");
-            mButtons.push_back({fx, 258, fw, fh, label, ACT_TOGGLE_BONUS, true});
+            mButtons.push_back({fx, 210, fw, fh, "Generate Structures: Unavailable", ACT_NONE, false});
+            mButtons.push_back({fx, 258, fw, fh, "Bonus Chest: Unavailable", ACT_NONE, false});
             mButtons.push_back({fx, 306, fw, fh, "World Type: Default", ACT_NONE, false});
         }
         mButtons.push_back({fx, 600, fw, fh, "Create New World", ACT_CREATE_WORLD, !create.name.empty()});
@@ -462,20 +459,34 @@ int MenuSystem::HitTest(int mouseX, int mouseY) const {
 // HUD
 // ---------------------------------------------------------------------------
 
+static void DrawItemIcon(GuiRenderer& ui, int id, float x, float y) {
+    if (id <= BLOCK_AIR || id >= BLOCK_COUNT) return;
+    const GuiTexture& icon = ui.texBlockIcon[id];
+    if (!icon.srv || icon.w <= 0 || icon.h <= 0) return;
+    const float frame = float(std::min(icon.w, icon.h));
+    ui.DrawQuad(&icon, x, y, 32, 32, 0, 0, frame / icon.w, frame / icon.h, 15);
+}
+
+static void DrawStackCount(GuiRenderer& ui, float x, float y, const ItemSlot& s) {
+    if (s.Empty() || s.id >= BLOCK_COUNT || s.count <= 1) return;
+    char n[12];
+    snprintf(n, sizeof(n), "%d", s.count);
+    ui.DrawText(n, x + 32 - ui.TextWidth(n, 2), y + 18, 2, 15, true);
+}
+
 void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar) {
     const float cx = SCREEN_W * 0.5f;
     const float hotbarX = cx - 182, hotbarY = SCREEN_H - 44.0f;
     ui.DrawSprite(&ui.texHotbar, hotbarX, hotbarY, 2, 15);
     ui.DrawSprite(&ui.texHotbarSel, hotbarX + selectedSlot * 40 - 2, hotbarY - 2, 2, 15);
     for (int i = 0; i < 9; ++i) {
-        const GuiTexture& icon = ui.texBlockIcon[hotbar[i]];
-        ui.DrawSprite(&icon, hotbarX + i * 40 + 4, hotbarY + 6, 2, 15);
+        DrawItemIcon(ui, hotbar[i], hotbarX + i * 40 + 4, hotbarY + 6);
     }
 }
 
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint8_t* hotbar, int health, int hunger, const std::string& actionBar,
-             bool creative) {
+             bool creative, const ItemSlot* stacks) {
     const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
     ui.DrawSprite(&ui.texCrosshair, cx - 15, cy - 15, 2, 15);
 
@@ -502,6 +513,11 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
     }
 
     DrawHotbar(ui, selectedSlot, hotbar);
+    if (stacks) {
+        const float hotbarX = cx - 182, hotbarY = SCREEN_H - 44.0f;
+        for (int i = 0; i < 9; ++i)
+            DrawStackCount(ui, hotbarX + i * 40 + 4, hotbarY + 6, stacks[i]);
+    }
     if (!actionBar.empty()) {
         ui.DrawTextCentered(actionBar, cx, SCREEN_H - 70.0f, 2, 15, true);
     }
@@ -562,7 +578,7 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, co
         ui.DrawQuad(&ui.texWhite, x + 2, y + 2, 1, INV_CELL - 4, 0, 0, 1, 1, 15, 0.35f, 0.35f, 0.35f);
         if (b == hovered)
             ui.DrawQuad(&ui.texHotbarSel, x, y, INV_CELL, INV_CELL, 0, 0, 1, 1, 15);
-        ui.DrawSprite(&ui.texBlockIcon[b], x + 4, y + 4, 2, 15);
+        DrawItemIcon(ui, b, x + 4, y + 4);
     }
 
     ui.DrawText("Click a block to select it", INV_X + INV_PAD, INV_Y + INV_H - 26, 2, 15, false, 0.3f, 0.3f, 0.3f);
@@ -587,7 +603,7 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, co
 
 namespace {
 constexpr float INV_S = 2.0f; // GUI scale
-constexpr float INV_W = 176 * INV_S, INV_H = 166 * INV_S;
+constexpr float SURV_INV_W = 176 * INV_S, SURV_INV_H = 166 * INV_S;
 
 // Slot item positions copied from InventoryMenu / CraftingMenu (176x166 GUI).
 void SlotPos(int index, bool table, float& x, float& y) {
@@ -607,17 +623,14 @@ void SlotPos(int index, bool table, float& x, float& y) {
 
 void DrawStack(GuiRenderer& ui, float x, float y, const ItemSlot& s) {
     if (s.Empty()) return;
-    ui.DrawSprite(&ui.texBlockIcon[s.id], x, y, INV_S, 15);
-    if (s.count > 1) {
-        char n[8]; snprintf(n, sizeof(n), "%d", s.count);
-        ui.DrawText(n, x + 16 * INV_S - ui.TextWidth(n, INV_S), y + 9 * INV_S, INV_S, 15, true);
-    }
+    DrawItemIcon(ui, s.id, x, y);
+    DrawStackCount(ui, x, y, s);
 }
 } // namespace
 
 int SurvivalInvHitTest(int mouseX, int mouseY, bool table) {
-    const float px = (SCREEN_W - INV_W) * 0.5f;
-    const float py = (SCREEN_H - INV_H) * 0.5f;
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f;
+    const float py = (SCREEN_H - SURV_INV_H) * 0.5f;
     for (int i = 0; i < 46; ++i) {
         if (i >= 36 && i < 45 && !table) {
             const int g = i - 36;
@@ -631,18 +644,23 @@ int SurvivalInvHitTest(int mouseX, int mouseY, bool table) {
     return -1;
 }
 
-void DrawSurvivalInventory(GuiRenderer& ui, const ItemSlot* inv, const ItemSlot* craft,
-                           const ItemSlot& result, const ItemSlot& cursor, bool table,
-                           int mouseX, int mouseY, int selectedSlot) {
-    (void)selectedSlot;
+void DrawSurvivalInventory(GuiRenderer& ui, const InventoryState& model, bool table,
+                           int mouseX, int mouseY, const std::string& message) {
     ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
-    const float px = (SCREEN_W - INV_W) * 0.5f;
-    const float py = (SCREEN_H - INV_H) * 0.5f;
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f;
+    const float py = (SCREEN_H - SURV_INV_H) * 0.5f;
     const GuiTexture& bg = table ? ui.texCraftBg : ui.texInvBg;
-    ui.DrawQuad(&bg, px, py, INV_W, INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
-    ui.DrawText(table ? "Crafting" : "Inventory", px + 8 * INV_S, py + 6 * INV_S,
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Crafting", px + (table ? 28 : 97) * INV_S, py + (table ? 6 : 8) * INV_S,
                 INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    if (table)
+        ui.DrawText("Inventory", px + 8 * INV_S, py + 72 * INV_S,
+                    INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    if (!message.empty())
+        ui.DrawTextCentered(message, SCREEN_W * 0.5f, py + SURV_INV_H + 12,
+                            INV_S, 15, true, 1.0f, 0.8f, 0.4f);
 
+    const ItemSlot result = model.Result(table);
     const int hovered = SurvivalInvHitTest(mouseX, mouseY, table);
     for (int i = 0; i < 46; ++i) {
         if (i >= 36 && i < 45 && !table) {
@@ -654,10 +672,24 @@ void DrawSurvivalInventory(GuiRenderer& ui, const ItemSlot* inv, const ItemSlot*
         if (i == hovered)
             ui.DrawQuad(&ui.texWhite, x, y, 16 * INV_S, 16 * INV_S, 0, 0, 1, 1, 15,
                         0.85f, 0.85f, 0.85f);
-        const ItemSlot& s = i == 45 ? result : (i >= 36 ? craft[i - 36] : inv[i]);
+        const ItemSlot& s = i == 45 ? result : (i >= 36 ? model.craft[i - 36] : model.slots[i]);
         DrawStack(ui, x, y, s);
     }
-    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, cursor);
+    if (model.cursor.Empty() && hovered >= 0) {
+        const ItemSlot& s = hovered == 45 ? result :
+                            (hovered >= 36 ? model.craft[hovered - 36] : model.slots[hovered]);
+        if (!s.Empty() && s.id < BLOCK_COUNT) {
+            std::string name = BLOCK_DEFS[s.id].name;
+            for (char& c : name) if (c == '_') c = ' ';
+            const float tw = ui.TextWidth(name, INV_S);
+            float tx = mouseX + 16, ty = mouseY - 12;
+            if (tx + tw + 12 > SCREEN_W) tx = SCREEN_W - tw - 12;
+            if (ty < 4) ty = 4;
+            ui.DrawQuad(&ui.texBlack, tx - 6, ty - 6, tw + 12, 28, 0, 0, 1, 1, 15, 0.1f, 0.05f, 0.2f);
+            ui.DrawText(name, tx, ty, INV_S, 15, true);
+        }
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, model.cursor);
 }
 
 } // namespace potato

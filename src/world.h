@@ -100,7 +100,6 @@ public:
     void SetRenderDistance(int rd);
     int RenderDistance() const;
     void SetBlockTiles(const BlockTiles& tiles) { mTiles = tiles; }
-    void SetGenerateStructures(bool on) { mStructures = on; }
     void Update(float camX, float camZ); // load/unload chunks around the camera
     uint8_t GetBlock(int x, int y, int z) const;
     void SetBlock(int x, int y, int z, uint8_t block); // marks dirty, remeshes
@@ -138,7 +137,6 @@ private:
 
     const uint32_t mSeed;
     int mRd;
-    bool mStructures = true;
     PerlinNoise mNoise;
     BlockTiles mTiles;
     std::unordered_map<uint64_t, std::shared_ptr<Chunk>> mChunks;

@@ -143,11 +143,27 @@ struct PlayerBody {
                 const std::function<uint8_t(int, int, int)>& getBlock);
 };
 
-// Survival meters: 20 hp / 20 hunger, fall damage, slow exhaustion, regen
-// when fed, starvation down to 1 hp. Drives the vanilla heart/hunger HUD.
+struct ItemSlot {
+    uint8_t id = 0;
+    int count = 0;
+    bool Empty() const { return id == 0 || count <= 0; }
+};
+
+struct InventoryState {
+    ItemSlot slots[36];
+    ItemSlot craft[9];
+    ItemSlot cursor;
+
+    int Capacity(uint8_t id) const;
+    int Add(uint8_t id, int count);
+    ItemSlot Result(bool table) const;
+    bool Click(int index, bool right, bool table, bool shift = false);
+    bool Close();
+};
+
 struct SurvivalState {
     int health = 20, hunger = 20;
-    float exhaustion = 0, regenTimer = 0, starveTimer = 0;
+    float exhaustion = 0, saturation = 5, regenTimer = 0, starveTimer = 0;
     bool dead = false;
 
     void OnLand(float fallDistance) {
@@ -155,21 +171,33 @@ struct SurvivalState {
         if (dmg > 0) health -= dmg;
         if (health < 0) health = 0;
     }
-    void Update(float dt, bool moving, bool sprinting) {
-        exhaustion += dt * (sprinting ? 4.0f : (moving ? 1.0f : 0.15f));
-        if (exhaustion >= 40.0f) {
-            exhaustion -= 40.0f;
-            if (hunger > 0) --hunger;
+    void Update(float dt, bool moving, bool sprinting, int difficulty) {
+        if (difficulty == 0) {
+            hunger = 20;
+            exhaustion = starveTimer = 0;
+            if (health > 0 && health < 20) {
+                regenTimer += dt;
+                if (regenTimer >= 1.0f) { regenTimer -= 1.0f; ++health; }
+            } else regenTimer = 0;
+            dead = health <= 0;
+            return;
+        }
+        if (moving && sprinting) exhaustion += dt * 5.612f * 0.1f;
+        if (exhaustion >= 4.0f) {
+            exhaustion -= 4.0f;
+            if (saturation > 0) saturation = saturation > 1 ? saturation - 1 : 0;
+            else if (hunger > 0) --hunger;
         }
         if (hunger >= 18 && health > 0 && health < 20) {
             regenTimer += dt;
-            if (regenTimer >= 4.0f) { regenTimer = 0; ++health; exhaustion += 6.0f; }
+            if (regenTimer >= 4.0f) { regenTimer -= 4.0f; ++health; exhaustion += 6.0f; }
         } else {
             regenTimer = 0;
         }
-        if (hunger == 0 && health > 1) {
+        const int starvationFloor = difficulty == 1 ? 10 : (difficulty == 2 ? 1 : 0);
+        if (hunger == 0 && health > starvationFloor) {
             starveTimer += dt;
-            if (starveTimer >= 4.0f) { starveTimer = 0; --health; }
+            if (starveTimer >= 4.0f) { starveTimer -= 4.0f; --health; }
         } else {
             starveTimer = 0;
         }
