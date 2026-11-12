@@ -192,6 +192,48 @@ int main() {
         CHECK(world.GetBlock(8, 0, 8) == BLOCK_BEDROCK, "bedrock floor at y=0");
         if (sy > 0) CHECK((BLOCK_FLAGS[world.GetBlock(8, sy, 8)] & BF_SOLID) != 0,
                           "surface block is solid");
+        std::vector<uint8_t> cb(CHUNK_VOL);
+        for (int y = 0; y < CHUNK_Y; ++y)
+            for (int z = 0; z < CHUNK_Z; ++z)
+                for (int x = 0; x < CHUNK_X; ++x)
+                    cb[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = world.GetBlock(x, y, z);
+        MeshData gm;
+        BuildChunkMeshCPU(cb.data(), nullptr, nullptr, nullptr, nullptr, tiles, gm);
+        int qy = 0, qx = 0, qz = 0;
+        for (size_t q = 0; q + 3 < gm.vertices.size(); q += 4) {
+            const MeshVertex& a = gm.vertices[q];
+            const MeshVertex& b = gm.vertices[q + 1];
+            const MeshVertex& c = gm.vertices[q + 2];
+            if (a.y == b.y && b.y == c.y) ++qy;
+            else if (a.x == b.x && b.x == c.x) ++qx;
+            else ++qz;
+        }
+        printf("generated chunk mesh: %zu verts, %zu idx, Y=%d X=%d Z=%d\n",
+               gm.vertices.size(), gm.indices.size(), qy, qx, qz);
+        CHECK(qy >= 64, "generated chunk meshes surface top faces");
+        CHECK(qx + qz > 0, "generated chunk meshes side faces");
+    }
+
+    // --- Seed determinism: same seed must rebuild the identical column ---
+    {
+        World a(424242, 2), b(424242, 2);
+        a.SetBlockTiles(tiles);
+        b.SetBlockTiles(tiles);
+        a.Update(8.5f, 8.5f);
+        b.Update(8.5f, 8.5f);
+        int sa = -1, sb = -1;
+        for (int i = 0; i < 300 && (sa < 0 || sb < 0); ++i) {
+            if (sa < 0) sa = a.SurfaceY(8, 8);
+            if (sb < 0) sb = b.SurfaceY(8, 8);
+            if (sa < 0 || sb < 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        CHECK(sa > 0 && sa == sb, "same seed produces the same spawn height");
+        bool same = sa == sb;
+        if (same) {
+            for (int y = 0; y <= sa && same; ++y)
+                same = a.GetBlock(8, y, 8) == b.GetBlock(8, y, 8);
+        }
+        CHECK(same, "same seed produces identical blocks (seed drives generation)");
     }
 
     if (gFail) {

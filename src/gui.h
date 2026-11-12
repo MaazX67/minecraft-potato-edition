@@ -12,7 +12,7 @@ struct GuiTexture {
     int w = 0, h = 0;
 };
 
-enum class Screen { Title, Options, Pause, Game, Inventory, Death };
+enum class Screen { Title, CreateWorld, Options, Pause, Game, Inventory, Death };
 
 struct Settings {
     int renderDistance = 8;
@@ -82,15 +82,25 @@ enum MenuAction {
     ACT_NONE = 0, ACT_SINGLEPLAYER, ACT_OPTIONS, ACT_QUIT, ACT_RESUME,
     ACT_QUIT_TO_TITLE, ACT_OPTIONS_DONE, ACT_RESPAWN,
     ACT_CYCLE_RD, ACT_CYCLE_FOV, ACT_CYCLE_SENS, ACT_TOGGLE_SOUND,
-    ACT_TOGGLE_BOB, ACT_TOGGLE_VSYNC, ACT_TOGGLE_FS, ACT_CYCLE_DIFF
+    ACT_TOGGLE_BOB, ACT_TOGGLE_VSYNC, ACT_TOGGLE_FS, ACT_CYCLE_DIFF,
+    ACT_CREATE_WORLD, ACT_CANCEL_CREATE, ACT_CYCLE_GAMEMODE
+};
+
+// State of the Create New World form; main owns it and applies it on create.
+struct WorldCreateInfo {
+    std::string name = "New World";
+    std::string seed;
+    int gameMode = 0; // 0 survival, 1 creative
+    int focus = 1;    // 1 name field, 2 seed field
 };
 
 // Vanilla-style screens built from real GUI sprites. The 3D background
 // (panorama skybox or frozen world) is rendered by the caller first.
 class MenuSystem {
 public:
-    void Draw(GuiRenderer& ui, Screen screen, Settings& settings,
-              int mouseX, int mouseY, bool leftDown, const std::string& splash, float timeSec);
+    void Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldCreateInfo& create,
+              const std::string& typed, int mouseX, int mouseY, bool leftDown,
+              const std::string& splash, float timeSec);
     int HitTest(int mouseX, int mouseY) const;
     bool ConsumeChanged() { const bool c = mChanged; mChanged = false; return c; }
 
@@ -119,7 +129,7 @@ extern const uint8_t HOTBAR_BLOCKS[9];
 void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar);
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint8_t* hotbar, int health, int hunger,
-             const std::string& actionBar);
+             const std::string& actionBar, bool creative);
 
 // Creative block picker (E). Returns the block id under the cursor, or -1.
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,

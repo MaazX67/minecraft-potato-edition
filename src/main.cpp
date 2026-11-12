@@ -72,6 +72,9 @@ static int gTargetX = 0, gTargetY = 0, gTargetZ = 0;
 static float gStepTimer = 0.3f;
 static bool gWasInWater = false;
 static std::string gSplash = "Potato Edition!";
+static WorldCreateInfo gCreate;
+static int gGameMode = 0; // 0 survival, 1 creative
+static uint32_t gWorldSeed = 1337;
 
 static bool IsWorldScreen(Screen s) {
     return s == Screen::Game || s == Screen::Pause || s == Screen::Inventory || s == Screen::Death;
@@ -103,6 +106,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_KEYUP:
             gInput.keys[wp & 0xFF] = false;
+            return 0;
+        case WM_CHAR:
+            if (wp < 256) gInput.typed += char(wp);
             return 0;
         case WM_LBUTTONDOWN:
             gInput.leftClick = true;
@@ -147,9 +153,25 @@ static void StartGame() {
     gSurvival = SurvivalState{};
     gBody = PlayerBody{};
     gBody.flying = false;
+    gCamera.yaw = 0;
+    gCamera.pitch = 0;
+    gLastSpaceMs = -1000;
     gSpawned = false;
     gActionBar.clear();
     SetScreen(gHwnd, Screen::Game);
+}
+
+// Java seed rules: blank -> random, all-digits -> the number itself,
+// anything else -> Java String.hashCode (h = 31*h + c, 32-bit wrap).
+static uint32_t ParseSeed(const std::string& text) {
+    if (text.empty())
+        return uint32_t(GetTickCount64()) ^ (uint32_t(rand()) << 16) ^ uint32_t(rand());
+    char* end = nullptr;
+    const long long v = strtoll(text.c_str(), &end, 10);
+    if (end != text.c_str() && *end == '\0') return uint32_t(v);
+    int32_t h = 0;
+    for (char c : text) h = 31 * h + int32_t(uint8_t(c));
+    return uint32_t(h);
 }
 
 static int ResolveTile(const char* tex) {
@@ -192,8 +214,32 @@ static void HandleMenuAction(int action) {
     if (action != ACT_NONE) gSound.Play(SND_CLICK);
     switch (action) {
         case ACT_SINGLEPLAYER:
+            SetScreen(gHwnd, Screen::CreateWorld);
+            break;
         case ACT_RESPAWN:
             StartGame();
+            break;
+        case ACT_CREATE_WORLD: {
+            if (gCreate.name.empty()) break;
+            gWorldSeed = ParseSeed(gCreate.seed);
+            for (auto& kv : gGpu) {
+                SafeRelease(kv.second.vb);
+                SafeRelease(kv.second.ib);
+            }
+            gGpu.clear();
+            gSweepCursor = 0;
+            delete gWorld;
+            gWorld = new World(gWorldSeed, gSettings.renderDistance);
+            gWorld->SetBlockTiles(gTiles);
+            gGameMode = gCreate.gameMode & 1;
+            StartGame();
+            break;
+        }
+        case ACT_CANCEL_CREATE:
+            SetScreen(gHwnd, Screen::Title);
+            break;
+        case ACT_CYCLE_GAMEMODE:
+            gCreate.gameMode ^= 1;
             break;
         case ACT_RESUME:
             SetScreen(gHwnd, Screen::Game);
@@ -282,6 +328,26 @@ static void UploadMeshes() {
         }
         gc.indexCount = UINT(md.indices.size());
         gc.opaqueIndexCount = md.opaqueIndexCount;
+        static int logged = 0;
+        if (logged < 40) {
+            ++logged;
+            int qy = 0, qx = 0, qz = 0;
+            for (size_t q = 0; q + 3 < md.vertices.size(); q += 4) {
+                const MeshVertex& a = md.vertices[q];
+                const MeshVertex& b = md.vertices[q + 1];
+                const MeshVertex& c = md.vertices[q + 2];
+                if (a.y == b.y && b.y == c.y) ++qy;
+                else if (a.x == b.x && b.x == c.x) ++qx;
+                else ++qz;
+            }
+            FILE* f = fopen("meshlog.txt", "a");
+            if (f) {
+                fprintf(f, "chunk %d %d: %zu verts %u opaque %u liquid Y=%d X=%d Z=%d\n",
+                        KeyCX(key), KeyCZ(key), md.vertices.size(), gc.opaqueIndexCount,
+                        gc.indexCount - gc.opaqueIndexCount, qy, qx, qz);
+                fclose(f);
+            }
+        }
     }
     auto it = gGpu.begin();
     if (gSweepCursor != 0) {
@@ -342,12 +408,14 @@ static void SaveScreenshot() {
                 memcpy(hdr + 34, &imgBytes, 4);
                 fwrite(hdr, 1, 54, f);
                 std::vector<uint8_t> row(rowBytes);
+                const bool bgra = bd.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+                                  bd.Format == DXGI_FORMAT_B8G8R8X8_UNORM;
                 for (uint32_t y = h; y-- > 0;) {
                     const uint8_t* src = static_cast<const uint8_t*>(map.pData) + size_t(y) * map.RowPitch;
                     for (uint32_t x = 0; x < w; ++x) {
-                        row[x * 3 + 0] = src[x * 4 + 0];
+                        row[x * 3 + 0] = src[x * 4 + (bgra ? 0 : 2)];
                         row[x * 3 + 1] = src[x * 4 + 1];
-                        row[x * 3 + 2] = src[x * 4 + 2];
+                        row[x * 3 + 2] = src[x * 4 + (bgra ? 2 : 0)];
                     }
                     fwrite(row.data(), 1, rowBytes, f);
                 }
@@ -389,8 +457,8 @@ static void HandleGameFrame(float dt) {
         gSpawned = true;
     }
 
-    // Vanilla creative double-tap-space toggles flight.
-    if (gInput.KeyPressed(VK_SPACE)) {
+    // Vanilla creative double-tap-space toggles flight; survival can never fly.
+    if (gGameMode == 1 && gInput.KeyPressed(VK_SPACE)) {
         if (gNowMs - gLastSpaceMs < 300.0f) { gBody.flying = !gBody.flying; gBody.vy = 0; }
         gLastSpaceMs = gNowMs;
     }
@@ -401,7 +469,7 @@ static void HandleGameFrame(float dt) {
     gCamera.y = gBody.y + PlayerBody::EYE;
     gCamera.z = gBody.z;
     if (gBody.onGround) {
-        if (!wasGround && !gBody.flying && !gBody.inWater) {
+        if (!wasGround && !gBody.flying && !gBody.inWater && gGameMode == 0) {
             const float dist = gFallStartY - gBody.y;
             const int hp = gSurvival.health;
             if (dist > 0) gSurvival.OnLand(dist);
@@ -412,8 +480,10 @@ static void HandleGameFrame(float dt) {
         gFallStartY = gBody.y;
     }
     const bool moving = (gBody.vx * gBody.vx + gBody.vz * gBody.vz) > 0.01f;
-    if (gSettings.difficulty == 0) gSurvival.hunger = 20;
-    gSurvival.Update(dt, moving, gBody.sprinting);
+    if (gGameMode == 0) {
+        if (gSettings.difficulty == 0) gSurvival.hunger = 20;
+        gSurvival.Update(dt, moving, gBody.sprinting);
+    }
     if (moving && gBody.onGround && !gBody.flying && !gBody.inWater) {
         gStepTimer += dt;
         if (gStepTimer >= (gBody.sprinting ? 0.28f : 0.38f)) {
@@ -447,7 +517,6 @@ static void HandleGameFrame(float dt) {
         gHotbarSlot = (gHotbarSlot + (gInput.wheel > 0 ? -1 : 1) + 9) % 9;
     }
     if (gInput.KeyPressed('E')) { SetScreen(gHwnd, Screen::Inventory); return; }
-    if (gInput.KeyPressed(VK_F2)) SaveScreenshot();
     if (gInput.KeyPressed(VK_F3)) gDebug = !gDebug;
 
     int hx, hy, hz, nx, ny, nz;
@@ -654,6 +723,8 @@ static void DrawDebug() {
     snprintf(line, sizeof(line), "HP: %d  Hunger: %d  Slot: %s", gSurvival.health, gSurvival.hunger,
              BLOCK_DEFS[gHotbar[gHotbarSlot]].name);
     row(line);
+    snprintf(line, sizeof(line), "Mode: %s  Seed: %u", gGameMode ? "Creative" : "Survival", gWorldSeed);
+    row(line);
     if (gHaveTarget) {
         const uint8_t tb = gWorld->GetBlock(gTargetX, gTargetY, gTargetZ);
         snprintf(line, sizeof(line), "Target: %d %d %d (%s)", gTargetX, gTargetY, gTargetZ,
@@ -686,16 +757,17 @@ static void RenderFrame() {
     if (gScreen == Screen::Game) {
         DrawHUD(gGui, gPlayer.attackCooldownProgress, gHotbarSlot, gHotbar,
                 gSurvival.health, gSurvival.hunger,
-                gNowMs < gActionBarUntil ? gActionBar : std::string());
+                gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1);
         if (gDebug) DrawDebug();
     } else if (gScreen == Screen::Inventory) {
         DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gHotbarSlot, gHotbar);
     } else {
-        if (menuBg && !gRC.panoramaSRV) {
+        if (gScreen == Screen::CreateWorld || (menuBg && !gRC.panoramaSRV)) {
             gGui.DrawQuad(&gGui.texDirt, 0, 0, SCREEN_W, SCREEN_H, 0, 0,
                           SCREEN_W / 64.0f, SCREEN_H / 64.0f, 8);
         }
-        gMenu.Draw(gGui, gScreen, gSettings, gInput.mouseX, gInput.mouseY, gInput.leftDown, gSplash, gTimeSec);
+        gMenu.Draw(gGui, gScreen, gSettings, gCreate, gInput.typed,
+                   gInput.mouseX, gInput.mouseY, gInput.leftDown, gSplash, gTimeSec);
         if (gMenu.ConsumeChanged()) ApplySettings();
     }
     gGui.Flush(gRC);
@@ -825,6 +897,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         SetScreen(hwnd, Screen::Options);
     }
     if (strstr(GetCommandLineA(), "--show-inv")) SetScreen(hwnd, Screen::Inventory);
+    if (strstr(GetCommandLineA(), "--show-create")) SetScreen(hwnd, Screen::CreateWorld);
 
     DeltaClock clock;
     float fpsTimer = 0;
@@ -847,6 +920,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             else if (gScreen == Screen::Pause) SetScreen(hwnd, Screen::Game);
             else if (gScreen == Screen::Inventory) SetScreen(hwnd, Screen::Game);
             else if (gScreen == Screen::Options) SetScreen(hwnd, gOptionsReturn);
+            else if (gScreen == Screen::CreateWorld) SetScreen(hwnd, Screen::Title);
+        }
+        if (gInput.KeyPressed(VK_F2)) SaveScreenshot();
+
+        if (gScreen == Screen::CreateWorld && !gInput.typed.empty()) {
+            for (char c : gInput.typed) {
+                if (c == 9) { gCreate.focus = gCreate.focus == 1 ? 2 : 1; continue; }
+                if (c == 13) { HandleMenuAction(ACT_CREATE_WORLD); break; }
+                std::string& field = gCreate.focus == 2 ? gCreate.seed : gCreate.name;
+                if (c == 8) { if (!field.empty()) field.pop_back(); }
+                else if (c >= 32 && field.size() < 32) field += c;
+            }
         }
 
         if (gScreen == Screen::Game) {

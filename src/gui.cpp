@@ -266,8 +266,27 @@ void MenuSystem::DrawButton(GuiRenderer& ui, const Button& b, int mouseX, int mo
     ui.DrawTextCentered(b.label, b.x + b.w * 0.5f, b.y + (b.h - 16) * 0.5f, 2, 15, true, cr, cg, cb);
 }
 
-void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings,
-                      int mouseX, int mouseY, bool leftDown, const std::string& splash, float timeSec) {
+// Vanilla text field: opaque black interior, #A0A0A0 border (white when
+// focused), no text shadow, blinking cursor after the last character.
+static void DrawTextField(GuiRenderer& ui, const std::string& text, float x, float y,
+                          float w, float h, bool focused, float timeSec) {
+    const float bc = focused ? 1.0f : 0.627f;
+    ui.DrawQuad(&ui.texWhite, x, y, w, h, 0, 0, 1, 1, 15, bc, bc, bc);
+    ui.DrawQuad(&ui.texWhite, x + 2, y + 2, w - 4, h - 4, 0, 0, 1, 1, 15, 0, 0, 0);
+    size_t start = 0;
+    while (start < text.size() && ui.TextWidth(text.substr(start), 2) > w - 24) ++start;
+    const std::string shown = text.substr(start);
+    const float ty = y + (h - 16) * 0.5f;
+    ui.DrawText(shown, x + 8, ty, 2, 15, false, 0.878f, 0.878f, 0.878f);
+    if (focused && fmodf(timeSec * 2.0f, 1.0f) < 0.5f) {
+        const float cxPos = x + 8 + ui.TextWidth(shown, 2);
+        ui.DrawQuad(&ui.texWhite, cxPos, ty, 2, 16, 0, 0, 1, 1, 15, 0.816f, 0.816f, 0.816f);
+    }
+}
+
+void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldCreateInfo& create,
+                      const std::string& typed, int mouseX, int mouseY, bool leftDown,
+                      const std::string& splash, float timeSec) {
     mButtons.clear();
     mSliders.clear();
     const float cx = SCREEN_W * 0.5f;
@@ -287,6 +306,27 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings,
         ui.DrawText("Minecraft Potato Edition (fan project)", 4, SCREEN_H - 20, 2, 15, true);
         const char* tag = "DX10 / Feature Level 10_0";
         ui.DrawText(tag, SCREEN_W - ui.TextWidth(tag, 2) - 4, SCREEN_H - 20, 2, 15, true);
+    } else if (screen == Screen::CreateWorld) {
+        ui.DrawTextCentered("Create New World", cx, 30, 2, 15, true);
+        const float fx = cx - 200, fw = 400, fh = 40;
+        ui.DrawText("World Name", fx, 70, 2, 15, true, 0.627f, 0.627f, 0.627f);
+        DrawTextField(ui, create.name, fx, 92, fw, fh, create.focus == 1, timeSec);
+        ui.DrawText("Seed for the world generator", fx, 150, 2, 15, true, 0.627f, 0.627f, 0.627f);
+        DrawTextField(ui, create.seed, fx, 172, fw, fh, create.focus == 2, timeSec);
+        ui.DrawText("Leave blank for a random seed", fx, 218, 2, 15, true, 0.627f, 0.627f, 0.627f);
+        static const char* MODES[] = {"Survival", "Creative"};
+        snprintf(label, sizeof(label), "Game Mode: %s", MODES[create.gameMode & 1]);
+        mButtons.push_back({fx, 260, fw, fh, label, ACT_CYCLE_GAMEMODE, true});
+        const char* desc = (create.gameMode & 1)
+            ? "Unlimited resources, free flying and destroy blocks instantly"
+            : "Search for resources, craft, gain levels, health and hunger";
+        ui.DrawTextCentered(desc, cx, 308, 2, 15, true, 0.627f, 0.627f, 0.627f);
+        mButtons.push_back({fx, 380, fw, fh, "Create New World", ACT_CREATE_WORLD, !create.name.empty()});
+        mButtons.push_back({fx, 428, fw, fh, "Cancel", ACT_CANCEL_CREATE, true});
+        if (leftDown && mouseX >= fx && mouseX < fx + fw) {
+            if (mouseY >= 92 && mouseY < 92 + fh) create.focus = 1;
+            else if (mouseY >= 172 && mouseY < 172 + fh) create.focus = 2;
+        }
     } else if (screen == Screen::Options) {
         ui.DrawTextCentered("Options", cx, 30, 2, 15, true);
         mSliders.push_back({SL_FOV, cx - 310, 80, 300, 40});
@@ -403,27 +443,31 @@ void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar) {
 }
 
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
-             const uint8_t* hotbar, int health, int hunger, const std::string& actionBar) {
+             const uint8_t* hotbar, int health, int hunger, const std::string& actionBar,
+             bool creative) {
     const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
     ui.DrawSprite(&ui.texCrosshair, cx - 15, cy - 15, 2, 15);
 
     // 1.9+ attack recharge indicator under the crosshair (hidden when full).
-    if (attackStrength < 1.0f) {
+    // Creative has no attack cooldown, so the indicator never shows there.
+    if (!creative && attackStrength < 1.0f) {
         ui.DrawSprite(&ui.texAttackBg, cx - 16, cy + 22, 2, 15);
         ui.DrawQuad(&ui.texAttackProgress, cx - 16, cy + 22, 32 * attackStrength, 8,
                     0, 0, attackStrength, 1, 15);
     }
 
-    const float rowY = SCREEN_H - 78.0f;
-    for (int i = 0; i < 10; ++i) {
-        const float hx = cx - 182 + i * 16;
-        ui.DrawSprite(&ui.texHeart[0], hx, rowY, 2, 15);
-        if (health >= i * 2 + 2) ui.DrawSprite(&ui.texHeart[1], hx, rowY, 2, 15);
-        else if (health == i * 2 + 1) ui.DrawSprite(&ui.texHeart[2], hx, rowY, 2, 15);
-        const float fx = cx + 182 - 18 - i * 16;
-        ui.DrawSprite(&ui.texFood[0], fx, rowY, 2, 15);
-        if (hunger >= i * 2 + 2) ui.DrawSprite(&ui.texFood[1], fx, rowY, 2, 15);
-        else if (hunger == i * 2 + 1) ui.DrawSprite(&ui.texFood[2], fx, rowY, 2, 15);
+    if (!creative) {
+        const float rowY = SCREEN_H - 78.0f;
+        for (int i = 0; i < 10; ++i) {
+            const float hx = cx - 182 + i * 16;
+            ui.DrawSprite(&ui.texHeart[0], hx, rowY, 2, 15);
+            if (health >= i * 2 + 2) ui.DrawSprite(&ui.texHeart[1], hx, rowY, 2, 15);
+            else if (health == i * 2 + 1) ui.DrawSprite(&ui.texHeart[2], hx, rowY, 2, 15);
+            const float fx = cx + 182 - 18 - i * 16;
+            ui.DrawSprite(&ui.texFood[0], fx, rowY, 2, 15);
+            if (hunger >= i * 2 + 2) ui.DrawSprite(&ui.texFood[1], fx, rowY, 2, 15);
+            else if (hunger == i * 2 + 1) ui.DrawSprite(&ui.texFood[2], fx, rowY, 2, 15);
+        }
     }
 
     DrawHotbar(ui, selectedSlot, hotbar);

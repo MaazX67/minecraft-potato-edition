@@ -93,6 +93,7 @@ struct InputState {
     bool leftClick, rightClick;
     bool leftDown;
     int mouseX, mouseY;
+    std::string typed; // WM_CHAR text for menu text fields, cleared each frame
 
     InputState()
         : keys{}, prevKeys{}, mouseDX(0), mouseDY(0), wheel(0),
@@ -105,6 +106,7 @@ struct InputState {
         mouseDX = mouseDY = 0;
         wheel = 0;
         leftClick = rightClick = false;
+        typed.clear();
     }
 };
 

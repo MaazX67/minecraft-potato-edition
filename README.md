@@ -13,8 +13,10 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 ## What works so far
 
 - Infinite world with Perlin terrain, beaches, caves, ores, oak trees and water
+- Create New World screen: world name, seed (blank = random, numbers and text seeds follow Java's rules) and Survival/Creative game modes
 - Chunk streaming with a render-distance setting, two worker threads, greedy meshing and frustum culling
-- Survival: health, hunger, fall damage, sprinting, swimming, and double-tap-space flight
+- Survival: health, hunger, fall damage, sprinting and swimming — no flying
+- Creative: double-tap-space flight, no hearts/hunger on the HUD
 - 1.9-style combat — damage scales with the attack cooldown, and hitting above 90% strength while falling crits
 - Break and place blocks, selection outline, positioned 3D sound
 - Footsteps per material, water splash, fall-damage hurt and UI click sounds
@@ -22,14 +24,14 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 - Options with the vanilla slider widgets: FOV, render distance, sensitivity, sound/music volume, brightness, view bobbing, vsync, fullscreen, difficulty
 - HUD with hearts, hunger, hotbar and the attack-cooldown indicator
 - 50 blocks using the real vanilla textures
-- A headless test suite (49 checks) that runs on every CI build
+- A headless test suite (48 checks) that runs on every CI build
 
 ## Controls
 
 | Input | Action |
 |---|---|
 | `W` `A` `S` `D` | Move |
-| `Space` / `Shift` | Jump / sneak (double-tap `Space` toggles flight) |
+| `Space` / `Shift` | Jump / sneak (Creative: double-tap `Space` toggles flight) |
 | Mouse | Look |
 | Left click | Break block, or attack |
 | Right click | Place the selected block |
