@@ -78,7 +78,7 @@ public:
                          float cr = 1.0f, float cg = 1.0f, float cb = 1.0f);
     float TextWidth(const std::string& text, float scale) const;
 
-    GuiTexture texButton, texButtonHi, texButtonDisabled, texLogo, texCrosshair;
+    GuiTexture texButton, texButtonHi, texButtonDisabled, texLogo, texEdition, texCrosshair;
     GuiTexture texHotbar, texHotbarSel, texFont, texDirt, texWhite, texBlack;
     GuiTexture texInvBg, texCraftBg;
     GuiTexture texHeart[3];   // container, full, half

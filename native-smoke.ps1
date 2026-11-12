@@ -73,6 +73,9 @@ function Launch($launchArgs) {
   }
   if ($script:h -eq [IntPtr]::Zero) { throw 'Game window unavailable' }
   Start-Sleep -Seconds 10
+  $script:p.Refresh()
+  $script:h = $script:p.MainWindowHandle
+  Write-Host "window=$($script:h) title=$($script:p.MainWindowTitle)"
 }
 function CloseGame {
   Post 0x10

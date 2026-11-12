@@ -124,6 +124,7 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texButtonHi       = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/button_highlighted.png");
     texButtonDisabled = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/button_disabled.png");
     texLogo           = LoadGui(rc, store, "minecraft/textures/gui/title/minecraft.png");
+    texEdition        = LoadGui(rc, store, "minecraft/textures/gui/title/edition.png");
     texCrosshair      = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair.png");
     texHotbar         = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/hotbar.png");
     texHotbarSel      = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/hotbar_selection.png");
@@ -173,7 +174,7 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
 }
 
 void GuiRenderer::Shutdown() {
-    GuiTexture* all[] = {&texButton, &texButtonHi, &texButtonDisabled, &texLogo,
+    GuiTexture* all[] = {&texButton, &texButtonHi, &texButtonDisabled, &texLogo, &texEdition,
                         &texCrosshair, &texHotbar, &texHotbarSel, &texFont, &texDirt,
                         &texWhite, &texBlack, &texAttackBg, &texAttackProgress, &texPanoramaOverlay,
                         &texSlider, &texSliderHi, &texSliderHandle, &texSliderHandleHi,
@@ -502,6 +503,17 @@ void MenuSystem::DrawButton(GuiRenderer& ui, const Button& b, int mouseX, int mo
 
 // Vanilla text field: opaque black interior, #A0A0A0 border (white when
 // focused), no text shadow, blinking cursor after the last character.
+// HeaderAndFooterLayout: 33 GUI-unit header and footer bands.
+constexpr float MENU_HEADER_H = 66.0f;
+constexpr float MENU_FOOTER_Y = SCREEN_H - MENU_HEADER_H + 13.0f;
+
+static void DrawMenuFrame(GuiRenderer& ui, const char* title) {
+    DrawTiled(ui, ui.texMenuBg, 0, 0, SCREEN_W, SCREEN_H);
+    DrawTiled(ui, ui.texHeaderSeparator, 0, MENU_HEADER_H - 4, SCREEN_W, 4);
+    DrawTiled(ui, ui.texFooterSeparator, 0, SCREEN_H - MENU_HEADER_H, SCREEN_W, 4);
+    ui.DrawTextCentered(title, SCREEN_W * 0.5f, (MENU_HEADER_H - 16) * 0.5f, 2, 15, true);
+}
+
 static void DrawTextField(GuiRenderer& ui, const std::string& text, float x, float y,
                           float w, float h, bool focused, float timeSec) {
     const float bc = focused ? 1.0f : 0.627f;
@@ -530,10 +542,14 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
     if (screen == Screen::Title) {
         if (ui.texPanoramaOverlay.srv)
             ui.DrawQuad(&ui.texPanoramaOverlay, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
-        ui.DrawSprite(&ui.texLogo, cx - ui.texLogo.w, 60, 2.0f, 15);
-        ui.DrawTextCentered("POTATO EDITION", cx, 60 + ui.texLogo.h * 2.0f + 4, 2, 15, true);
-        const float pulse = 2.0f * (1.0f + 0.06f * sinf(timeSec * 6.0f));
-        ui.DrawTextRotated(splash, cx + 190, 140, pulse, -0.349f, 15, true, 1, 1, 0);
+        // Vanilla LogoRenderer: 256x44 GUI units from the top 44/64 of the logo,
+        // edition strip 128x14 from the top 14/16, both at GUI scale 2.
+        ui.DrawQuad(&ui.texLogo, cx - 256, 60, 512, 88, 0, 0, 1, 44.0f / 64.0f, 15);
+        if (ui.texEdition.srv)
+            ui.DrawQuad(&ui.texEdition, cx - 128, 134, 256, 28, 0, 0, 1, 14.0f / 16.0f, 15);
+        const float pulse = 1.8f - fabsf(sinf(fmodf(timeSec, 1.0f) * 6.2831853f)) * 0.1f;
+        const float fit = pulse * 100.0f / (ui.TextWidth(splash, 1) + 32.0f);
+        ui.DrawTextRotated(splash, cx + 246, 138, 2.0f * fit, -0.349f, 15, true, 1, 1, 0);
         mButtons.push_back({cx - 200, 288, 400, 40, "Singleplayer", ACT_SINGLEPLAYER, true});
         mButtons.push_back({cx - 200, 336, 400, 40, "Multiplayer", ACT_NONE, false});
         mButtons.push_back({cx - 200, 384, 400, 40, "Local Profile...", ACT_PROFILE, true});
@@ -594,7 +610,7 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
             mouseX >= fx && mouseX < fx + fw && mouseY >= 126 && mouseY < 126 + fh)
             create.focus = create.tab == 0 ? 1 : 2;
     } else if (screen == Screen::Options) {
-        ui.DrawTextCentered("Options", cx, 30, 2, 15, true);
+        DrawMenuFrame(ui, "Options");
         mButtons.push_back({cx - 310, 80, 300, 40, "Video Settings...", ACT_VIDEO_OPTIONS, true});
         mButtons.push_back({cx + 10, 80, 300, 40, "Sound Settings...", ACT_SOUND_OPTIONS, true});
         mButtons.push_back({cx - 310, 130, 300, 40, "Controls...", ACT_CONTROLS_OPTIONS, true});
@@ -603,9 +619,9 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         snprintf(label, sizeof(label), "Difficulty: %s", DIFF[settings.difficulty & 3]);
         mButtons.push_back({cx - 310, 180, 300, 40, label, ACT_CYCLE_DIFF, true});
         mButtons.push_back({cx + 10, 180, 300, 40, "Resource Packs...", ACT_NONE, false});
-        mButtons.push_back({cx - 200, 400, 400, 40, "Done", ACT_OPTIONS_DONE, true});
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_OPTIONS_DONE, true});
     } else if (screen == Screen::VideoOptions) {
-        ui.DrawTextCentered("Video Settings", cx, 30, 2, 15, true);
+        DrawMenuFrame(ui, "Video Settings");
         mSliders.push_back({SL_FOV, cx - 310, 80, 300, 40});
         mSliders.push_back({SL_RD, cx + 10, 80, 300, 40});
         mSliders.push_back({SL_BRIGHT, cx - 310, 130, 300, 40});
@@ -615,27 +631,27 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         mButtons.push_back({cx - 310, 180, 300, 40, label, ACT_TOGGLE_VSYNC, true});
         snprintf(label, sizeof(label), "Fullscreen: %s", settings.fullscreen ? "ON" : "OFF");
         mButtons.push_back({cx + 10, 180, 300, 40, label, ACT_TOGGLE_FS, true});
-        mButtons.push_back({cx - 200, 400, 400, 40, "Done", ACT_OPTIONS_DONE, true});
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_OPTIONS_DONE, true});
     } else if (screen == Screen::SoundOptions) {
-        ui.DrawTextCentered("Sound Settings", cx, 30, 2, 15, true);
+        DrawMenuFrame(ui, "Sound Settings");
         mSliders.push_back({SL_SOUND, cx - 200, 80, 400, 40});
         ui.DrawTextCentered("Master volume controls implemented sound effects.", cx, 144,
                             2, 15, true, 0.627f, 0.627f, 0.627f);
         ui.DrawTextCentered("Music playback is not implemented.", cx, 172,
                             2, 15, true, 0.627f, 0.627f, 0.627f);
-        mButtons.push_back({cx - 200, 400, 400, 40, "Done", ACT_OPTIONS_DONE, true});
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_OPTIONS_DONE, true});
     } else if (screen == Screen::ControlsOptions) {
-        ui.DrawTextCentered("Controls", cx, 30, 2, 15, true);
+        DrawMenuFrame(ui, "Controls");
         mSliders.push_back({SL_SENS, cx - 200, 80, 400, 40});
         ui.DrawTextCentered("Mouse sensitivity", cx, 144, 2, 15, true, 0.627f, 0.627f, 0.627f);
-        mButtons.push_back({cx - 200, 400, 400, 40, "Done", ACT_OPTIONS_DONE, true});
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_OPTIONS_DONE, true});
     } else if (screen == Screen::Profile) {
-        ui.DrawTextCentered("Local Profile", cx, 30, 2, 15, true);
-        ui.DrawTextCentered("Local name and bundled appearance only.", cx, 66, 2, 15, true);
-        ui.DrawTextCentered("Not a Microsoft account or multiplayer sign-in.", cx, 88,
+        DrawMenuFrame(ui, "Local Profile");
+        ui.DrawTextCentered("Local name and bundled appearance only.", cx, 74, 2, 15, true);
+        ui.DrawTextCentered("Not a Microsoft account or multiplayer sign-in.", cx, 96,
                             2, 15, true, 0.627f, 0.627f, 0.627f);
         const float fx = cx - 310;
-        ui.DrawText("Player Name", fx, 118, 2, 15, true);
+        ui.DrawText("Player Name", fx, 122, 2, 15, true);
         DrawTextField(ui, profile.name, fx, 144, 360, 40, true, timeSec);
         ui.DrawText("3-16 letters, digits or _", fx, 192, 2, 15, true, 0.627f, 0.627f, 0.627f);
         mButtons.push_back({fx, 224, 48, 40, "<", ACT_SKIN_PREV, true});
@@ -651,8 +667,8 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         if (ui.texSkin.srv) ui.DrawPlayerPreview(cx + 222, 468, 8, mouseX, mouseY);
         else ui.DrawTextCentered("Skin unavailable", cx + 222, 320, 2, 15, true, 1, 0.65f, 0.4f);
         ui.DrawTextCentered("Preview", cx + 222, 488, 2, 15, true, 0.627f, 0.627f, 0.627f);
-        mButtons.push_back({cx - 200, 600, 196, 40, "Done", ACT_PROFILE_DONE, validName});
-        mButtons.push_back({cx + 4, 600, 196, 40, "Cancel", ACT_PROFILE_CANCEL, true});
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 196, 40, "Done", ACT_PROFILE_DONE, validName});
+        mButtons.push_back({cx + 4, MENU_FOOTER_Y, 196, 40, "Cancel", ACT_PROFILE_CANCEL, true});
     } else if (screen == Screen::Pause) {
         ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
         ui.DrawTextCentered("Game Menu", cx, 60, 2, 15, true);
