@@ -83,7 +83,7 @@ function CloseGame {
   Check ($script:p.ExitCode -eq 0) 'game closes without crashing'
 }
 try {
-  Launch '--autostart --inventory-test --debug'
+  Launch '--autostart --inventory-test --save-test --debug'
   Capture '00-ground' 4
   Check ([Math]::Abs($state.yaw) -lt 0.001) 'fixture camera is not altered by desktop mouse input'
   Check ($state.assetVersion -ne 'unknown') 'installed Java asset version is identified'
@@ -143,7 +143,64 @@ try {
     Start-Sleep -Milliseconds 250
     Capture ('11-turn-' + $angle) 4
   }
+  Key 0x1B
+  Capture '12-before-save' 3
+  $beforeSave = $state
+  Click 683 296
+  Capture '13-saved-title' 0
+  Check (@(Get-ChildItem (Join-Path $out 'saves') -Recurse -Filter '*.potato').Count -eq 1) 'Save and Quit creates one world save'
   CloseGame
+  Launch '--show-worlds --debug'
+  Capture '14-world-list' 11
+  Check ($state.worldCount -eq 1 -and $state.selectedWorld -eq 0) 'saved world appears in Select World after restart'
+  Click 413 736
+  Start-Sleep -Seconds 5
+  Key 0x1B
+  Capture '15-after-load' 3
+  Check (!$state.resumePending -and $state.worldName -eq 'Save regression' -and $state.worldSeed -eq 1337) 'world name and seed reload without spawn reset'
+  Check (($state.slots | ConvertTo-Json -Compress) -eq ($beforeSave.slots | ConvertTo-Json -Compress)) 'inventory reloads with exactly the saved stacks'
+  Check ($state.fixtureBlock -eq $beforeSave.fixtureBlock -and $state.fixtureAbove -eq $beforeSave.fixtureAbove) 'placed world blocks survive process restart'
+  Check ([Math]::Abs($state.yaw - $beforeSave.yaw) -lt 0.001 -and [Math]::Abs($state.pitch - $beforeSave.pitch) -lt 0.001) 'camera rotation survives process restart'
+  Check ([Math]::Abs($state.position[0] - $beforeSave.position[0]) -lt 0.01 -and [Math]::Abs($state.position[2] - $beforeSave.position[2]) -lt 0.01) 'player horizontal position survives process restart'
+  Check ($state.health -eq $beforeSave.health -and $state.hunger -eq $beforeSave.hunger) 'health and hunger survive process restart'
+  $saveFile = Get-ChildItem (Join-Path $out 'saves') -Recurse -Filter '*.potato' | Select-Object -First 1
+  $savedHash = (Get-FileHash $saveFile.FullName).Hash
+  New-Item -ItemType Directory -Path ($saveFile.FullName + '.tmp') | Out-Null
+  Click 683 296
+  Capture '16-save-failed' 3
+  Check ($state.actionBar -like '*save failed*') 'failed save leaves the world open and reports the error'
+  Check ((Get-FileHash $saveFile.FullName).Hash -eq $savedHash) 'failed save leaves the last good save unchanged'
+  Remove-Item ($saveFile.FullName + '.tmp')
+  Key 0x1B
+  Key 0x45
+  Click 539 518
+  Capture '17-held-cursor' 5
+  $held = $state.cursor
+  Check ($held.item -eq 'furnace' -and $held.count -eq 1) 'shutdown fixture holds one furnace on the cursor'
+  CloseGame
+  Launch '--show-worlds --debug'
+  Click 413 736
+  Start-Sleep -Seconds 5
+  Capture '18-held-cursor-reload' 5
+  Check ($state.cursor.item -eq $held.item -and $state.cursor.count -eq $held.count -and $state.slots[27].count -eq 0) 'window-close save restores held items without duplicating them'
+  Key 0x1B
+  CloseGame
+  $original = [System.IO.File]::ReadAllBytes($saveFile.FullName)
+  $damaged = $original.Clone()
+  $offset = -1
+  for ($i = 0; $i -lt $damaged.Length - 8; $i++) {
+    if ($damaged[$i] -eq 80 -and $damaged[$i+1] -eq 84 -and $damaged[$i+2] -eq 69 -and $damaged[$i+3] -eq 68) { $offset = $i; break }
+  }
+  Check ($offset -ge 0) 'save contains a versioned block-edit stream'
+  $damaged[$offset+4] = 99
+  [System.IO.File]::WriteAllBytes($saveFile.FullName, $damaged)
+  try {
+    Launch '--show-worlds --debug'
+    Click 413 736
+    Capture '19-damaged-save' 11
+    Check ($state.actionBar -like '*Could not load world*') 'unsupported block edits are rejected without entering the world'
+    CloseGame
+  } finally { [System.IO.File]::WriteAllBytes($saveFile.FullName, $original) }
   Write-Host "CAPTURES=$out"
 } finally {
   if ($script:p -and !$script:p.HasExited) {

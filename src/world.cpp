@@ -566,6 +566,12 @@ void World::WorkerLoop() {
         }
         if (isGen) {
             GenerateChunk(*gj.chunk, gj.cx, gj.cz);
+            {
+                std::lock_guard<std::mutex> lk(mEditsMutex);
+                const auto edits = mEdits.find(ChunkKey(gj.cx, gj.cz));
+                if (edits != mEdits.end())
+                    for (const auto& e : edits->second) gj.chunk->blocks[e.first] = e.second;
+            }
             gj.chunk->generated.store(true, std::memory_order_release);
             {
                 std::lock_guard<std::mutex> lk(mQueueMutex);
@@ -633,9 +639,14 @@ void World::SetBlock(int x, int y, int z, uint8_t block) {
         c = FindLocked(cx, cz);
         if (!c || !c->generated.load(std::memory_order_acquire)) return;
     }
+    const int index = lx + CHUNK_X * lz + CHUNK_X * CHUNK_Z * y;
+    {
+        std::lock_guard<std::mutex> lk(mEditsMutex);
+        mEdits[ChunkKey(cx, cz)][uint16_t(index)] = block;
+    }
     {
         std::unique_lock<std::shared_mutex> blk(mBlocksMutex);
-        c->blocks[lx + CHUNK_X * lz + CHUNK_X * CHUNK_Z * y] = block;
+        c->blocks[index] = block;
     }
     {
         std::lock_guard<std::mutex> lk(mQueueMutex);
@@ -647,6 +658,79 @@ void World::SetBlock(int x, int y, int z, uint8_t block) {
         if (lz == CHUNK_Z - 1) MarkNeighborDirty(cx, cz + 1);
     }
     mCv.notify_all();
+}
+
+EditMap World::SnapshotEdits() const {
+    std::lock_guard<std::mutex> lk(mEditsMutex);
+    return mEdits;
+}
+
+void World::SetEdits(EditMap edits) {
+    std::lock_guard<std::mutex> lk(mEditsMutex);
+    mEdits = std::move(edits);
+}
+
+static void PutU32(std::vector<uint8_t>& out, uint32_t v) {
+    for (int i = 0; i < 4; ++i) out.push_back(uint8_t(v >> (8 * i)));
+}
+
+static bool GetU32(const uint8_t* data, size_t size, size_t& pos, uint32_t& v) {
+    if (size - pos < 4) return false;
+    v = 0;
+    for (int i = 0; i < 4; ++i) v |= uint32_t(data[pos + i]) << (8 * i);
+    pos += 4;
+    return true;
+}
+
+std::vector<uint8_t> EncodeEdits(const EditMap& edits) {
+    std::vector<uint64_t> keys;
+    for (const auto& kv : edits) if (!kv.second.empty()) keys.push_back(kv.first);
+    std::sort(keys.begin(), keys.end());
+    std::vector<uint8_t> out = {'P', 'T', 'E', 'D'};
+    PutU32(out, 1);
+    PutU32(out, uint32_t(keys.size()));
+    for (uint64_t key : keys) {
+        const ChunkEdits& chunk = edits.at(key);
+        std::vector<std::pair<uint16_t, uint8_t>> entries(chunk.begin(), chunk.end());
+        std::sort(entries.begin(), entries.end());
+        PutU32(out, uint32_t(KeyCX(key)));
+        PutU32(out, uint32_t(KeyCZ(key)));
+        PutU32(out, uint32_t(entries.size()));
+        for (const auto& e : entries) {
+            out.push_back(uint8_t(e.first));
+            out.push_back(uint8_t(e.first >> 8));
+            out.push_back(e.second);
+        }
+    }
+    return out;
+}
+
+bool DecodeEdits(const uint8_t* data, size_t size, EditMap& out) {
+    size_t pos = 4;
+    uint32_t version = 0, chunks = 0;
+    if (size < 4 || memcmp(data, "PTED", 4) != 0 || !GetU32(data, size, pos, version) ||
+        version != 1 || !GetU32(data, size, pos, chunks) || chunks > (size - pos) / 12)
+        return false;
+    EditMap result;
+    for (uint32_t c = 0; c < chunks; ++c) {
+        uint32_t cx = 0, cz = 0, count = 0;
+        if (!GetU32(data, size, pos, cx) || !GetU32(data, size, pos, cz) ||
+            !GetU32(data, size, pos, count) || count > uint32_t(CHUNK_VOL) ||
+            (size - pos) / 3 < count)
+            return false;
+        const uint64_t key = ChunkKey(int32_t(cx), int32_t(cz));
+        if (result.count(key)) return false;
+        ChunkEdits& chunk = result[key];
+        for (uint32_t i = 0; i < count; ++i, pos += 3) {
+            const uint8_t block = data[pos + 2];
+            const uint16_t index = uint16_t(data[pos] | (data[pos + 1] << 8));
+            if (block >= BLOCK_COUNT || chunk.count(index)) return false;
+            chunk[index] = block;
+        }
+    }
+    if (pos != size) return false;
+    out = std::move(result);
+    return true;
 }
 
 bool World::PopUpload(uint64_t& key, MeshData& out) {

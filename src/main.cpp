@@ -90,9 +90,14 @@ static bool gAutomation = false;
 static bool gFocused = true;
 static bool gCursorCaptured = false;
 static std::string gInventoryMessage;
+static std::string gSavePath;
+static std::string gWorldName;
+static bool gResumePending = false;
+static Screen gResumeScreen = Screen::Game;
 
 static void SetScreen(HWND hwnd, Screen s);
 static void UpdateCursorCapture(HWND hwnd);
+static void SyncHotbar();
 
 static bool IsWorldScreen(Screen s) {
     return s == Screen::Game || s == Screen::Pause || s == Screen::Inventory || s == Screen::Death;
@@ -208,6 +213,8 @@ static void StartGame() {
     gCamera.pitch = 0;
     gLastSpaceMs = -1000;
     gSpawned = false;
+    gResumePending = false;
+    gResumeScreen = Screen::Game;
     gActionBar.clear();
     SetScreen(gHwnd, Screen::Game);
 }
@@ -319,6 +326,196 @@ static void LoadPreferences() {
     }
 }
 
+static std::string SavesDirectory() {
+    const std::string preferences = PreferencesPath();
+    if (preferences.empty()) return {};
+    const size_t slash = preferences.find_last_of("/\\");
+    const std::string directory = slash == std::string::npos ? "saves" : preferences.substr(0, slash) + "/saves";
+    if (!CreateDirectoryA(directory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return {};
+    return directory;
+}
+
+static nlohmann::json ReadWorldSave(const std::string& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) return {};
+    const auto size = file.tellg();
+    if (size <= 0 || size > 64 * 1024 * 1024) return {};
+    file.seekg(0);
+    std::vector<uint8_t> bytes(static_cast<size_t>(size));
+    if (!file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(bytes.size()))) return {};
+    return nlohmann::json::from_msgpack(bytes, true, false);
+}
+
+static std::string NewSavePath() {
+    const std::string root = SavesDirectory();
+    if (root.empty()) return {};
+    for (unsigned i = 0; i < 100; ++i) {
+        const std::string directory = root + "/world-" + std::to_string(GetTickCount64()) + "-" + std::to_string(i);
+        if (CreateDirectoryA(directory.c_str(), nullptr)) return directory + "/world.potato";
+        if (GetLastError() != ERROR_ALREADY_EXISTS) return {};
+    }
+    return {};
+}
+
+static void RefreshWorldList() {
+    gMenu.worlds.clear();
+    gMenu.selectedWorld = -1;
+    gMenu.worldPage = 0;
+    const std::string root = SavesDirectory();
+    if (root.empty()) return;
+    WIN32_FIND_DATAA entry = {};
+    HANDLE search = FindFirstFileA((root + "/world-*").c_str(), &entry);
+    if (search == INVALID_HANDLE_VALUE) return;
+    do {
+        if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+            (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
+        const std::string path = root + "/" + entry.cFileName + "/world.potato";
+        const auto save = ReadWorldSave(path);
+        try {
+            if (!save.is_object() || save.at("format").get<int>() != 1 ||
+                save.at("generator").get<std::string>() != "potato-perlin-v1") continue;
+            const int mode = save.at("mode").get<int>();
+            const std::string details = std::string(mode == 1 ? "Creative" : "Survival") +
+                " | Seed: " + std::to_string(save.at("seed").get<uint32_t>()) + " | Potato save";
+            gMenu.worlds.push_back({path, save.at("name").get<std::string>(), details,
+                                   save.at("savedAt").get<uint64_t>()});
+        } catch (const nlohmann::json::exception&) {
+            continue;
+        }
+    } while (FindNextFileA(search, &entry));
+    FindClose(search);
+    std::sort(gMenu.worlds.begin(), gMenu.worlds.end(), [](const SavedWorldEntry& a, const SavedWorldEntry& b) {
+        return a.savedAt > b.savedAt;
+    });
+    if (!gMenu.worlds.empty()) gMenu.selectedWorld = 0;
+}
+
+static void ResetWorld(uint32_t seed, EditMap edits = {}) {
+    for (auto& kv : gGpu) {
+        SafeRelease(kv.second.vb);
+        SafeRelease(kv.second.ib);
+    }
+    gGpu.clear();
+    gSweepCursor = 0;
+    delete gWorld;
+    gWorldSeed = seed;
+    gWorld = new World(seed, gSettings.renderDistance);
+    gWorld->SetBlockTiles(gTiles);
+    gWorld->SetEdits(std::move(edits));
+    gCraftTable = false;
+    gInventoryMessage.clear();
+    gResumePending = false;
+}
+
+static bool SaveCurrentWorld() {
+    if (gSavePath.empty()) return true;
+    if (!gSpawned) return false;
+    auto slot = [](const ItemSlot& s) { return nlohmann::json::array({s.id, s.count}); };
+    nlohmann::json inventory = nlohmann::json::array(), craft = nlohmann::json::array();
+    for (const auto& s : gInventory.slots) inventory.push_back(slot(s));
+    for (const auto& s : gInventory.craft) craft.push_back(slot(s));
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    const uint64_t timestamp = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+    const nlohmann::json data = {
+        {"format", 1}, {"generator", "potato-perlin-v1"}, {"name", gWorldName},
+        {"savedAt", timestamp}, {"seed", gWorldSeed}, {"mode", gGameMode},
+        {"difficulty", gSettings.difficulty}, {"position", {gBody.x, gBody.y, gBody.z}},
+        {"rotation", {gCamera.yaw, gCamera.pitch}}, {"flying", gBody.flying},
+        {"health", gSurvival.health}, {"hunger", gSurvival.hunger},
+        {"saturation", gSurvival.saturation}, {"exhaustion", gSurvival.exhaustion},
+        {"selected", gHotbarSlot}, {"hotbar", std::vector<uint8_t>(gHotbar, gHotbar + 9)},
+        {"inventory", inventory}, {"craft", craft}, {"cursor", slot(gInventory.cursor)},
+        {"inventoryOpen", gScreen == Screen::Inventory}, {"craftTable", gCraftTable},
+        {"edits", nlohmann::json::binary(EncodeEdits(gWorld->SnapshotEdits()))}
+    };
+    const auto bytes = nlohmann::json::to_msgpack(data);
+    if (bytes.size() > 64 * 1024 * 1024) return false;
+    const std::string pending = gSavePath + ".tmp";
+    std::ofstream file(pending, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+    file.close();
+    return !file.fail() && MoveFileExA(pending.c_str(), gSavePath.c_str(),
+                                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+}
+
+static bool LoadWorldSave(const std::string& path) {
+    const auto data = ReadWorldSave(path);
+    try {
+        if (!data.is_object() || data.at("format").get<int>() != 1 ||
+            data.at("generator").get<std::string>() != "potato-perlin-v1") return false;
+        const uint32_t seed = data.at("seed").get<uint32_t>();
+        const std::string name = data.at("name").get<std::string>();
+        const int mode = data.at("mode").get<int>(), difficulty = data.at("difficulty").get<int>();
+        const auto position = data.at("position").get<std::vector<float>>();
+        const auto rotation = data.at("rotation").get<std::vector<float>>();
+        if (mode < 0 || mode > 1 || difficulty < 0 || difficulty > 3 || position.size() != 3 ||
+            rotation.size() != 2 || name.empty() || name.size() > 128) return false;
+        for (float v : position) if (!std::isfinite(v) || fabsf(v) > 1000000) return false;
+        for (float v : rotation) if (!std::isfinite(v) || fabsf(v) > 1000000) return false;
+        if (position[1] < -64 || position[1] > 1024) return false;
+        InventoryState inventory;
+        auto readSlot = [](const nlohmann::json& value, ItemSlot& s) {
+            if (!value.is_array() || value.size() != 2) return false;
+            const int id = value.at(0).get<int>(), count = value.at(1).get<int>();
+            if (id < 0 || id >= BLOCK_COUNT || count < 0 || count > 64 || (id == 0) != (count == 0)) return false;
+            s = {uint8_t(id), count};
+            return true;
+        };
+        const auto& slots = data.at("inventory");
+        const auto& craft = data.at("craft");
+        if (!slots.is_array() || slots.size() != 36 || !craft.is_array() || craft.size() != 9) return false;
+        for (int i = 0; i < 36; ++i) if (!readSlot(slots.at(i), inventory.slots[i])) return false;
+        for (int i = 0; i < 9; ++i) if (!readSlot(craft.at(i), inventory.craft[i])) return false;
+        if (!readSlot(data.at("cursor"), inventory.cursor)) return false;
+        const auto hotbar = data.at("hotbar").get<std::vector<uint8_t>>();
+        if (hotbar.size() != 9) return false;
+        for (const auto& value : data.at("hotbar")) {
+            const int id = value.get<int>();
+            if (id < 0 || id >= BLOCK_COUNT) return false;
+        }
+        const int selected = data.at("selected").get<int>();
+        const int health = data.at("health").get<int>(), hunger = data.at("hunger").get<int>();
+        const float saturation = data.at("saturation").get<float>(), exhaustion = data.at("exhaustion").get<float>();
+        if (selected < 0 || selected > 8 || health < 0 || health > 20 || hunger < 0 || hunger > 20 ||
+            !std::isfinite(saturation) || saturation < 0 || saturation > 20 ||
+            !std::isfinite(exhaustion) || exhaustion < 0 || exhaustion > 4) return false;
+        const bool flying = data.at("flying").get<bool>();
+        const bool inventoryOpen = data.at("inventoryOpen").get<bool>();
+        const bool craftTable = data.at("craftTable").get<bool>();
+        const auto& bytes = data.at("edits").get_binary();
+        EditMap edits;
+        if (!DecodeEdits(bytes.data(), bytes.size(), edits)) return false;
+        ResetWorld(seed, std::move(edits));
+        StartGame();
+        gWorldName = name;
+        gSavePath = path;
+        gGameMode = mode;
+        gSettings.difficulty = difficulty;
+        gInventory = inventory;
+        gCraftTable = craftTable;
+        gResumeScreen = health == 0 ? Screen::Death : (inventoryOpen ? Screen::Inventory : Screen::Game);
+        gHotbarSlot = selected;
+        if (mode == 0) SyncHotbar();
+        else memcpy(gHotbar, hotbar.data(), sizeof(gHotbar));
+        gSurvival.health = health;
+        gSurvival.hunger = hunger;
+        gSurvival.saturation = saturation;
+        gSurvival.exhaustion = exhaustion;
+        gSurvival.dead = health == 0;
+        gBody.x = position[0]; gBody.y = position[1]; gBody.z = position[2];
+        gBody.flying = mode == 1 && flying;
+        gCamera.yaw = rotation[0]; gCamera.pitch = rotation[1];
+        gCamera.x = gBody.x; gCamera.y = gBody.y + PlayerBody::EYE; gCamera.z = gBody.z;
+        gSpawned = true;
+        gResumePending = true;
+        gFallStartY = gBody.y;
+        return true;
+    } catch (const nlohmann::json::exception&) {
+        return false;
+    }
+}
+
 static void ProfileSkinChanged(const PlayerProfile& previous) {
     if (!gGui.LoadPlayerSkin(gRC, gStore, gProfileDraft)) {
         gProfileDraft = previous;
@@ -329,26 +526,47 @@ static void ProfileSkinChanged(const PlayerProfile& previous) {
 
 static void HandleMenuAction(int action) {
     if (action != ACT_NONE) gSound.Play(SND_CLICK);
+    if (action >= ACT_WORLD_ROW && action - ACT_WORLD_ROW < int(gMenu.worlds.size())) {
+        gMenu.selectedWorld = action - ACT_WORLD_ROW;
+        return;
+    }
     switch (action) {
         case ACT_SINGLEPLAYER:
+            RefreshWorldList();
+            SetScreen(gHwnd, Screen::SelectWorld);
+            break;
+        case ACT_NEW_WORLD:
+            gCreate = WorldCreateInfo{};
             gCreate.difficulty = gSettings.difficulty;
             SetScreen(gHwnd, Screen::CreateWorld);
+            break;
+        case ACT_WORLD_PREV:
+            if (gMenu.worldPage > 0) --gMenu.worldPage;
+            break;
+        case ACT_WORLD_NEXT:
+            if ((gMenu.worldPage + 1) * 5 < int(gMenu.worlds.size())) ++gMenu.worldPage;
+            break;
+        case ACT_LOAD_WORLD:
+            if (gMenu.selectedWorld >= 0 && gMenu.selectedWorld < int(gMenu.worlds.size()) &&
+                !LoadWorldSave(gMenu.worlds[gMenu.selectedWorld].path)) {
+                gActionBar = "Could not load world: damaged or unsupported save.";
+                gActionBarUntil = gNowMs + 5000;
+            }
             break;
         case ACT_RESPAWN:
             StartGame();
             break;
         case ACT_CREATE_WORLD: {
             if (gCreate.name.empty()) break;
-            gWorldSeed = ParseSeed(gCreate.seed);
-            for (auto& kv : gGpu) {
-                SafeRelease(kv.second.vb);
-                SafeRelease(kv.second.ib);
+            const std::string path = NewSavePath();
+            if (path.empty()) {
+                gActionBar = "Could not create the world save folder.";
+                gActionBarUntil = gNowMs + 5000;
+                break;
             }
-            gGpu.clear();
-            gSweepCursor = 0;
-            delete gWorld;
-            gWorld = new World(gWorldSeed, gSettings.renderDistance);
-            gWorld->SetBlockTiles(gTiles);
+            ResetWorld(ParseSeed(gCreate.seed));
+            gSavePath = path;
+            gWorldName = gCreate.name;
             gGameMode = gCreate.gameMode & 1;
             gSettings.difficulty = gCreate.difficulty;
             gInventory = InventoryState{};
@@ -361,7 +579,10 @@ static void HandleMenuAction(int action) {
             break;
         }
         case ACT_CANCEL_CREATE:
-            SetScreen(gHwnd, Screen::Title);
+            if (gScreen == Screen::CreateWorld) {
+                RefreshWorldList();
+                SetScreen(gHwnd, Screen::SelectWorld);
+            } else SetScreen(gHwnd, Screen::Title);
             break;
         case ACT_CYCLE_GAMEMODE:
             gCreate.gameMode ^= 1;
@@ -435,6 +656,12 @@ static void HandleMenuAction(int action) {
             gRunning = false;
             break;
         case ACT_QUIT_TO_TITLE:
+            if (!SaveCurrentWorld()) {
+                gActionBar = "World save failed. Your world is still open; please retry.";
+                gActionBarUntil = gNowMs + 5000;
+                break;
+            }
+            gSavePath.clear();
             SetScreen(gHwnd, Screen::Title);
             break;
         case ACT_CYCLE_RD:
@@ -577,7 +804,12 @@ static void SaveTestState(const char* screenshot) {
         {"draftName", gProfileDraft.name}, {"skin", gProfileDraft.skin}, {"slim", gProfileDraft.slim},
         {"fov", gSettings.fov}, {"renderDistance", gSettings.renderDistance},
         {"volume", gSettings.soundVolume}, {"sensitivity", gSettings.sensitivity},
-        {"assetVersion", gAssetVersion}, {"skinLoaded", gGui.texSkin.srv != nullptr}
+        {"assetVersion", gAssetVersion}, {"skinLoaded", gGui.texSkin.srv != nullptr},
+        {"worldName", gWorldName}, {"worldSeed", gWorldSeed}, {"worldCount", gMenu.worlds.size()},
+        {"worldPage", gMenu.worldPage}, {"selectedWorld", gMenu.selectedWorld}, {"resumePending", gResumePending},
+        {"health", gSurvival.health}, {"hunger", gSurvival.hunger},
+        {"fixtureBlock", gWorld ? gWorld->GetBlock(8, 64, 6) : 0},
+        {"fixtureAbove", gWorld ? gWorld->GetBlock(8, 65, 6) : 0}, {"actionBar", gActionBar}
     };
     state["slots"] = nlohmann::json::array();
     for (const auto& slot : gInventory.slots) state["slots"].push_back(slotJson(slot));
@@ -728,6 +960,18 @@ static void HandleGameFrame(float dt) {
 
     auto getBlock = [&](int x, int y, int z) -> uint8_t { return gWorld->GetBlock(x, y, z); };
 
+    if (gResumePending) {
+        gWorld->Update(gBody.x, gBody.z);
+        const int cx = FloorDiv16(int(floorf(gBody.x))), cz = FloorDiv16(int(floorf(gBody.z)));
+        for (int dz = -1; dz <= 1; ++dz)
+            for (int dx = -1; dx <= 1; ++dx)
+                if (gWorld->SurfaceY((cx + dx) * 16, (cz + dz) * 16) < 0) return;
+        gResumePending = false;
+        if (gResumeScreen != Screen::Game) {
+            SetScreen(gHwnd, gResumeScreen);
+            return;
+        }
+    }
     if (!gSpawned) {
         gWorld->Update(8.5f, 8.5f);
         const int sy = gWorld->SurfaceY(8, 8);
@@ -1233,7 +1477,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         gInventory.slots[28] = {BLOCK_COBBLE, 8};
         SyncHotbar();
     }
+    if (gAutomation && strstr(GetCommandLineA(), "--save-test")) {
+        gSavePath = NewSavePath();
+        gWorldName = "Save regression";
+    }
     if (strstr(GetCommandLineA(), "--autostart")) StartGame();
+    if (strstr(GetCommandLineA(), "--show-worlds")) HandleMenuAction(ACT_SINGLEPLAYER);
     if (strstr(GetCommandLineA(), "--debug")) gDebug = true;
     if (strstr(GetCommandLineA(), "--fly")) gFlyHook = true;
     if (strstr(GetCommandLineA(), "--show-options")) {
@@ -1271,7 +1520,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                      gScreen == Screen::SoundOptions || gScreen == Screen::ControlsOptions)
                 HandleMenuAction(ACT_OPTIONS_DONE);
             else if (gScreen == Screen::Profile) HandleMenuAction(ACT_PROFILE_CANCEL);
-            else if (gScreen == Screen::CreateWorld) SetScreen(hwnd, Screen::Title);
+            else if (gScreen == Screen::CreateWorld || gScreen == Screen::SelectWorld)
+                HandleMenuAction(ACT_CANCEL_CREATE);
         }
         if (gInput.KeyPressed(VK_F2)) SaveScreenshot();
 
@@ -1341,6 +1591,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         gInput.EndFrame();
     }
 
+    if (!SaveCurrentWorld())
+        MessageBoxA(hwnd, "The world could not be saved. Check free space and folder permissions.",
+                    "Minecraft Potato Edition - Save failed", MB_OK | MB_ICONERROR);
     for (auto& kv : gGpu) {
         SafeRelease(kv.second.vb);
         SafeRelease(kv.second.ib);

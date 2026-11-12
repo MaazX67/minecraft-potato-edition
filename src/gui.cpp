@@ -536,6 +536,7 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
     (void)typed; // The caller edits create/profile state, including backspace.
     mButtons.clear();
     mSliders.clear();
+    mWorldListVisible = screen == Screen::SelectWorld;
     const float cx = SCREEN_W * 0.5f;
     char label[96];
 
@@ -558,6 +559,34 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         ui.DrawText("Minecraft Potato Edition (fan project)", 4, SCREEN_H - 20, 2, 15, true);
         const char* tag = "DX10 / Feature Level 10_0";
         ui.DrawText(tag, SCREEN_W - ui.TextWidth(tag, 2) - 4, SCREEN_H - 20, 2, 15, true);
+    } else if (screen == Screen::SelectWorld) {
+        DrawMenuFrame(ui, "Select World");
+        if (worlds.empty())
+            ui.DrawTextCentered("No saved worlds. Create your first world below.", cx, 140, 2, 15, true);
+        for (int row = 0; row < 5; ++row) {
+            const int index = worldPage * 5 + row;
+            if (index >= int(worlds.size())) break;
+            const float y = 84.0f + row * 104.0f;
+            const bool selected = index == selectedWorld;
+            ui.DrawQuad(&ui.texWhite, cx - 400, y, 800, 92, 0, 0, 1, 1, 15,
+                        selected ? 0.627f : 0.16f, selected ? 0.627f : 0.16f,
+                        selected ? 0.627f : 0.16f);
+            ui.DrawQuad(&ui.texWhite, cx - 398, y + 2, 796, 88, 0, 0, 1, 1, 15, 0, 0, 0);
+            std::string name = worlds[index].name;
+            while (!name.empty() && ui.TextWidth(name, 2) > 744) name.pop_back();
+            ui.DrawText(name, cx - 378, y + 16, 2, 15, true);
+            ui.DrawText(worlds[index].details, cx - 378, y + 46, 2, 15, true,
+                        0.627f, 0.627f, 0.627f);
+        }
+        const int pages = std::max(1, (int(worlds.size()) + 4) / 5);
+        snprintf(label, sizeof(label), "Page %d / %d", worldPage + 1, pages);
+        ui.DrawTextCentered(label, cx, 628, 2, 15, true);
+        mButtons.push_back({cx - 400, 612, 120, 40, "<", ACT_WORLD_PREV, worldPage > 0});
+        mButtons.push_back({cx + 280, 612, 120, 40, ">", ACT_WORLD_NEXT, worldPage + 1 < pages});
+        mButtons.push_back({cx - 400, MENU_FOOTER_Y, 260, 40, "Play Selected World",
+                            ACT_LOAD_WORLD, selectedWorld >= 0 && selectedWorld < int(worlds.size())});
+        mButtons.push_back({cx - 130, MENU_FOOTER_Y, 260, 40, "Create New World", ACT_NEW_WORLD, true});
+        mButtons.push_back({cx + 140, MENU_FOOTER_Y, 260, 40, "Cancel", ACT_CANCEL_CREATE, true});
     } else if (screen == Screen::CreateWorld) {
         // This screen supplies its modern background over the caller's scene.
         DrawTiled(ui, ui.texMenuBg, 0, 0, SCREEN_W, SCREEN_H);
@@ -675,7 +704,7 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         mButtons.push_back({cx - 200, 180, 400, 40, "Back to Game", ACT_RESUME, true});
         mButtons.push_back({cx - 200, 228, 196, 40, "Options...", ACT_OPTIONS, true});
         mButtons.push_back({cx + 4, 228, 196, 40, "Advancements", ACT_NONE, false});
-        mButtons.push_back({cx - 200, 276, 400, 40, "Quit to Title", ACT_QUIT_TO_TITLE, true});
+        mButtons.push_back({cx - 200, 276, 400, 40, "Save and Quit to Title", ACT_QUIT_TO_TITLE, true});
     } else if (screen == Screen::Death) {
         ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15, 1.0f, 0.25f, 0.2f);
         ui.DrawTextCentered("You died!", cx, 120, 3, 15, true);
@@ -740,6 +769,12 @@ void MenuSystem::DrawSlider(GuiRenderer& ui, const Slider& s, Settings& settings
 }
 
 int MenuSystem::HitTest(int mouseX, int mouseY) const {
+    if (mWorldListVisible && mouseX >= SCREEN_W * 0.5f - 400 && mouseX < SCREEN_W * 0.5f + 400) {
+        const int row = (mouseY - 84) / 104;
+        const int index = worldPage * 5 + row;
+        if (mouseY >= 84 && row < 5 && mouseY < 84 + row * 104 + 92 && index < int(worlds.size()))
+            return ACT_WORLD_ROW + index;
+    }
     for (const Button& b : mButtons) {
         if (b.enabled && mouseX >= b.x && mouseX < b.x + b.w &&
             mouseY >= b.y && mouseY < b.y + b.h) {

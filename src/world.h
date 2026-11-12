@@ -85,6 +85,12 @@ inline int KeyCX(uint64_t k) { return int(int32_t(k >> 32)); }
 inline int KeyCZ(uint64_t k) { return int(int32_t(k & 0xFFFFFFFFu)); }
 inline int FloorDiv16(int v) { return v >= 0 ? v / 16 : (v - 15) / 16; }
 
+// Save only player edits; regenerate untouched terrain from the seed.
+using ChunkEdits = std::unordered_map<uint16_t, uint8_t>;
+using EditMap = std::unordered_map<uint64_t, ChunkEdits>;
+std::vector<uint8_t> EncodeEdits(const EditMap& edits);
+bool DecodeEdits(const uint8_t* data, size_t size, EditMap& out);
+
 // Async voxel world. Two worker threads: generation jobs first, then meshing.
 // The render thread drains finished meshes via PopUpload and owns all GPU
 // resources. Map and queues are guarded by mQueueMutex; block reads/writes by
@@ -112,6 +118,10 @@ public:
     // call. Update() only detaches them from the map; the 64KB frees happen
     // here, under the render thread's hard per-frame ceiling.
     void EvictStep(int maxCount);
+    uint32_t Seed() const { return mSeed; }
+    EditMap SnapshotEdits() const;
+    // Call before the first Update(); edits apply as chunks generate.
+    void SetEdits(EditMap edits);
 
 private:
     struct GenJob {
@@ -149,6 +159,8 @@ private:
     std::condition_variable mCv;
     bool mStop = false;
     std::vector<std::thread> mWorkers;
+    EditMap mEdits;
+    mutable std::mutex mEditsMutex; // leaf lock; never held with the others
 };
 
 } // namespace potato

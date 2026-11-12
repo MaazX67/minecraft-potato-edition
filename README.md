@@ -15,6 +15,7 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 - Infinite world with Perlin terrain, beaches, caves, ores, oak trees and water
 - Create New World: Game / World / More tabs, name, seed, draft difficulty and Survival/Creative modes; unavailable features stay disabled
 - Seeds currently use a 32-bit generator; terrain and seed results do not match Java Edition
+- Select World list with paging, new-world creation, and Save and Quit; player state and changed blocks survive restarting or chunk eviction
 - Chunk streaming with a render-distance setting, two worker threads, greedy meshing and frustum culling
 - Survival: health, hunger, fall damage, sprinting and swimming — no flying
 - Creative: double-tap-space flight, no hearts/hunger on the HUD
@@ -65,11 +66,13 @@ Run the native checks on Windows with the downloaded executable and an existing 
 .\native-smoke.ps1 -Exe C:\Games\PotatoEdition.exe -OutputRoot C:\Temp
 ```
 
-The script launches its own isolated test instance, keeps fresh screenshots and state assertions, and closes it normally. Test profiles stay in the output directory; regular preferences live under `%APPDATA%\MinecraftPotatoEdition\preferences.json`.
+The script launches isolated test instances, checks crafting and save/reload after a process restart, and exercises save failures and damaged edit streams. Test profiles and worlds stay in the output directory; regular preferences live under `%APPDATA%\MinecraftPotatoEdition\preferences.json`.
+
+Worlds live under `%APPDATA%\MinecraftPotatoEdition\saves\world-*\world.potato`. Each file contains the name, generator version, seed, game mode, difficulty, position, rotation, health/hunger, inventory and block edits in a versioned MessagePack container. Save and Quit and normal window close write a temporary file before atomically replacing the previous save. There is no periodic autosave yet. This is a Potato-only format, not Java's Anvil/NBT format; do not open Java worlds with it.
 
 ## Still to do
 
-- World save/load; block edits currently disappear after chunk eviction or application exit
+- Java-compatible world format/import, autosaving, world thumbnails and world-management actions
 - Java terrain/biomes, structures, 64-bit seed parity and flowing liquids
 - Mobs, entities, tool-aware mining, loot, equipment, furnaces and the full item/recipe registry
 - Armor/offhand mechanics, third-person player rendering, custom skin import and account integration

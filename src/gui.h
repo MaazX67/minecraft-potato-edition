@@ -19,7 +19,7 @@ struct GuiTexture {
 
 enum class Screen {
     Title, CreateWorld, Options, Pause, Game, Inventory, Death,
-    VideoOptions, SoundOptions, ControlsOptions, Profile
+    VideoOptions, SoundOptions, ControlsOptions, Profile, SelectWorld
 };
 
 struct PlayerProfile {
@@ -114,7 +114,9 @@ enum MenuAction {
     ACT_CREATE_TAB_GAME, ACT_CREATE_TAB_WORLD,
     ACT_CREATE_TAB_MORE, ACT_VIDEO_OPTIONS, ACT_SOUND_OPTIONS, ACT_CONTROLS_OPTIONS,
     ACT_PROFILE, ACT_PROFILE_DONE, ACT_PROFILE_CANCEL,
-    ACT_SKIN_PREV, ACT_SKIN_NEXT, ACT_SKIN_MODEL
+    ACT_SKIN_PREV, ACT_SKIN_NEXT, ACT_SKIN_MODEL,
+    ACT_NEW_WORLD, ACT_LOAD_WORLD, ACT_WORLD_PREV, ACT_WORLD_NEXT,
+    ACT_WORLD_ROW = 1000
 };
 
 // State of the Create New World form; main owns it and applies it on create.
@@ -129,8 +131,16 @@ struct WorldCreateInfo {
 
 // Vanilla-style screens built from real GUI sprites. The 3D background
 // (panorama skybox or frozen world) is rendered by the caller first.
+struct SavedWorldEntry {
+    std::string path, name, details;
+    uint64_t savedAt = 0;
+};
+
 class MenuSystem {
 public:
+    std::vector<SavedWorldEntry> worlds;
+    int selectedWorld = -1;
+    int worldPage = 0;
     void Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldCreateInfo& create,
               const std::string& typed, int mouseX, int mouseY, bool leftDown,
               const std::string& splash, float timeSec, const PlayerProfile& profile);
@@ -156,6 +166,7 @@ private:
     std::vector<Button> mButtons;
     std::vector<Slider> mSliders;
     bool mChanged = false;
+    bool mWorldListVisible = false;
 };
 
 // Default creative hotbar layout; the live hotbar is a mutable copy in main.

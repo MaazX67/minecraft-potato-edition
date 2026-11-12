@@ -600,6 +600,66 @@ int main() {
         CHECK(same, "same seed produces identical blocks (seed drives generation)");
     }
 
+    {
+        EditMap changes;
+        changes[ChunkKey(-2, 3)][0] = BLOCK_AIR;
+        changes[ChunkKey(-2, 3)][65535] = BLOCK_BRICK;
+        changes[ChunkKey(0, -1)][32888] = BLOCK_FURNACE;
+        const auto bytes = EncodeEdits(changes);
+        EditMap loaded;
+        CHECK(DecodeEdits(bytes.data(), bytes.size(), loaded) && loaded == changes,
+              "block edits round-trip with negative chunks, air and boundary indices");
+        CHECK(EncodeEdits(loaded) == bytes, "block edit encoding is deterministic");
+        bool truncatedRejected = true;
+        for (size_t i = 0; i < bytes.size(); ++i)
+            if (DecodeEdits(bytes.data(), i, loaded)) truncatedRejected = false;
+        CHECK(truncatedRejected && loaded == changes,
+              "all truncated edit streams are rejected without replacing valid edits");
+        auto invalid = bytes;
+        invalid.back() = 255;
+        CHECK(!DecodeEdits(invalid.data(), invalid.size(), loaded), "unknown saved block ids are rejected");
+        invalid = bytes;
+        invalid.push_back(0);
+        CHECK(!DecodeEdits(invalid.data(), invalid.size(), loaded), "trailing saved block bytes are rejected");
+        invalid = bytes;
+        invalid[4] = 99;
+        CHECK(!DecodeEdits(invalid.data(), invalid.size(), loaded), "unsupported edit versions are rejected");
+        const auto empty = EncodeEdits({});
+        CHECK(DecodeEdits(empty.data(), empty.size(), loaded) && loaded.empty(), "empty world edits round-trip");
+    }
+    {
+        World edited(1337, 2);
+        edited.SetBlockTiles(tiles);
+        auto waitFor = [&](int cx, int cz) {
+            edited.Update(float(cx * 16 + 8), float(cz * 16 + 8));
+            for (int i = 0; i < 500; ++i) {
+                uint64_t key; MeshData mesh;
+                while (edited.PopUpload(key, mesh)) {}
+                if (edited.SurfaceY(cx * 16, cz * 16) >= 0) return true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            return false;
+        };
+        CHECK(waitFor(0, 0), "edit fixture chunk is generated");
+        edited.SetBlock(1, 0, 1, BLOCK_AIR);
+        edited.SetBlock(2, 100, 2, BLOCK_FURNACE);
+        const auto saved = edited.SnapshotEdits();
+        CHECK(saved.at(ChunkKey(0, 0)).size() == 2, "player edits track removed and placed blocks");
+        CHECK(waitFor(20, 20), "streaming reaches a distant chunk");
+        CHECK(!edited.HasChunk(0, 0), "edit fixture chunk is evicted");
+        CHECK(waitFor(0, 0) && edited.GetBlock(1, 0, 1) == BLOCK_AIR &&
+              edited.GetBlock(2, 100, 2) == BLOCK_FURNACE,
+              "player edits survive eviction and regeneration");
+        World restored(1337, 2);
+        restored.SetBlockTiles(tiles);
+        restored.SetEdits(saved);
+        restored.Update(8.5f, 8.5f);
+        for (int i = 0; i < 500 && restored.SurfaceY(8, 8) < 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        CHECK(restored.GetBlock(1, 0, 1) == BLOCK_AIR && restored.GetBlock(2, 100, 2) == BLOCK_FURNACE,
+              "saved edits apply to a fresh world before meshing");
+    }
+
     if (gFail) {
         printf("\n%d TEST(S) FAILED\n", gFail);
         return 1;
