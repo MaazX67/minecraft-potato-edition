@@ -589,7 +589,7 @@ static bool LoadWorldSave(const std::string& path) {
             if (!value.is_array() || value.size() != 2) return false;
             int id = value.at(0).get<int>();
             const int count = value.at(1).get<int>();
-            if (legacy && id >= 64 && id <= 104) id += 64;
+            if (legacy && id >= 64 && id <= 104) id += 96;
             if (!IsValidItem(id) || count < 0 || count > ItemStackLimit(uint8_t(id)) || (id == 0) != (count == 0)) return false;
             s = {uint8_t(id), count};
             return true;
@@ -646,7 +646,7 @@ static bool LoadWorldSave(const std::string& path) {
         if (hotbar.size() != 9) return false;
         for (auto& slotId : hotbar) {
             int id = slotId;
-            if (legacy && id >= 64 && id <= 104) id += 64;
+            if (legacy && id >= 64 && id <= 104) id += 96;
             if (!IsValidItem(id)) return false;
             slotId = uint8_t(id);
         }

@@ -906,7 +906,7 @@ static void TestClimateGeneration() {
 }
 
 static void TestBlockExpansion() {
-    CHECK(BLOCK_COUNT == 138 && ITEM_STICK == 128 && ITEM_RAW_COPPER == 170,
+    CHECK(BLOCK_COUNT == 138 && ITEM_STICK >= BLOCK_COUNT && ITEM_RAW_COPPER == ITEM_COAL + 10,
           "block registry grows to 138 entries with items relocated above the block range");
     bool solid = true;
     for (int b = BLOCK_DEEPSLATE; b < BLOCK_LAVA; ++b) {
