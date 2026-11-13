@@ -45,7 +45,7 @@ function Check([bool]$condition, [string]$message) {
 }
 function Capture($name, $screen) {
   $known = @(Get-ChildItem (Join-Path $out 'screenshots') -Filter '*.bmp' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-  Key 0x71
+  Key 0x71 350
   $deadline = [DateTime]::UtcNow.AddSeconds(10)
   do {
     $bmp = Get-ChildItem (Join-Path $out 'screenshots') -Filter '*.bmp' -ErrorAction SilentlyContinue |
