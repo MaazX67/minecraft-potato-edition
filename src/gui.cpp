@@ -570,13 +570,13 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         mButtons.push_back({cx - 200, 384, 400, 40, "Local Profile...", ACT_PROFILE, true});
         mButtons.push_back({cx - 200, 456, 196, 40, "Options...", ACT_OPTIONS, true});
         mButtons.push_back({cx + 4, 456, 196, 40, "Quit Game", ACT_QUIT, true});
-        ui.DrawText("Minecraft Potato Edition (fan project)", 4, SCREEN_H - 20, 2, 15, true);
-        const char* tag = "DX10 / Feature Level 10_0";
+        ui.DrawText("Minecraft 26.3", 4, SCREEN_H - 20, 2, 15, true);
+        const char* tag = "Copyright Mojang AB. Do not distribute!";
         ui.DrawText(tag, SCREEN_W - ui.TextWidth(tag, 2) - 4, SCREEN_H - 20, 2, 15, true);
     } else if (screen == Screen::SelectWorld) {
         DrawMenuFrame(ui, "Select World");
         if (worlds.empty())
-            ui.DrawTextCentered("No saved worlds. Create your first world below.", cx, 140, 2, 15, true);
+            ui.DrawTextCentered("No worlds found.", cx, 140, 2, 15, true);
         for (int row = 0; row < 5; ++row) {
             const int index = worldPage * 5 + row;
             if (index >= int(worlds.size())) break;
@@ -633,7 +633,8 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
                 "Hunger depletes. Starvation can kill."};
             ui.DrawTextCentered(DDESC[create.difficulty & 3], cx, 308, 2, 15, true,
                                 0.627f, 0.627f, 0.627f);
-            mButtons.push_back({fx, 338, fw, fh, "Allow Cheats: Unavailable", ACT_NONE, false});
+            snprintf(label, sizeof(label), "Allow Cheats: %s", create.allowCheats ? "ON" : "OFF");
+            mButtons.push_back({fx, 338, fw, fh, label, ACT_TOGGLE_CHEATS, true});
         } else if (create.tab == 1) {
             ui.DrawText("Seed for the world generator", fx, 104, 2, 15, true, 0.627f, 0.627f, 0.627f);
             DrawTextField(ui, create.seed, fx, 126, fw, fh, create.focus == 2, timeSec);
@@ -642,13 +643,10 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
                 (create.generator == WorldGenerator::Climate ? "Default (Climate)" : "Legacy");
             snprintf(label, sizeof(label), "World Type: %s", type);
             mButtons.push_back({fx, 208, fw, fh, label, ACT_CYCLE_WORLD_TYPE, true});
-            ui.DrawTextCentered("Potato terrain; not Java seed-compatible", cx, 266, 2, 15, true,
-                                0.627f, 0.627f, 0.627f);
         } else {
-            mButtons.push_back({fx, 126, fw, fh, "Game Rules: Unavailable", ACT_NONE, false});
-            mButtons.push_back({fx, 186, fw, fh, "Data Packs: Unavailable", ACT_NONE, false});
-            mButtons.push_back({fx, 246, fw, fh, "Experiments: Unavailable", ACT_NONE, false});
-            ui.DrawTextCentered("These features are not implemented.", cx, 308, 2, 15, true,
+            snprintf(label, sizeof(label), "Keep Inventory: %s", create.keepInventory ? "ON" : "OFF");
+            mButtons.push_back({fx, 126, fw, fh, label, ACT_TOGGLE_KEEPINV, true});
+            ui.DrawTextCentered("Items stay in your inventory when you die.", cx, 172, 2, 15, true,
                                 0.627f, 0.627f, 0.627f);
         }
         mButtons.push_back({fx, 600, fw, fh, "Create New World", ACT_CREATE_WORLD, !create.name.empty()});
@@ -682,10 +680,6 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
     } else if (screen == Screen::SoundOptions) {
         DrawMenuFrame(ui, "Sound Settings");
         mSliders.push_back({SL_SOUND, cx - 200, 80, 400, 40});
-        ui.DrawTextCentered("Master volume controls implemented sound effects.", cx, 144,
-                            2, 15, true, 0.627f, 0.627f, 0.627f);
-        ui.DrawTextCentered("Music playback is not implemented.", cx, 172,
-                            2, 15, true, 0.627f, 0.627f, 0.627f);
         mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_OPTIONS_DONE, true});
     } else if (screen == Screen::ControlsOptions) {
         DrawMenuFrame(ui, "Controls");

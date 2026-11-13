@@ -867,13 +867,36 @@ void ParticleSystem::SpawnCrit(float x, float y, float z) {
     }
 }
 
+void ParticleSystem::SpawnBubbles(float x, float y, float z) {
+    std::uniform_real_distribution<float> spread(-0.10f, 0.10f);
+    std::uniform_real_distribution<float> rise(0.6f, 1.4f);
+    std::uniform_real_distribution<float> drift(-0.15f, 0.15f);
+    std::uniform_real_distribution<float> life(0.7f, 1.2f);
+    for (int i = 0; i < 3; ++i) {
+        if (mParticles.size() >= MAX_PARTICLES) return;
+        Particle p;
+        p.x = x + spread(mRng); p.y = y + spread(mRng) * 0.5f; p.z = z + spread(mRng);
+        p.vx = drift(mRng); p.vz = drift(mRng);
+        p.vy = rise(mRng);
+        p.maxLife = p.life = life(mRng);
+        p.bubble = true;
+        mParticles.push_back(p);
+    }
+}
+
 void ParticleSystem::Update(float dt) {
     size_t w = 0;
     for (size_t i = 0; i < mParticles.size(); ++i) {
         Particle& p = mParticles[i];
         p.life -= dt;
         if (p.life <= 0.0f) continue;
-        p.vy -= 9.8f * dt;
+        if (p.bubble) {
+            p.vy = std::min(p.vy + 2.5f * dt, 1.6f);
+            p.vx *= 0.96f;
+            p.vz *= 0.96f;
+        } else {
+            p.vy -= 9.8f * dt;
+        }
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.z += p.vz * dt;

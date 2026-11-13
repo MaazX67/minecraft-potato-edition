@@ -60,6 +60,7 @@ static World* gWorld = nullptr;
 static std::unordered_map<uint64_t, GpuChunk> gGpu;
 static uint64_t gSweepCursor = 0;
 static ID3D10ShaderResourceView* gParticleSRV = nullptr;
+static ID3D10ShaderResourceView* gBubbleSRV = nullptr;
 static ID3D10Buffer* gParticleVB = nullptr;
 static ID3D10ShaderResourceView* gWhiteSRV = nullptr;
 static ID3D10Buffer* gOutlineVB = nullptr;
@@ -110,9 +111,11 @@ static uint64_t gBrokenBlocks = 0;
 static int gTargetX = 0, gTargetY = 0, gTargetZ = 0;
 static float gStepTimer = 0.3f;
 static bool gWasInWater = false;
-static std::string gSplash = "Potato Edition!";
+static std::string gSplash = "As seen on TV!";
 static WorldCreateInfo gCreate;
 static int gGameMode = 0; // 0 survival, 1 creative
+static bool gAllowCheats = false;
+static bool gKeepInventory = false;
 static uint32_t gWorldSeed = 1337;
 static InventoryState gInventory;
 static bool gCraftTable = false;
@@ -465,8 +468,10 @@ static void RefreshWorldList() {
             if ((format != 1 && format != 2 && format != 3) ||
                 !ParseGenerator(save.at("generator").get<std::string>(), generator)) continue;
             const int mode = save.at("mode").get<int>();
-            const std::string details = std::string(mode == 1 ? "Creative" : "Survival") +
-                " | Seed: " + std::to_string(save.at("seed").get<uint32_t>()) + " | Potato save";
+            const char* typeName = generator == WorldGenerator::Flat ? "Superflat"
+                : (generator == WorldGenerator::Legacy ? "Legacy" : "Default");
+            const std::string details = std::string(mode == 1 ? "Creative Mode" : "Survival Mode") +
+                ", " + typeName + ", Seed: " + std::to_string(save.at("seed").get<uint32_t>());
             gMenu.worlds.push_back({path, save.at("name").get<std::string>(), details,
                                    save.at("savedAt").get<uint64_t>()});
         } catch (const nlohmann::json::exception&) {
@@ -533,6 +538,7 @@ static bool SaveCurrentWorld() {
         {"format", 3}, {"generator", GeneratorName(gOverworldGen)}, {"name", gWorldName},
         {"worldTime", gWorldClock.Ticks()},
         {"savedAt", timestamp}, {"seed", gWorldSeed}, {"mode", gGameMode},
+        {"cheats", gAllowCheats}, {"keepInventory", gKeepInventory},
         {"difficulty", gSettings.difficulty}, {"position", {gBody.x, gBody.y, gBody.z}},
         {"rotation", {gCamera.yaw, gCamera.pitch}}, {"flying", gBody.flying},
         {"health", gSurvival.health}, {"hunger", gSurvival.hunger},
@@ -696,6 +702,8 @@ static bool LoadWorldSave(const std::string& path) {
         gSavePath = path;
         gGameMode = mode;
         gSettings.difficulty = difficulty;
+        gAllowCheats = data.value("cheats", false);
+        gKeepInventory = data.value("keepInventory", false);
         gInventory = inventory;
         gCraftTable = craftTable;
         if (data.contains("furnace")) {
@@ -805,6 +813,8 @@ static void HandleMenuAction(int action) {
             gWorldName = gCreate.name;
             gGameMode = gCreate.gameMode & 1;
             gSettings.difficulty = gCreate.difficulty;
+            gAllowCheats = gCreate.allowCheats;
+            gKeepInventory = gCreate.keepInventory;
             gInventory = InventoryState{};
             gCraftTable = false;
             gInventoryMessage.clear();
@@ -825,6 +835,12 @@ static void HandleMenuAction(int action) {
             break;
         case ACT_CYCLE_GAMEMODE:
             gCreate.gameMode ^= 1;
+            break;
+        case ACT_TOGGLE_CHEATS:
+            gCreate.allowCheats = !gCreate.allowCheats;
+            break;
+        case ACT_TOGGLE_KEEPINV:
+            gCreate.keepInventory = !gCreate.keepInventory;
             break;
         case ACT_CREATE_TAB_GAME:
             gCreate.tab = 0; gCreate.focus = 1;
@@ -1190,6 +1206,17 @@ static void CloseInventory() {
     SyncHotbar();
     gCraftTable = false;
     SetScreen(gHwnd, Screen::Game);
+}
+
+static void PlayerDied() {
+    gSurvival.dead = true;
+    if (!gKeepInventory) {
+        gInventory = InventoryState{};
+        gCraftTable = false;
+        gInventoryMessage.clear();
+        if (gGameMode == 0) SyncHotbar();
+    }
+    SetScreen(gHwnd, Screen::Death);
 }
 
 static void HandleInventoryClick(int index, bool right) {
@@ -1569,9 +1596,20 @@ static void HandleGameFrame(float dt) {
     if (gBody.inWater && !gWasInWater)
         gSound.PlayAt(SND_SPLASH, gBody.x, gBody.y, gBody.z);
     gWasInWater = gBody.inWater;
+    static float sBubbleTimer = 0.10f;
+    if (gBody.inWater) {
+        sBubbleTimer += dt;
+        if (sBubbleTimer >= 0.10f) {
+            sBubbleTimer = 0;
+            gParticles.SpawnBubbles(gCamera.x + gCamera.fwdX * 0.25f, gCamera.y - 0.12f,
+                                    gCamera.z + gCamera.fwdZ * 0.25f);
+        }
+    } else {
+        sBubbleTimer = 0.10f;
+    }
     if (gSettings.viewBobbing && moving && gBody.onGround && !gBody.flying)
         gCamera.y += sinf(gTimeSec * 9.0f) * 0.05f;
-    if (gSurvival.dead) { SetScreen(gHwnd, Screen::Death); return; }
+    if (gSurvival.dead) { PlayerDied(); return; }
 
     gWorld->Update(gCamera.x, gCamera.z);
     gPlayerResistance.Advance(dt);
@@ -1635,7 +1673,7 @@ static void HandleGameFrame(float dt) {
                 const float scale = distance > 0.001f ? 4.0f / distance : 0;
                 gBody.impulseX = dx * scale; gBody.impulseZ = dz * scale; gBody.vy = 4; gBody.onGround = false;
                 gSound.Play(SND_HURT);
-                if (gSurvival.health == 0) { gSurvival.dead = true; SetScreen(gHwnd, Screen::Death); return; }
+                if (gSurvival.health == 0) { PlayerDied(); return; }
             }
         }
     }
@@ -2109,8 +2147,16 @@ static void DrawHand() {
     vertices.reserve(36);
     const float swing = gPlayer.attackCooldownProgress > 0 ? sinf(gPlayer.attackCooldownProgress * 3.14159265f) : 0.0f;
     const float bob = (fabsf(gBody.vx) + fabsf(gBody.vz) > 0.1f && gBody.onGround) ? sinf(gTimeSec * 5.0f) * 0.4f : 0.0f;
-    const float rot = 0.45f + swing * 0.9f;
-    const float cr = cosf(rot), sr = sinf(rot);
+    // Java renderPlayerArm: the arm enters from the bottom-right corner and
+    // reaches forward-inward (45 deg yaw, ~30 deg pitch) rather than sideways.
+    float armX = -0.45f, armY = 0.30f + swing * 0.95f, armZ = -0.85f;
+    const float armLen = sqrtf(armX * armX + armY * armY + armZ * armZ);
+    armX /= armLen; armY /= armLen; armZ /= armLen;
+    float sideX = -armZ, sideZ = armX;
+    const float sideLen = sqrtf(sideX * sideX + sideZ * sideZ);
+    sideX /= sideLen; sideZ /= sideLen;
+    const float upX = -sideZ * armY, upY = sideZ * armX - sideX * armZ, upZ = sideX * armY;
+    const float shoulderX = 0.52f, shoulderY = -0.60f + bob * 0.010f, shoulderZ = -0.42f;
     const float x = 0, y = -12, z = -2, w = 4, h = 12, d = 4, u = 40, v = 16;
     const float corners[8][3] = {{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
         {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
@@ -2121,11 +2167,15 @@ static void DrawHand() {
     for (int face = 0; face < 6; ++face) {
         for (int index : triangles) {
             const float* p = corners[faces[face][index]];
-            const float ly = p[1] * cr - p[2] * sr;
-            const float lz = p[1] * sr + p[2] * cr;
+            const float lx = (p[0] - 2.0f) / 16.0f;
+            const float ly = (p[1] + 12.0f) / 16.0f;
+            const float lz = p[2] / 16.0f;
             const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
             const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
-            vertices.push_back({(p[0] + 5.5f) / 16, (ly - 5 + bob) / 16, (lz - 9) / 16,
+            vertices.push_back({
+                shoulderX + sideX * lx + armX * ly + upX * lz,
+                shoulderY + armY * ly + upY * lz,
+                shoulderZ + sideZ * lx + armZ * ly + upZ * lz,
                 0, 0, tu / 64, tv / 64, 15, 1, 1, 1});
         }
     }
@@ -2153,14 +2203,20 @@ static void DrawHand() {
             BuildExtrudedItemMesh(gItemPixels[held], local);
         }
         if (!local.empty() && local.size() <= 20000) {
-            const float a = -0.5f + swing * 1.0f;
-            const float ca = cosf(a), sa = sinf(a);
+            // Java held-item display: 45 deg inward yaw, ~-30 deg pitch toward the
+            // camera so the top and two sides of a block read at the tool angle.
+            const float ip = -0.52f - swing * 0.45f;
+            const float iy = 0.785f;
+            const float cp = cosf(ip), sp = sinf(ip);
+            const float cy = cosf(iy), sy = sinf(iy);
             for (MeshVertex& v : local) {
-                const float ry = v.y * ca - v.z * sa;
-                const float rz = v.y * sa + v.z * ca;
-                v.x = v.x + 0.42f;
-                v.y = ry - 0.40f + bob * 0.015f;
-                v.z = rz - 0.62f;
+                const float rx = v.x * cy + v.z * sy;
+                const float rz = -v.x * sy + v.z * cy;
+                const float ry = v.y * cp - rz * sp;
+                const float rz2 = v.y * sp + rz * cp;
+                v.x = rx + 0.34f;
+                v.y = ry - 0.40f + swing * 0.10f + bob * 0.012f;
+                v.z = rz2 - 0.64f - swing * 0.10f;
             }
             void* hd = nullptr;
             if (SUCCEEDED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &hd))) {
@@ -2276,41 +2332,56 @@ static void DrawWorld() {
     gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
     gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
 
-    // Crit particle sweep.
+    // Crit sweep + underwater oxygen bubbles.
     const auto& parts = gParticles.List();
-    if (!parts.empty() && gParticleSRV && gParticleVB) {
-        gRC.device->PSSetShader(gRC.psUI);
-        gRC.device->PSSetShaderResources(0, 1, &gParticleSRV);
-        gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
-        gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
-        MeshVertex verts[MAX_PARTICLES * 6];
-        size_t n = 0;
-        for (const ParticleSystem::Particle& p : parts) {
-            const float s = 0.15f;
+    if (!parts.empty() && gParticleVB) {
+        static MeshVertex critVerts[MAX_PARTICLES * 6];
+        static MeshVertex bubbleVerts[MAX_PARTICLES * 6];
+        size_t cn = 0, bn = 0;
+        auto quad = [](MeshVertex* dst, const ParticleSystem::Particle& p, float s,
+                       float shade, float r, float g, float b) {
             const float rx = gCamera.rightX * s, rz = gCamera.rightZ * s;
-            const float shade = 15.0f * (p.life / p.maxLife);
             const float x0 = p.x - rx, z0 = p.z - rz;
             const float x1 = p.x + rx, z1 = p.z + rz;
             const float y0 = p.y - s, y1 = p.y + s;
             const MeshVertex q[6] = {
-                {x0, y1, z0, 0, 0, 0, 0, shade, 1, 1, 1},
-                {x1, y1, z1, 0, 0, 1, 0, shade, 1, 1, 1},
-                {x1, y0, z1, 0, 0, 1, 1, shade, 1, 1, 1},
-                {x0, y1, z0, 0, 0, 0, 0, shade, 1, 1, 1},
-                {x1, y0, z1, 0, 0, 1, 1, shade, 1, 1, 1},
-                {x0, y0, z0, 0, 0, 0, 1, shade, 1, 1, 1},
+                {x0, y1, z0, 0, 0, 0, 0, shade, r, g, b},
+                {x1, y1, z1, 0, 0, 1, 0, shade, r, g, b},
+                {x1, y0, z1, 0, 0, 1, 1, shade, r, g, b},
+                {x0, y1, z0, 0, 0, 0, 0, shade, r, g, b},
+                {x1, y0, z1, 0, 0, 1, 1, shade, r, g, b},
+                {x0, y0, z0, 0, 0, 0, 1, shade, r, g, b},
             };
-            memcpy(verts + n, q, sizeof(q));
-            n += 6;
+            memcpy(dst, q, sizeof(q));
+        };
+        for (const ParticleSystem::Particle& p : parts) {
+            const float fade = p.life / p.maxLife;
+            if (p.bubble) {
+                if (!gBubbleSRV || bn + 6 > MAX_PARTICLES * 6) continue;
+                quad(bubbleVerts + bn, p, 0.05f, 15.0f * fade, 0.55f, 0.80f, 1.0f);
+                bn += 6;
+            } else {
+                if (!gParticleSRV || cn + 6 > MAX_PARTICLES * 6) continue;
+                quad(critVerts + cn, p, 0.15f, 15.0f * fade, 1.0f, 1.0f, 1.0f);
+                cn += 6;
+            }
         }
-        void* data = nullptr;
-        if (SUCCEEDED(gParticleVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) {
-            memcpy(data, verts, n * sizeof(MeshVertex));
+        gRC.device->PSSetShader(gRC.psUI);
+        gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
+        gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+        const UINT pstride = UINT(sizeof(MeshVertex)), poffset = 0;
+        auto flush = [&](ID3D10ShaderResourceView* srv, const MeshVertex* verts, size_t count) {
+            if (!srv || count == 0) return;
+            gRC.device->PSSetShaderResources(0, 1, &srv);
+            void* data = nullptr;
+            if (FAILED(gParticleVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+            memcpy(data, verts, count * sizeof(MeshVertex));
             gParticleVB->Unmap();
-            const UINT pstride = UINT(sizeof(MeshVertex)), poffset = 0;
             gRC.device->IASetVertexBuffers(0, 1, &gParticleVB, &pstride, &poffset);
-            gRC.device->Draw(UINT(n), 0);
-        }
+            gRC.device->Draw(UINT(count), 0);
+        };
+        flush(gParticleSRV, critVerts, cn);
+        flush(gBubbleSRV, bubbleVerts, bn);
         gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
         gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
     }
@@ -2323,7 +2394,7 @@ static void DrawDebug() {
     gGui.DrawQuad(&gGui.texBlack, 2, 2, 360, 196, 0, 0, 1, 1, 15);
     int y = 6;
     auto row = [&](const char* s) { gGui.DrawText(s, 6, float(y), 2, 15, true); y += 20; };
-    row("Minecraft Potato Edition (DX10 / FL 10_0)");
+    row("Minecraft 26.3 (Java Edition)");
     snprintf(line, sizeof(line), "%.0f fps  (%d chunks, %zu gpu)", double(gFps),
              int(gWorld->ChunkCount()), gGpu.size());
     row(line);
@@ -2537,6 +2608,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             DecodePNGAny(bytes, px, pw, ph)) {
             gParticleSRV = CreateTextureSRV(gRC, px.data(), pw, ph);
         }
+        bytes.clear(); px.clear(); pw = ph = 0;
+        if (gStore.ReadFile("minecraft/textures/particle/bubble.png", bytes) &&
+            DecodePNGAny(bytes, px, pw, ph)) {
+            gBubbleSRV = CreateTextureSRV(gRC, px.data(), pw, ph);
+        }
         D3D10_BUFFER_DESC pbd = {};
         pbd.ByteWidth = MAX_PARTICLES * 6 * UINT(sizeof(MeshVertex));
         pbd.Usage = D3D10_USAGE_DYNAMIC;
@@ -2731,6 +2807,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     gSound.Shutdown();
     gGui.Shutdown();
     SafeRelease(gParticleSRV);
+    SafeRelease(gBubbleSRV);
     SafeRelease(gParticleVB);
     SafeRelease(gWhiteSRV);
     SafeRelease(gOutlineVB);

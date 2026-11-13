@@ -119,7 +119,7 @@ enum MenuAction {
     ACT_PROFILE, ACT_PROFILE_DONE, ACT_PROFILE_CANCEL,
     ACT_SKIN_PREV, ACT_SKIN_NEXT, ACT_SKIN_MODEL,
     ACT_NEW_WORLD, ACT_LOAD_WORLD, ACT_WORLD_PREV, ACT_WORLD_NEXT,
-    ACT_CYCLE_WORLD_TYPE,
+    ACT_CYCLE_WORLD_TYPE, ACT_TOGGLE_CHEATS, ACT_TOGGLE_KEEPINV,
     ACT_WORLD_ROW = 1000
 };
 
@@ -132,6 +132,8 @@ struct WorldCreateInfo {
     int tab = 0;      // 0 Game, 1 World, 2 More
     int difficulty = 2; // Independent of the current world's difficulty
     WorldGenerator generator = WorldGenerator::Climate;
+    bool allowCheats = false;
+    bool keepInventory = false;
 };
 
 // Vanilla-style screens built from real GUI sprites. The 3D background

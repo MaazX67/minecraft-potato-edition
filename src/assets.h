@@ -190,6 +190,11 @@ extern const BlockDef BLOCK_DEFS[BLOCK_COUNT];
 // other sizes are nearest-neighbor resampled. out must hold 16*16*4 bytes.
 bool DecodePNG16(const std::vector<uint8_t>& bytes, uint8_t* out16);
 
+// Slices one 16x16 frame out of a decoded animated texture (vertical strips
+// such as water_still.png 16x512). Static 16x16 input copies through; other
+// sizes are nearest-neighbor resampled. out must hold 16*16*4 bytes.
+void SliceAnimatedFrame(const uint8_t* rgba, int w, int h, int frame, uint8_t* out16);
+
 // Loads an item/block's 16x16 RGBA pixels (frame 0 for animated strips) from
 // the asset store. False if the texture is absent. out must hold 16*16*4 bytes.
 bool LoadItemRGBA(AssetStore& store, uint8_t id, uint8_t* out16);

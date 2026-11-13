@@ -991,6 +991,83 @@ static void TestHeldItemMesh() {
     CHECK(mesh.size() == 3456, "solid 16x16 sprite extrudes to 3456 vertices");
 }
 
+static void TestWaterFrames() {
+    // Synthetic 16x512 strip (32 frames), each frame a flat shade with Java's
+    // baked water alpha (180/255 = 0.706).
+    std::vector<uint8_t> strip(16 * 512 * 4, 0);
+    for (int f = 0; f < 32; ++f) {
+        for (int p = 0; p < 16 * 16; ++p) {
+            uint8_t* px = &strip[(size_t(f) * 16 * 16 + p) * 4];
+            px[0] = px[1] = px[2] = uint8_t(f * 8);
+            px[3] = 180;
+        }
+    }
+    uint8_t out[16 * 16 * 4];
+    SliceAnimatedFrame(strip.data(), 16, 512, 0, out);
+    bool frame0 = true, alphaKept = true;
+    for (int p = 0; p < 16 * 16; ++p) {
+        if (out[p * 4] != 0) frame0 = false;
+        if (out[p * 4 + 3] != 180) alphaKept = false;
+    }
+    CHECK(frame0 && alphaKept, "water strip frame 0 extracts with baked 180 alpha");
+
+    SliceAnimatedFrame(strip.data(), 16, 512, 5, out);
+    bool frame5 = true;
+    for (int p = 0; p < 16 * 16; ++p)
+        if (out[p * 4] != 40) frame5 = false;
+    CHECK(frame5, "water strip frame 5 extracts the matching vertical slice");
+
+    SliceAnimatedFrame(strip.data(), 16, 512, 32, out);
+    bool wrapped = true;
+    for (int p = 0; p < 16 * 16; ++p)
+        if (out[p * 4] != 0) wrapped = false;
+    CHECK(wrapped, "water frame index wraps modulo the strip frame count");
+
+    const uint8_t staticTile[16 * 16 * 4] = {};
+    SliceAnimatedFrame(staticTile, 16, 16, 3, out);
+    CHECK(out[0] == 0 && out[16 * 16 * 4 - 1] == 0, "static 16x16 tiles pass through unchanged");
+}
+
+static void TestWaterShaderPass() {
+    const std::string src(gShaderSource);
+    auto bodyOf = [&](const char* signature) {
+        const size_t start = src.find(signature);
+        if (start == std::string::npos) return std::string();
+        const size_t end = src.find("\n}\n", start);
+        return src.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    };
+    const std::string water = bodyOf("float4 PSMainWater(");
+    CHECK(!water.empty() && water.find("gWaterTime") != std::string::npos,
+          "liquid shader scrolls tile UVs on the shared water clock");
+    CHECK(!water.empty() && water.find("clip(") == std::string::npos,
+          "liquid shader keeps partial alpha instead of opaque clipping");
+    const std::string opaque = bodyOf("float4 PSMain(");
+    CHECK(!opaque.empty() && opaque.find("clip(tex.a - 0.5f)") != std::string::npos,
+          "opaque world pass still alpha-clips cutout blocks");
+}
+
+static void TestBubbleParticles() {
+    ParticleSystem parts;
+    parts.SpawnBubbles(0.0f, 0.0f, 0.0f);
+    const auto& list = parts.List();
+    CHECK(list.size() == 3, "underwater spawn emits three oxygen bubbles");
+    bool rising = !list.empty();
+    for (const ParticleSystem::Particle& p : list)
+        if (!p.bubble || p.vy <= 0.0f) rising = false;
+    CHECK(rising, "bubbles spawn flagged with upward buoyancy");
+    const float y0 = list.empty() ? 0.0f : list[0].y;
+    parts.Update(0.1f);
+    CHECK(!parts.List().empty() && parts.List()[0].y > y0, "bubbles rise over time instead of falling");
+
+    ParticleSystem crit;
+    crit.SpawnCrit(0.0f, 10.0f, 0.0f);
+    crit.Update(0.3f);
+    bool gravity = !crit.List().empty();
+    for (const ParticleSystem::Particle& p : crit.List())
+        if (p.bubble || p.vy > 2.5f) gravity = false;
+    CHECK(gravity, "crit particles still accelerate downward under gravity");
+}
+
 int main() {
     TestShaders();
     TestSkyTimeline();
@@ -1003,6 +1080,9 @@ int main() {
     TestClimateGeneration();
     TestBlockExpansion();
     TestHeldItemMesh();
+    TestWaterFrames();
+    TestWaterShaderPass();
+    TestBubbleParticles();
 
     // --- Perlin determinism and bounds ---
     PerlinNoise a(1337), b(1337), c(7);

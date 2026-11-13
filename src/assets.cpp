@@ -247,23 +247,34 @@ std::vector<std::string> AssetStore::ListPrefix(const std::string& prefix) const
 // PNG decode
 // ---------------------------------------------------------------------------
 
+// Animated Java block textures (water_still.png is a 16x512 vertical strip,
+// 32 frames) are sliced into 16x16 tiles; the world pass scrolls within the
+// tile on the 20 TPS clock.
+void SliceAnimatedFrame(const uint8_t* rgba, int w, int h, int frame, uint8_t* out16) {
+    if (w == ATLAS_TILE && h > ATLAS_TILE) {
+        const int frames = h / ATLAS_TILE;
+        int f = frame % frames;
+        if (f < 0) f += frames;
+        memcpy(out16, rgba + size_t(f) * ATLAS_TILE * size_t(w) * 4, ATLAS_TILE * ATLAS_TILE * 4);
+        return;
+    }
+    if (w == ATLAS_TILE && h == ATLAS_TILE) {
+        memcpy(out16, rgba, ATLAS_TILE * ATLAS_TILE * 4);
+        return;
+    }
+    for (int y = 0; y < ATLAS_TILE; ++y) {
+        for (int x = 0; x < ATLAS_TILE; ++x) {
+            const int sx = x * w / ATLAS_TILE, sy = y * h / ATLAS_TILE;
+            memcpy(out16 + (y * ATLAS_TILE + x) * 4, rgba + (size_t(sy) * w + sx) * 4, 4);
+        }
+    }
+}
+
 bool DecodePNG16(const std::vector<uint8_t>& bytes, uint8_t* out16) {
     int w = 0, h = 0, comp = 0;
     stbi_uc* img = stbi_load_from_memory(bytes.data(), int(bytes.size()), &w, &h, &comp, 4);
     if (!img) return false;
-    if (w == ATLAS_TILE && h == ATLAS_TILE) {
-        memcpy(out16, img, ATLAS_TILE * ATLAS_TILE * 4);
-    } else if (w == ATLAS_TILE && h > ATLAS_TILE) {
-        // Animated strip: frame 0 only.
-        memcpy(out16, img, ATLAS_TILE * ATLAS_TILE * 4);
-    } else {
-        for (int y = 0; y < ATLAS_TILE; ++y) {
-            for (int x = 0; x < ATLAS_TILE; ++x) {
-                const int sx = x * w / ATLAS_TILE, sy = y * h / ATLAS_TILE;
-                memcpy(out16 + (y * ATLAS_TILE + x) * 4, img + (sy * w + sx) * 4, 4);
-            }
-        }
-    }
+    SliceAnimatedFrame(img, w, h, 0, out16);
     stbi_image_free(img);
     return true;
 }

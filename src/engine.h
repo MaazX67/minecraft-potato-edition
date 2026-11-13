@@ -336,9 +336,11 @@ public:
         float x, y, z;
         float vx, vy, vz;
         float life, maxLife;
+        bool bubble = false;
     };
 
     void SpawnCrit(float x, float y, float z);
+    void SpawnBubbles(float x, float y, float z);
     void Update(float dt);
     const std::vector<Particle>& List() const { return mParticles; }
 
