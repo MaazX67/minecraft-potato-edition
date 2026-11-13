@@ -901,13 +901,13 @@ static void TestClimateGeneration() {
 }
 
 static void TestBlockExpansion() {
-    CHECK(BLOCK_COUNT == 105 && ITEM_STICK == 128 && ITEM_RAW_COPPER == 170,
-          "block registry grows to 105 entries with items relocated above the block range");
+    CHECK(BLOCK_COUNT == 125 && ITEM_STICK == 128 && ITEM_RAW_COPPER == 170,
+          "block registry grows to 125 entries with items relocated above the block range");
     bool solid = true;
     for (int b = BLOCK_DEEPSLATE; b < BLOCK_COUNT; ++b) {
         if (BLOCK_FLAGS[b] != (BF_SOLID | BF_OPAQUE) || !BLOCK_DEFS[b].name || !BLOCK_DEFS[b].side) solid = false;
     }
-    CHECK(solid, "all 55 added blocks are solid opaque cubes with texture definitions");
+    CHECK(solid, "all 75 added blocks are solid opaque cubes with texture definitions");
     CHECK(BlockDrops(BLOCK_DEEPSLATE, ITEM_DIAMOND_PICKAXE).id == BLOCK_COBBLED_DEEPSLATE &&
           BlockDrops(BLOCK_DEEPSLATE_DIAMOND_ORE, ITEM_IRON_PICKAXE).id == ITEM_DIAMOND &&
           BlockDrops(BLOCK_DEEPSLATE_DIAMOND_ORE, ITEM_STONE_PICKAXE).Empty() &&
@@ -929,6 +929,14 @@ static void TestBlockExpansion() {
           CanHarvest(BLOCK_NETHERRACK, ITEM_WOOD_PICKAXE) &&
           BlockDrops(BLOCK_PURPUR_BLOCK, ITEM_WOOD_PICKAXE).id == BLOCK_PURPUR_BLOCK,
           "wool/glowstone/soul sand break by hand while netherrack needs a pickaxe");
+    CHECK(BlockDrops(BLOCK_CRYING_OBSIDIAN, ITEM_DIAMOND_PICKAXE).id == BLOCK_CRYING_OBSIDIAN &&
+          BlockDrops(BLOCK_CRYING_OBSIDIAN, ITEM_IRON_PICKAXE).Empty() &&
+          BlockDrops(BLOCK_ANCIENT_DEBRIS, ITEM_DIAMOND_PICKAXE).id == BLOCK_ANCIENT_DEBRIS &&
+          BlockDrops(BLOCK_ANCIENT_DEBRIS, ITEM_IRON_PICKAXE).Empty() &&
+          BlockDrops(BLOCK_END_STONE, ITEM_WOOD_PICKAXE).id == BLOCK_END_STONE &&
+          CanHarvest(BLOCK_SEA_LANTERN, 0) && CanHarvest(BLOCK_MELON, 0) &&
+          CanHarvest(BLOCK_RED_SAND, 0) && BlockDrops(BLOCK_PRISMARINE, ITEM_WOOD_PICKAXE).id == BLOCK_PRISMARINE,
+          "second palette batch enforces diamond tier for crying obsidian/ancient debris and hand-breaking for sea lantern/melon/red sand");
     const uint32_t seed = 1337;
     PerlinNoise noise(seed);
     std::vector<uint8_t> blocks(CHUNK_VOL);

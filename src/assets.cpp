@@ -387,6 +387,26 @@ const BlockDef BLOCK_DEFS[BLOCK_COUNT] = {
     {"dripstone_block",       "dripstone_block",        "dripstone_block",        "dripstone_block"},
     {"moss_block",            "moss_block",             "moss_block",             "moss_block"},
     {"purpur_block",          "purpur_block",           "purpur_block",           "purpur_block"},
+    {"mossy_stone_bricks",    "mossy_stone_bricks",     "mossy_stone_bricks",     "mossy_stone_bricks"},
+    {"cracked_stone_bricks",  "cracked_stone_bricks",   "cracked_stone_bricks",   "cracked_stone_bricks"},
+    {"chiseled_stone_bricks", "chiseled_stone_bricks",  "chiseled_stone_bricks",  "chiseled_stone_bricks"},
+    {"red_sandstone",         "red_sandstone_top",      "red_sandstone",          "red_sandstone_bottom"},
+    {"red_sand",              "red_sand",               "red_sand",               "red_sand"},
+    {"prismarine",            "prismarine",             "prismarine",             "prismarine"},
+    {"prismarine_bricks",     "prismarine_bricks",      "prismarine_bricks",      "prismarine_bricks"},
+    {"dark_prismarine",       "dark_prismarine",        "dark_prismarine",        "dark_prismarine"},
+    {"sea_lantern",           "sea_lantern",            "sea_lantern",            "sea_lantern"},
+    {"end_stone",             "end_stone",              "end_stone",              "end_stone"},
+    {"end_stone_bricks",      "end_stone_bricks",       "end_stone_bricks",       "end_stone_bricks"},
+    {"purpur_pillar",         "purpur_pillar_top",      "purpur_pillar_side",     "purpur_pillar_top"},
+    {"nether_wart_block",     "nether_wart_block",      "nether_wart_block",      "nether_wart_block"},
+    {"warped_wart_block",     "warped_wart_block",      "warped_wart_block",      "warped_wart_block"},
+    {"shroomlight",           "shroomlight",            "shroomlight",            "shroomlight"},
+    {"crying_obsidian",       "crying_obsidian",        "crying_obsidian",        "crying_obsidian"},
+    {"ancient_debris",        "ancient_debris_top",     "ancient_debris_side",    "ancient_debris_top"},
+    {"bone_block",            "bone_block_top",         "bone_block_side",        "bone_block_top"},
+    {"hay_block",             "hay_block_top",          "hay_block_side",         "hay_block_top"},
+    {"melon",                 "melon_top",              "melon_side",             "melon_top"},
 };
 
 const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
@@ -495,6 +515,26 @@ const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
     BF_SOLID | BF_OPAQUE,                           // dripstone_block
     BF_SOLID | BF_OPAQUE,                           // moss_block
     BF_SOLID | BF_OPAQUE,                           // purpur_block
+    BF_SOLID | BF_OPAQUE,                           // mossy_stone_bricks
+    BF_SOLID | BF_OPAQUE,                           // cracked_stone_bricks
+    BF_SOLID | BF_OPAQUE,                           // chiseled_stone_bricks
+    BF_SOLID | BF_OPAQUE,                           // red_sandstone
+    BF_SOLID | BF_OPAQUE,                           // red_sand
+    BF_SOLID | BF_OPAQUE,                           // prismarine
+    BF_SOLID | BF_OPAQUE,                           // prismarine_bricks
+    BF_SOLID | BF_OPAQUE,                           // dark_prismarine
+    BF_SOLID | BF_OPAQUE,                           // sea_lantern
+    BF_SOLID | BF_OPAQUE,                           // end_stone
+    BF_SOLID | BF_OPAQUE,                           // end_stone_bricks
+    BF_SOLID | BF_OPAQUE,                           // purpur_pillar
+    BF_SOLID | BF_OPAQUE,                           // nether_wart_block
+    BF_SOLID | BF_OPAQUE,                           // warped_wart_block
+    BF_SOLID | BF_OPAQUE,                           // shroomlight
+    BF_SOLID | BF_OPAQUE,                           // crying_obsidian
+    BF_SOLID | BF_OPAQUE,                           // ancient_debris
+    BF_SOLID | BF_OPAQUE,                           // bone_block
+    BF_SOLID | BF_OPAQUE,                           // hay_block
+    BF_SOLID | BF_OPAQUE,                           // melon
 };
 
 static const ToolDef TOOLS[] = {

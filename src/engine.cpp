@@ -382,10 +382,14 @@ static ToolKind EffectiveTool(uint8_t b) {
     if ((b >= BLOCK_DEEPSLATE && b <= BLOCK_QUARTZ_BLOCK && b != BLOCK_SOUL_SAND && b != BLOCK_GLOWSTONE) ||
         b == BLOCK_TERRACOTTA || b == BLOCK_AMETHYST_BLOCK || b == BLOCK_DRIPSTONE_BLOCK || b == BLOCK_PURPUR_BLOCK)
         return ToolKind::Pickaxe;
+    if ((b >= BLOCK_MOSSY_STONE_BRICKS && b <= BLOCK_CHISELED_STONE_BRICKS) || b == BLOCK_RED_SANDSTONE ||
+        (b >= BLOCK_PRISMARINE && b <= BLOCK_DARK_PRISMARINE) || (b >= BLOCK_END_STONE && b <= BLOCK_PURPUR_PILLAR) ||
+        b == BLOCK_CRYING_OBSIDIAN || b == BLOCK_ANCIENT_DEBRIS || b == BLOCK_BONE_BLOCK)
+        return ToolKind::Pickaxe;
     if (b == BLOCK_PLANKS || b == BLOCK_LOG || (b >= BLOCK_SPRUCE_PLANKS && b <= BLOCK_BIRCH_LOG) ||
         b == BLOCK_CRAFTING_TABLE || b == BLOCK_BOOKSHELF) return ToolKind::Axe;
     if (b == BLOCK_DIRT || b == BLOCK_GRASS || b == BLOCK_SAND || b == BLOCK_GRAVEL ||
-        b == BLOCK_CLAY || b == BLOCK_SNOW || b == BLOCK_SOUL_SAND) return ToolKind::Shovel;
+        b == BLOCK_CLAY || b == BLOCK_SNOW || b == BLOCK_SOUL_SAND || b == BLOCK_RED_SAND) return ToolKind::Shovel;
     return ToolKind::None;
 }
 
@@ -423,6 +427,20 @@ float BlockHardness(uint8_t b) {
     if (b >= BLOCK_ORANGE_WOOL && b <= BLOCK_LIGHT_GRAY_WOOL) return 0.8f;
     if (b == BLOCK_MOSS_BLOCK) return 0.1f;
     if (b == BLOCK_AMETHYST_BLOCK || b == BLOCK_DRIPSTONE_BLOCK || b == BLOCK_PURPUR_BLOCK) return 1.5f;
+    if (b >= BLOCK_MOSSY_STONE_BRICKS && b <= BLOCK_CHISELED_STONE_BRICKS) return 1.5f;
+    if (b == BLOCK_RED_SANDSTONE) return 0.8f;
+    if (b == BLOCK_RED_SAND) return 0.5f;
+    if (b >= BLOCK_PRISMARINE && b <= BLOCK_DARK_PRISMARINE) return 1.5f;
+    if (b == BLOCK_SEA_LANTERN) return 0.3f;
+    if (b >= BLOCK_END_STONE && b <= BLOCK_END_STONE_BRICKS) return 3;
+    if (b == BLOCK_PURPUR_PILLAR) return 1.5f;
+    if (b >= BLOCK_NETHER_WART_BLOCK && b <= BLOCK_WARPED_WART_BLOCK) return 1;
+    if (b == BLOCK_SHROOMLIGHT) return 1;
+    if (b == BLOCK_CRYING_OBSIDIAN) return 50;
+    if (b == BLOCK_ANCIENT_DEBRIS) return 30;
+    if (b == BLOCK_BONE_BLOCK) return 2;
+    if (b == BLOCK_HAY_BLOCK) return 0.5f;
+    if (b == BLOCK_MELON) return 1;
     return 0.5f;
 }
 
@@ -431,7 +449,8 @@ bool CanHarvest(uint8_t b, uint8_t item) {
     if (EffectiveTool(b) != ToolKind::Pickaxe || b == BLOCK_ICE) return true;
     const ToolDef* tool = FindTool(item);
     const int required =
-        (b == BLOCK_OBSIDIAN || b == BLOCK_NETHERITE_BLOCK) ? 3 :
+        (b == BLOCK_OBSIDIAN || b == BLOCK_NETHERITE_BLOCK || b == BLOCK_CRYING_OBSIDIAN ||
+         b == BLOCK_ANCIENT_DEBRIS) ? 3 :
         (b == BLOCK_DIAMOND_ORE || b == BLOCK_GOLD_ORE || b == BLOCK_REDSTONE_ORE || b == BLOCK_EMERALD_ORE ||
          b == BLOCK_DEEPSLATE_GOLD_ORE || b == BLOCK_DEEPSLATE_DIAMOND_ORE || b == BLOCK_DEEPSLATE_REDSTONE_ORE ||
          b == BLOCK_DEEPSLATE_EMERALD_ORE || b == BLOCK_GOLD_BLOCK || b == BLOCK_DIAMOND_BLOCK ||

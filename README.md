@@ -32,7 +32,7 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 - Local/offline profiles with username, nine installed default skins, wide/slim models, and a textured inventory preview; no Microsoft account integration
 - Survival inventory and crafting table: stack counts, splitting, shift transfers, ingredient consumption, and safe return of cursor/crafting items
 - HUD with hearts, hunger, hotbar and the attack-cooldown indicator
-- 105 blocks using the real vanilla textures, including the deepslate family, deepslate/copper/emerald ores, mineral storage blocks, nether/basalt/blackstone/quartz blocks, terracotta and the full wool palette
+- 125 blocks using the real vanilla textures, including the deepslate family, deepslate/copper/emerald ores, mineral storage blocks, nether/basalt/blackstone/quartz blocks, terracotta, the full wool palette, stone-brick variants, red sandstone, prismarine, End stone/purpur, crying obsidian/ancient debris and bone/hay/melon blocks; the creative picker scrolls with the mouse wheel to fit them all
 - Headless regression tests run on every cloud build, covering camera frusta, mesh orientation, item conservation, crafting and survival rules
 - Native Windows smoke tests exercise real clicks and compare screenshot sidecars against expected inventory state
 
