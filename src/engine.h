@@ -192,6 +192,7 @@ struct PlayerBody {
     bool sprintLatch = false;
     bool onGround = false, flying = true, sprinting = false, sneaking = false;
     bool inWater = false;
+    bool elytraEquipped = false, gliding = false;
     static constexpr float HALF = 0.3f, HEIGHT = 1.8f, EYE = 1.62f;
 
     void Update(const InputState& in, float dt, FlyCamera& cam,
@@ -226,6 +227,16 @@ float MiningSeconds(uint8_t block, uint8_t item, bool onGround = true, bool unde
 bool CanHarvest(uint8_t block, uint8_t item);
 ItemSlot BlockDrops(uint8_t block, uint8_t item);
 bool WearTool(ItemSlot& slot, int amount);
+
+struct FurnaceState {
+    ItemSlot input, fuel, output;
+    float burn = 0, burnTotal = 0, cook = 0;
+    int x = 0, y = 0, z = 0;
+};
+
+struct ChestState {
+    ItemSlot slots[27];
+};
 
 struct SurvivalState {
     int health = 20, hunger = 20;

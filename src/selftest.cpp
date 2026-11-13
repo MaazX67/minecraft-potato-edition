@@ -27,7 +27,8 @@ static void TestShaders() {
     const Shader shaders[] = {
         {"VSMain", "vs_4_0"}, {"PSMain", "ps_4_0"},
         {"PSMainUI", "ps_4_0"}, {"PSMainSky", "ps_4_0"},
-        {"PSMainWorldSky", "ps_4_0"}, {"PSMainCelestial", "ps_4_0"}, {"PSMainEntity", "ps_4_0"}
+        {"PSMainWorldSky", "ps_4_0"}, {"PSMainCelestial", "ps_4_0"}, {"PSMainEntity", "ps_4_0"},
+        {"PSMainCrack", "ps_4_0"}
     };
     for (const Shader& shader : shaders) {
         ID3DBlob* code = nullptr;
@@ -435,10 +436,14 @@ static void TestToolDefinitions() {
     bool itemRanges = !IsValidItem(-1) && !IsValidItem(256);
     for (int id = 0; id < 256; ++id) {
         const bool tool = id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD;
-        const bool expected = id < BLOCK_COUNT || id == ITEM_STICK || tool ||
+        const bool armor = (id >= ITEM_LEATHER_HELMET && id <= ITEM_NETHERITE_BOOTS) || id == ITEM_ELYTRA;
+        const bool extra = id >= ITEM_ELYTRA && id <= ITEM_COPPER_INGOT;
+        const bool expected = id < BLOCK_COUNT || id == ITEM_STICK || tool || armor || extra ||
                               (id >= ITEM_COAL && id <= ITEM_RAW_COPPER);
         if (IsValidItem(id) != expected || (FindTool(uint8_t(id)) != nullptr) != tool) itemRanges = false;
-        if (expected && ItemStackLimit(uint8_t(id)) != (tool ? 1 : 64)) itemRanges = false;
+        if ((FindArmor(uint8_t(id)) != nullptr) != armor) itemRanges = false;
+        const int limit = (tool || armor || id == ITEM_FLINT_AND_STEEL) ? 1 : 64;
+        if (expected && ItemStackLimit(uint8_t(id)) != limit) itemRanges = false;
         if (expected && std::string(ItemName(uint8_t(id))) == "unknown") itemRanges = false;
     }
     CHECK(itemRanges, "block, stick, tool and material ID ranges reject gaps and keep their stack limits");
@@ -659,7 +664,7 @@ static void TestMiningAndDurability() {
     bool finite = true;
     for (int block = 0; block < BLOCK_COUNT; ++block) {
         const float seconds = MiningSeconds(uint8_t(block), ITEM_NETHERITE_PICKAXE);
-        if (block == BLOCK_WATER || block == BLOCK_BEDROCK) {
+        if (block == BLOCK_WATER || block == BLOCK_BEDROCK || block == BLOCK_LAVA || block == BLOCK_PORTAL) {
             if (!std::isinf(seconds) || CanHarvest(uint8_t(block), ITEM_NETHERITE_PICKAXE)) finite = false;
         } else if (!std::isfinite(seconds) || seconds < 0) finite = false;
     }
@@ -825,12 +830,12 @@ static bool ClimateColumnsValid(const std::vector<uint8_t>& blocks, const Perlin
 }
 
 static void TestClimateGeneration() {
-    const WorldGenerator generators[] = {WorldGenerator::Legacy, WorldGenerator::Climate, WorldGenerator::Flat};
-    const char* names[] = {"potato-perlin-v1", "potato-climate-v2", "potato-flat-v1"};
-    const char* aliases[] = {"legacy", "climate", "flat"};
+    const WorldGenerator generators[] = {WorldGenerator::Legacy, WorldGenerator::Climate, WorldGenerator::Flat, WorldGenerator::Nether};
+    const char* names[] = {"potato-perlin-v1", "potato-climate-v2", "potato-flat-v1", "potato-nether-v1"};
+    const char* aliases[] = {"legacy", "climate", "flat", "nether"};
     bool generatorIds = true;
-    for (int i = 0; i < 3; ++i) {
-        WorldGenerator parsed = generators[(i + 1) % 3];
+    for (int i = 0; i < 4; ++i) {
+        WorldGenerator parsed = generators[(i + 1) % 4];
         if (std::string(GeneratorName(generators[i])) != names[i] || !ParseGenerator(names[i], parsed) || parsed != generators[i] ||
             !ParseGenerator(aliases[i], parsed) || parsed != generators[i]) generatorIds = false;
     }
@@ -901,10 +906,10 @@ static void TestClimateGeneration() {
 }
 
 static void TestBlockExpansion() {
-    CHECK(BLOCK_COUNT == 125 && ITEM_STICK == 128 && ITEM_RAW_COPPER == 170,
-          "block registry grows to 125 entries with items relocated above the block range");
+    CHECK(BLOCK_COUNT == 138 && ITEM_STICK == 128 && ITEM_RAW_COPPER == 170,
+          "block registry grows to 138 entries with items relocated above the block range");
     bool solid = true;
-    for (int b = BLOCK_DEEPSLATE; b < BLOCK_COUNT; ++b) {
+    for (int b = BLOCK_DEEPSLATE; b < BLOCK_LAVA; ++b) {
         if (BLOCK_FLAGS[b] != (BF_SOLID | BF_OPAQUE) || !BLOCK_DEFS[b].name || !BLOCK_DEFS[b].side) solid = false;
     }
     CHECK(solid, "all 75 added blocks are solid opaque cubes with texture definitions");

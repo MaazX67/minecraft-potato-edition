@@ -327,6 +327,20 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
         if (onGround && in.keys[VK_SPACE]) { vy = 8.94f; onGround = false; }
     }
 
+    // Elytra: holding space while airborne steers along the look vector.
+    gliding = false;
+    if (elytraEquipped && !flying && !inWater && !onGround && in.keys[VK_SPACE] && vy < 1.0f) {
+        gliding = true;
+        const float cp = cosf(cam.pitch);
+        const float gx = sy * cp, gy = sinf(cam.pitch), gz = -cy * cp;
+        float spd = sqrtf(vx * vx + vy * vy + vz * vz) + 7.0f * dt;
+        if (spd < 7.0f) spd = 7.0f;
+        if (spd > 22.0f) spd = 22.0f;
+        vx = gx * spd; vy = gy * spd; vz = gz * spd;
+        if (vy < -30.0f) vy = -30.0f;
+        if (vy > 8.0f) vy = 8.0f;
+    }
+
     // Substep the integration so terminal-velocity falls cannot tunnel.
     const float maxV = std::max({fabsf(vx), fabsf(vy), fabsf(vz)});
     int steps = 1 + int(maxV * dt / 0.4f);
@@ -394,7 +408,7 @@ static ToolKind EffectiveTool(uint8_t b) {
 }
 
 float BlockHardness(uint8_t b) {
-    if (b == BLOCK_BEDROCK || b == BLOCK_WATER) return -1;
+    if (b == BLOCK_BEDROCK || b == BLOCK_WATER || b == BLOCK_LAVA || b == BLOCK_PORTAL) return -1;
     if (b == BLOCK_AIR || b == BLOCK_TNT) return 0;
     if (b == BLOCK_OBSIDIAN) return 50;
     if (b >= BLOCK_COAL_ORE && b <= BLOCK_LAPIS_ORE) return 3;
@@ -441,6 +455,14 @@ float BlockHardness(uint8_t b) {
     if (b == BLOCK_BONE_BLOCK) return 2;
     if (b == BLOCK_HAY_BLOCK) return 0.5f;
     if (b == BLOCK_MELON) return 1;
+    if (b == BLOCK_NETHER_QUARTZ_ORE || b == BLOCK_NETHER_GOLD_ORE) return 3;
+    if (b == BLOCK_SOUL_SOIL) return 0.5f;
+    if (b == BLOCK_CRIMSON_STEM || b == BLOCK_WARPED_STEM ||
+        b == BLOCK_CRIMSON_PLANKS || b == BLOCK_WARPED_PLANKS) return 2;
+    if (b == BLOCK_CHERRY_LOG) return 2;
+    if (b == BLOCK_CHERRY_LEAVES) return 0.2f;
+    if (b == BLOCK_CHERRY_PLANKS) return 2;
+    if (b == BLOCK_CHEST) return 2.5f;
     return 0.5f;
 }
 

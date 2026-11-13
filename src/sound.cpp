@@ -38,15 +38,15 @@ bool SoundEngine::Init(AssetStore& store) {
     for (const std::string& name : dig) {
         if (!EndsWith(name, ".ogg")) continue;
         SoundCat cat = SND_COUNT;
-        if (name.find("stone") != std::string::npos) cat = SND_STONE;
-        else if (name.find("gravel") != std::string::npos) cat = SND_GRAVEL;
-        else if (name.find("grass") != std::string::npos) cat = SND_GRASS;
-        else if (name.find("dirt") != std::string::npos) cat = SND_DIRT;
-        else if (name.find("wood") != std::string::npos) cat = SND_WOOD;
-        else if (name.find("sand") != std::string::npos) cat = SND_SAND;
-        else if (name.find("glass") != std::string::npos) cat = SND_GLASS;
-        else if (name.find("cloth") != std::string::npos) cat = SND_WOOL;
-        else if (name.find("snow") != std::string::npos) cat = SND_SNOW;
+        if (name.find("dig/stone") != std::string::npos) cat = SND_STONE;
+        else if (name.find("dig/gravel") != std::string::npos) cat = SND_GRAVEL;
+        else if (name.find("dig/grass") != std::string::npos) cat = SND_GRASS;
+        else if (name.find("dig/dirt") != std::string::npos) cat = SND_DIRT;
+        else if (name.find("dig/wood") != std::string::npos) cat = SND_WOOD;
+        else if (name.find("dig/sand") != std::string::npos) cat = SND_SAND;
+        else if (name.find("dig/glass") != std::string::npos) cat = SND_GLASS;
+        else if (name.find("dig/cloth") != std::string::npos) cat = SND_WOOL;
+        else if (name.find("dig/snow") != std::string::npos) cat = SND_SNOW;
         if (cat == SND_COUNT) continue;
         if (mNext[cat] >= 4) continue; // vanilla has 4 variants per material
         ++mNext[cat];
@@ -64,11 +64,13 @@ bool SoundEngine::Init(AssetStore& store) {
     for (const std::string& name : step) {
         if (!EndsWith(name, ".ogg")) continue;
         SoundCat cat = SND_COUNT;
-        if (name.find("grass") != std::string::npos) cat = SND_STEP_GRASS;
-        else if (name.find("stone") != std::string::npos) cat = SND_STEP_STONE;
-        else if (name.find("wood") != std::string::npos) cat = SND_STEP_WOOD;
-        else if (name.find("gravel") != std::string::npos) cat = SND_STEP_GRAVEL;
-        else if (name.find("sand") != std::string::npos) cat = SND_STEP_SAND;
+        if (name.find("step/grass") != std::string::npos) cat = SND_STEP_GRASS;
+        else if (name.find("step/stone") != std::string::npos) cat = SND_STEP_STONE;
+        else if (name.find("step/wood") != std::string::npos) cat = SND_STEP_WOOD;
+        else if (name.find("step/gravel") != std::string::npos) cat = SND_STEP_GRAVEL;
+        else if (name.find("step/sand") != std::string::npos) cat = SND_STEP_SAND;
+        else if (name.find("step/snow") != std::string::npos) cat = SND_STEP_SNOW;
+        else if (name.find("step/cloth") != std::string::npos) cat = SND_STEP_WOOL;
         if (cat == SND_COUNT || mNext[cat] >= 4) continue;
         ++mNext[cat];
         candidates.push_back({name, cat});
@@ -220,6 +222,8 @@ void SoundEngine::Dispatch(const PlayRequest& req) {
             case SND_STEP_WOOD: cat = SND_WOOD; break;
             case SND_STEP_GRAVEL: cat = SND_GRAVEL; break;
             case SND_STEP_SAND: cat = SND_SAND; break;
+            case SND_STEP_SNOW: cat = SND_SNOW; break;
+            case SND_STEP_WOOL: cat = SND_WOOL; break;
             default: break;
         }
     }
@@ -256,7 +260,7 @@ void SoundEngine::Dispatch(const PlayRequest& req) {
     if (pitch == 1.0f) {
         switch (cat) {
             case SND_STEP_GRASS: case SND_STEP_STONE: case SND_STEP_WOOD:
-            case SND_STEP_GRAVEL: case SND_STEP_SAND:
+            case SND_STEP_GRAVEL: case SND_STEP_SAND: case SND_STEP_SNOW: case SND_STEP_WOOL:
                 volume *= 0.3f; pitch = 0.9f + r * 0.2f; break;
             case SND_STONE: case SND_GRASS: case SND_DIRT: case SND_WOOD:
             case SND_SAND: case SND_GRAVEL: case SND_GLASS: case SND_WOOL: case SND_SNOW:
@@ -308,14 +312,22 @@ SoundCat SoundEngine::BlockSound(uint8_t block) {
         case BLOCK_DIRT: return SND_DIRT;
         case BLOCK_PLANKS:
         case BLOCK_LOG: case BLOCK_SPRUCE_PLANKS: case BLOCK_BIRCH_PLANKS:
-        case BLOCK_SPRUCE_LOG: case BLOCK_BIRCH_LOG: case BLOCK_CRAFTING_TABLE: case BLOCK_BOOKSHELF: return SND_WOOD;
+        case BLOCK_SPRUCE_LOG: case BLOCK_BIRCH_LOG: case BLOCK_CRAFTING_TABLE: case BLOCK_BOOKSHELF:
+        case BLOCK_CHERRY_LOG: case BLOCK_CHERRY_PLANKS:
+        case BLOCK_CRIMSON_STEM: case BLOCK_WARPED_STEM:
+        case BLOCK_CRIMSON_PLANKS: case BLOCK_WARPED_PLANKS: return SND_WOOD;
         case BLOCK_SAND: return SND_SAND;
         case BLOCK_GRAVEL: return SND_GRAVEL;
         case BLOCK_GLASS: case BLOCK_ICE: return SND_GLASS;
         case BLOCK_SNOW: return SND_SNOW;
         case BLOCK_WHITE_WOOL: case BLOCK_RED_WOOL: case BLOCK_BLUE_WOOL:
-        case BLOCK_LIME_WOOL: case BLOCK_YELLOW_WOOL: case BLOCK_BLACK_WOOL: return SND_WOOL;
-        case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES: return SND_GRASS;
+        case BLOCK_LIME_WOOL: case BLOCK_YELLOW_WOOL: case BLOCK_BLACK_WOOL:
+        case BLOCK_ORANGE_WOOL: case BLOCK_MAGENTA_WOOL: case BLOCK_LIGHT_BLUE_WOOL:
+        case BLOCK_GREEN_WOOL: case BLOCK_BROWN_WOOL: case BLOCK_CYAN_WOOL:
+        case BLOCK_PURPLE_WOOL: case BLOCK_PINK_WOOL: case BLOCK_GRAY_WOOL:
+        case BLOCK_LIGHT_GRAY_WOOL: return SND_WOOL;
+        case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES:
+        case BLOCK_CHERRY_LEAVES: return SND_GRASS;
         default: return SND_STONE;
     }
 }
@@ -326,13 +338,17 @@ SoundCat SoundEngine::StepSound(uint8_t block) {
         case BLOCK_DIRT: return SND_STEP_GRASS;
         case BLOCK_PLANKS:
         case BLOCK_LOG: case BLOCK_SPRUCE_PLANKS: case BLOCK_BIRCH_PLANKS:
-        case BLOCK_SPRUCE_LOG: case BLOCK_BIRCH_LOG: case BLOCK_CRAFTING_TABLE: case BLOCK_BOOKSHELF: return SND_STEP_WOOD;
+        case BLOCK_SPRUCE_LOG: case BLOCK_BIRCH_LOG: case BLOCK_CRAFTING_TABLE: case BLOCK_BOOKSHELF:
+        case BLOCK_CHERRY_LOG: case BLOCK_CHERRY_PLANKS:
+        case BLOCK_CRIMSON_STEM: case BLOCK_WARPED_STEM:
+        case BLOCK_CRIMSON_PLANKS: case BLOCK_WARPED_PLANKS: return SND_STEP_WOOD;
         case BLOCK_SAND: return SND_STEP_SAND;
         case BLOCK_GRAVEL: return SND_STEP_GRAVEL;
-        case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES: return SND_STEP_GRASS;
-        case BLOCK_SNOW: return SND_SNOW;
+        case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES:
+        case BLOCK_CHERRY_LEAVES: return SND_STEP_GRASS;
+        case BLOCK_SNOW: return SND_STEP_SNOW;
         case BLOCK_WHITE_WOOL: case BLOCK_RED_WOOL: case BLOCK_BLUE_WOOL:
-        case BLOCK_LIME_WOOL: case BLOCK_YELLOW_WOOL: case BLOCK_BLACK_WOOL: return SND_WOOL;
+        case BLOCK_LIME_WOOL: case BLOCK_YELLOW_WOOL: case BLOCK_BLACK_WOOL: return SND_STEP_WOOL;
         default: return SND_STEP_STONE;
     }
 }

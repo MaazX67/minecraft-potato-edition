@@ -407,6 +407,19 @@ const BlockDef BLOCK_DEFS[BLOCK_COUNT] = {
     {"bone_block",            "bone_block_top",         "bone_block_side",        "bone_block_top"},
     {"hay_block",             "hay_block_top",          "hay_block_side",         "hay_block_top"},
     {"melon",                 "melon_top",              "melon_side",             "melon_top"},
+    {"lava",                  "lava_still",             "lava_still",             "lava_still"},
+    {"nether_quartz_ore",     "nether_quartz_ore",      "nether_quartz_ore",      "nether_quartz_ore"},
+    {"nether_gold_ore",       "nether_gold_ore",        "nether_gold_ore",        "nether_gold_ore"},
+    {"nether_portal",         "nether_portal",          "nether_portal",          "nether_portal"},
+    {"soul_soil",             "soul_soil",              "soul_soil",              "soul_soil"},
+    {"crimson_stem",          "crimson_stem_top",       "crimson_stem",           "crimson_stem_top"},
+    {"warped_stem",           "warped_stem_top",        "warped_stem",            "warped_stem_top"},
+    {"crimson_planks",        "crimson_planks",         "crimson_planks",         "crimson_planks"},
+    {"warped_planks",         "warped_planks",          "warped_planks",          "warped_planks"},
+    {"cherry_log",            "cherry_log_top",         "cherry_log",             "cherry_log_top"},
+    {"cherry_leaves",         "cherry_leaves",          "cherry_leaves",          "cherry_leaves"},
+    {"cherry_planks",         "cherry_planks",          "cherry_planks",          "cherry_planks"},
+    {"chest",                 "chest_top",              "chest_side",             "chest_bottom"},
 };
 
 const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
@@ -535,6 +548,19 @@ const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
     BF_SOLID | BF_OPAQUE,                           // bone_block
     BF_SOLID | BF_OPAQUE,                           // hay_block
     BF_SOLID | BF_OPAQUE,                           // melon
+    BF_LIQUID,                                      // lava
+    BF_SOLID | BF_OPAQUE,                           // nether_quartz_ore
+    BF_SOLID | BF_OPAQUE,                           // nether_gold_ore
+    BF_CUTOUT,                                      // nether_portal
+    BF_SOLID | BF_OPAQUE,                           // soul_soil
+    BF_SOLID | BF_OPAQUE,                           // crimson_stem
+    BF_SOLID | BF_OPAQUE,                           // warped_stem
+    BF_SOLID | BF_OPAQUE,                           // crimson_planks
+    BF_SOLID | BF_OPAQUE                            // warped_planks
+    , BF_SOLID | BF_OPAQUE                          // cherry_log
+    , BF_SOLID | BF_CUTOUT                          // cherry_leaves
+    , BF_SOLID | BF_OPAQUE                          // cherry_planks
+    , BF_SOLID | BF_OPAQUE                          // chest
 };
 
 static const ToolDef TOOLS[] = {
@@ -585,6 +611,10 @@ static const ArmorDef ARMOR[] = {
 };
 
 const ArmorDef* FindArmor(uint8_t id) {
+    if (id == ITEM_ELYTRA) {
+        static const ArmorDef elytra{"elytra", 1, 0, 0, 432};
+        return &elytra;
+    }
     return id >= ITEM_LEATHER_HELMET && id <= ITEM_NETHERITE_BOOTS ? &ARMOR[id - ITEM_LEATHER_HELMET] : nullptr;
 }
 
@@ -592,7 +622,8 @@ bool IsValidItem(int id) {
     return (id >= 0 && id < BLOCK_COUNT) || id == ITEM_STICK ||
         (id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD) ||
         (id >= ITEM_COAL && id <= ITEM_RAW_COPPER) ||
-        (id >= ITEM_LEATHER_HELMET && id <= ITEM_NETHERITE_BOOTS);
+        (id >= ITEM_LEATHER_HELMET && id <= ITEM_NETHERITE_BOOTS) ||
+        (id >= ITEM_ELYTRA && id <= ITEM_COPPER_INGOT);
 }
 
 const char* ItemName(uint8_t id) {
@@ -603,6 +634,13 @@ const char* ItemName(uint8_t id) {
     static const char* materials[] = {"coal", "raw_iron", "raw_gold", "diamond", "redstone", "lapis_lazuli",
                                       "iron_ingot", "gold_ingot", "netherite_ingot", "emerald", "raw_copper"};
     if (id >= ITEM_COAL && id <= ITEM_RAW_COPPER) return materials[id - ITEM_COAL];
+    switch (id) {
+        case ITEM_FLINT_AND_STEEL: return "flint_and_steel";
+        case ITEM_QUARTZ: return "quartz";
+        case ITEM_FIREWORK_ROCKET: return "firework_rocket";
+        case ITEM_COPPER_INGOT: return "copper_ingot";
+        default: break;
+    }
     return "unknown";
 }
 
@@ -611,7 +649,10 @@ std::string ItemTexture(uint8_t id) {
         (id < BLOCK_COUNT ? BLOCK_DEFS[id].side : ItemName(id)) + ".png";
 }
 
-int ItemStackLimit(uint8_t id) { return FindTool(id) || FindArmor(id) ? 1 : 64; }
+int ItemStackLimit(uint8_t id) {
+    if (id == ITEM_FLINT_AND_STEEL) return 1;
+    return FindTool(id) || FindArmor(id) ? 1 : 64;
+}
 
 // Vanilla grass/foliage/water textures are grayscale and biome-tinted by
 // Java at runtime. Bake the exact plains colors sampled from the 26.3

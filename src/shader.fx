@@ -88,6 +88,17 @@ float4 PSMainUI(PSIn input) : SV_TARGET
     return float4(tex.rgb * input.shade * input.tint, tex.a);
 }
 
+// Block-break cracks (destroy_stage_0..9). Java draws these in a second pass
+// with a multiplicative blend (DST_COLOR, SRC_COLOR): the dark crack texels
+// darken the already-lit block beneath. Transparent texels are discarded at
+// Java's 0.1 alpha threshold so anti-aliased crack edges survive.
+float4 PSMainCrack(PSIn input) : SV_TARGET
+{
+    float4 tex = gAtlas.Sample(gPoint, input.uv);
+    clip(tex.a - 0.1f);
+    return float4(tex.rgb, tex.a);
+}
+
 float4 PSMainEntity(PSIn input) : SV_TARGET
 {
     float4 tex = gAtlas.Sample(gPoint, input.uv);

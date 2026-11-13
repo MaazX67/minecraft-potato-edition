@@ -124,6 +124,13 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     extra->Release();
     if (FAILED(hr)) { vsBlob->Release(); return false; }
 
+    if (!CompileOne(shaderSource, "PSMainCrack", "ps_4_0", &extra, hwnd)) {
+        vsBlob->Release(); return false;
+    }
+    hr = rc.device->CreatePixelShader(extra->GetBufferPointer(), extra->GetBufferSize(), &rc.psCrack);
+    extra->Release();
+    if (FAILED(hr)) { vsBlob->Release(); return false; }
+
     const D3D10_INPUT_ELEMENT_DESC elems[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D10_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 12, D3D10_INPUT_PER_VERTEX_DATA, 0},
@@ -173,6 +180,14 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     if (FAILED(hr)) return false;
     bd.DestBlend = D3D10_BLEND_ONE;
     hr = rc.device->CreateBlendState(&bd, &rc.additiveBlend);
+    if (FAILED(hr)) return false;
+    // Java crumbling overlay: multiplicative RGB (src*dst + dst*src) darkens
+    // the lit block beneath the cracks; alpha is replaced by the source alpha.
+    bd.SrcBlend = D3D10_BLEND_DEST_COLOR;
+    bd.DestBlend = D3D10_BLEND_SRC_COLOR;
+    bd.SrcBlendAlpha = D3D10_BLEND_ONE;
+    bd.DestBlendAlpha = D3D10_BLEND_ZERO;
+    hr = rc.device->CreateBlendState(&bd, &rc.crackBlend);
     if (FAILED(hr)) return false;
 
     D3D10_DEPTH_STENCIL_DESC dsd = {};
@@ -284,6 +299,7 @@ void ShutdownRenderer(RenderContext& rc) {
     SafeRelease(rc.additiveBlend);
     SafeRelease(rc.psCelestial);
     SafeRelease(rc.psEntity);
+    SafeRelease(rc.psCrack);
     SafeRelease(rc.psWorldSky);
     SafeRelease(rc.skyVB);
     SafeRelease(rc.panoramaSRV);
@@ -294,6 +310,7 @@ void ShutdownRenderer(RenderContext& rc) {
     SafeRelease(rc.depthOff);
     SafeRelease(rc.depthOn);
     SafeRelease(rc.alphaBlend);
+    SafeRelease(rc.crackBlend);
     SafeRelease(rc.linearSampler);
     SafeRelease(rc.pointSampler);
     SafeRelease(rc.perFrameCB);

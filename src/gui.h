@@ -19,7 +19,7 @@ struct GuiTexture {
 
 enum class Screen {
     Title, CreateWorld, Options, Pause, Game, Inventory, Death,
-    VideoOptions, SoundOptions, ControlsOptions, Profile, SelectWorld
+    VideoOptions, SoundOptions, ControlsOptions, Profile, SelectWorld, Furnace, Chest
 };
 
 struct PlayerProfile {
@@ -80,7 +80,7 @@ public:
 
     GuiTexture texButton, texButtonHi, texButtonDisabled, texLogo, texEdition, texCrosshair;
     GuiTexture texHotbar, texHotbarSel, texFont, texDirt, texWhite, texBlack;
-    GuiTexture texInvBg, texCraftBg;
+    GuiTexture texInvBg, texCraftBg, texFurnaceBg, texChestBg;
     GuiTexture texHeart[3];   // container, full, half
     GuiTexture texFood[3];    // empty, full, half
     GuiTexture texArmor[3];   // empty, full, half
@@ -188,6 +188,12 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
 int InventoryHitTest(int mouseX, int mouseY);
 void ScrollCreativeInventory(int deltaRows);
 void ResetCreativeScroll();
+int FurnaceHitTest(int mouseX, int mouseY);
+void DrawFurnace(GuiRenderer& ui, const FurnaceState& f, const InventoryState& inv,
+                 int mouseX, int mouseY);
+int ChestHitTest(int mouseX, int mouseY);
+void DrawChest(GuiRenderer& ui, const ChestState& chest, const InventoryState& inv,
+               int mouseX, int mouseY);
 
 // Slot indices for the survival screen: 0..26 storage, 27..35 hotbar,
 // 36..44 crafting grid (3x3; the 2x2 uses 36,37,39,40), 45 = craft result.

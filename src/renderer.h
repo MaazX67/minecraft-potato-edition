@@ -18,11 +18,13 @@ struct RenderContext {
     ID3D10VertexShader* vs = nullptr;
     ID3D10PixelShader* psWorld = nullptr;
     ID3D10PixelShader* psUI = nullptr;
+    ID3D10PixelShader* psCrack = nullptr;
     ID3D10InputLayout* layout = nullptr;
     ID3D10Buffer* perFrameCB = nullptr;
     ID3D10SamplerState* pointSampler = nullptr;
     ID3D10SamplerState* linearSampler = nullptr; // panorama soft filtering
     ID3D10BlendState* alphaBlend = nullptr;
+    ID3D10BlendState* crackBlend = nullptr; // multiplicative: DST_COLOR, SRC_COLOR
     ID3D10DepthStencilState* depthOn = nullptr;
     ID3D10DepthStencilState* depthOff = nullptr;
     ID3D10DepthStencilState* depthReadOnly = nullptr; // particles: test on, write off

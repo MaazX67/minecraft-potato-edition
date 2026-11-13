@@ -67,11 +67,11 @@ private:
     uint8_t mP[512];
 };
 
-enum class WorldGenerator { Legacy, Climate, Flat };
+enum class WorldGenerator { Legacy, Climate, Flat, Nether };
 const char* GeneratorName(WorldGenerator generator);
 bool ParseGenerator(const std::string& name, WorldGenerator& generator);
 
-enum class Biome { Plains, Forest, BirchForest, Taiga, Desert, Snowy, Mountains, River, Ocean };
+enum class Biome { Plains, Forest, BirchForest, Taiga, Desert, Snowy, Mountains, River, Ocean, CherryGrove };
 const char* BiomeName(Biome biome);
 
 struct TerrainColumn {
@@ -83,6 +83,7 @@ struct TerrainColumn {
 
 TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z);
 void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz);
+void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz);
 
 // Full 3-axis greedy mesher. Free function so the headless selftest can run it
 // without a World. Neighbor pointers may be null (treated as air). y<0 and

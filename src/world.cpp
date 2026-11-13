@@ -116,6 +116,7 @@ const char* GeneratorName(WorldGenerator generator) {
         case WorldGenerator::Legacy: return "potato-perlin-v1";
         case WorldGenerator::Climate: return "potato-climate-v2";
         case WorldGenerator::Flat: return "potato-flat-v1";
+        case WorldGenerator::Nether: return "potato-nether-v1";
     }
     return "unknown";
 }
@@ -124,6 +125,7 @@ bool ParseGenerator(const std::string& name, WorldGenerator& generator) {
     if (name == "potato-perlin-v1" || name == "legacy") generator = WorldGenerator::Legacy;
     else if (name == "potato-climate-v2" || name == "climate") generator = WorldGenerator::Climate;
     else if (name == "potato-flat-v1" || name == "flat") generator = WorldGenerator::Flat;
+    else if (name == "potato-nether-v1" || name == "nether") generator = WorldGenerator::Nether;
     else return false;
     return true;
 }
@@ -139,6 +141,7 @@ const char* BiomeName(Biome biome) {
         case Biome::Mountains: return "Mountains";
         case Biome::River: return "River";
         case Biome::Ocean: return "Ocean";
+        case Biome::CherryGrove: return "Cherry Grove";
     }
     return "Unknown";
 }
@@ -185,7 +188,8 @@ ClimateVein SampleClimateVein(int x, int cellY, int z, uint32_t seed) {
 }
 
 bool IsTreeLeaf(uint8_t block) {
-    return block == BLOCK_OAK_LEAVES || block == BLOCK_BIRCH_LEAVES || block == BLOCK_SPRUCE_LEAVES;
+    return block == BLOCK_OAK_LEAVES || block == BLOCK_BIRCH_LEAVES || block == BLOCK_SPRUCE_LEAVES ||
+           block == BLOCK_CHERRY_LEAVES;
 }
 
 uint8_t DeepslateOre(uint8_t ore) {
@@ -228,9 +232,47 @@ TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z) {
     else if (temperature < 0.24f) biome = Biome::Snowy;
     else if (temperature < 0.40f && humidity > 0.42f) biome = Biome::Taiga;
     else if (temperature > 0.64f && humidity < 0.40f) biome = Biome::Desert;
+    else if (temperature >= 0.45f && temperature < 0.66f && humidity > 0.60f &&
+             noise.Fbm2(wx * 0.005f + 311.7f, wz * 0.005f - 208.3f, 2) > 0.30f) biome = Biome::CherryGrove;
     else if (temperature >= 0.43f && temperature < 0.67f && humidity > 0.62f) biome = Biome::BirchForest;
     else if (humidity > 0.49f) biome = Biome::Forest;
     return {height, biome, temperature, humidity};
+}
+
+void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz) {
+    const int ox = cx * CHUNK_X, oz = cz * CHUNK_Z;
+    for (int x = 0; x < CHUNK_X; ++x) {
+        for (int z = 0; z < CHUNK_Z; ++z) {
+            const float wx = float(ox + x), wz = float(oz + z);
+            const float ground = 64.0f + noise.Fbm2(wx * 0.01f, wz * 0.01f, 3) * 22.0f;
+            for (int y = 0; y < CHUNK_Y; ++y) {
+                const uint32_t r = Hash3(uint32_t(wx), uint32_t(y), uint32_t(wz), seed) % 1000;
+                uint8_t b = BLOCK_AIR;
+                if (y == 0 || (y < 4 && r < 600) || y >= 252 || (y > 248 && r < 600)) {
+                    b = BLOCK_BEDROCK;
+                } else {
+                    const float cave = noise.Fbm3(wx * 0.045f, float(y) * 0.05f, wz * 0.045f, 3);
+                    bool solid = cave < 0.28f;
+                    if (float(y) < ground - 6.0f) solid = true;
+                    if (y > 128 && y < 250 && cave < 0.45f) solid = true;
+                    if (solid) {
+                        b = BLOCK_NETHERRACK;
+                        if (y > 120 && r < 35) b = BLOCK_GLOWSTONE;
+                        else if (y < 120 && r < 90) b = BLOCK_NETHER_QUARTZ_ORE;
+                        else if (r < 130) b = BLOCK_NETHER_GOLD_ORE;
+                        else if (y < 24 && r > 985) b = BLOCK_ANCIENT_DEBRIS;
+                        else if (y > 100 && r > 940) b = BLOCK_MAGMA;
+                        else if (float(y) > ground - 4.0f && r > 880 && r <= 920) b = BLOCK_SOUL_SAND;
+                        else if (r > 920 && r <= 935) b = BLOCK_SOUL_SOIL;
+                        else if (r > 960 && r <= 975) b = BLOCK_BLACKSTONE;
+                    } else if (y <= 31) {
+                        b = BLOCK_LAVA;
+                    }
+                }
+                blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = b;
+            }
+        }
+    }
 }
 
 void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz) {
@@ -313,6 +355,7 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t se
                     if ((hash >> 8) % 5 == 0) { log = BLOCK_BIRCH_LOG; leaves = BLOCK_BIRCH_LEAVES; }
                     break;
                 case Biome::BirchForest: density = 16; log = BLOCK_BIRCH_LOG; leaves = BLOCK_BIRCH_LEAVES; break;
+                case Biome::CherryGrove: density = 15; log = BLOCK_CHERRY_LOG; leaves = BLOCK_CHERRY_LEAVES; break;
                 case Biome::Taiga: density = 14; log = BLOCK_SPRUCE_LOG; leaves = BLOCK_SPRUCE_LEAVES; break;
                 case Biome::Snowy: density = 2; log = BLOCK_SPRUCE_LOG; leaves = BLOCK_SPRUCE_LEAVES; break;
                 default: continue;
@@ -344,6 +387,50 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t se
                 }
             }
             for (int dy = 0; dy < th; ++dy) place(wx, base + dy, wz, log, true);
+        }
+    }
+
+    // Rare surface structures: ruined nether portals and small village houses.
+    auto put = [&](int x, int y, int z, uint8_t b) {
+        if (x < 0 || x >= CHUNK_X || z < 0 || z >= CHUNK_Z || y < 0 || y >= CHUNK_Y) return;
+        blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = b;
+    };
+    for (int x = 3; x < CHUNK_X - 4; ++x) {
+        for (int z = 3; z < CHUNK_Z - 4; ++z) {
+            const int wx = originX + x, wz = originZ + z;
+            const uint32_t h = Hash3(uint32_t(wx), 7, uint32_t(wz), seed ^ 0x57AEu);
+            if ((h & 4095u) != 0) continue;
+            const TerrainColumn col = SampleTerrain(noise, wx, wz);
+            if (col.height <= CLIMATE_SEA + 2 || col.height > 140) continue;
+            const int y = col.height + 1;
+            if ((h >> 12) % 2 == 0) {
+                for (int dx = -2; dx <= 2; ++dx)
+                    for (int dz = -2; dz <= 2; ++dz) put(x + dx, y - 1, z + dz, BLOCK_NETHERRACK);
+                for (int dy = 0; dy < 4; ++dy) {
+                    put(x - 1, y + dy, z, BLOCK_OBSIDIAN);
+                    put(x + 2, y + dy, z, BLOCK_OBSIDIAN);
+                }
+                for (int dx = -1; dx <= 2; ++dx) put(x + dx, y + 4, z, BLOCK_OBSIDIAN);
+                put(x - 1, y + 3, z, BLOCK_CRYING_OBSIDIAN);
+                put(x + 2, y + 1, z, BLOCK_AIR);
+                put(x + 3, y, z + 1, BLOCK_CHEST);
+            } else if (col.biome == Biome::Plains || col.biome == Biome::Forest ||
+                       col.biome == Biome::CherryGrove) {
+                for (int dx = 0; dx < 5; ++dx)
+                    for (int dz = 0; dz < 5; ++dz) {
+                        put(x + dx, y - 1, z + dz, BLOCK_COBBLE);
+                        put(x + dx, y + 3, z + dz, BLOCK_PLANKS);
+                    }
+                for (int dy = 0; dy < 3; ++dy)
+                    for (int d = 0; d < 5; ++d) {
+                        const uint8_t wall = (d == 0 || d == 4) ? BLOCK_LOG : BLOCK_PLANKS;
+                        put(x + d, y + dy, z, wall); put(x + d, y + dy, z + 4, wall);
+                        put(x, y + dy, z + d, wall); put(x + 4, y + dy, z + d, wall);
+                    }
+                put(x + 2, y, z, BLOCK_AIR); put(x + 2, y + 1, z, BLOCK_AIR);
+                put(x + 2, y, z + 2, BLOCK_CHEST);
+                put(x + 1, y + 1, z + 4, BLOCK_GLASS); put(x + 3, y + 1, z + 4, BLOCK_GLASS);
+            }
         }
     }
 }
@@ -655,6 +742,10 @@ void World::Update(float camX, float camZ) {
 void World::GenerateChunk(Chunk& c, int cx, int cz) const {
     if (mGenerator == WorldGenerator::Climate) {
         GenerateClimateChunk(c.blocks, mNoise, mSeed, cx, cz);
+        return;
+    }
+    if (mGenerator == WorldGenerator::Nether) {
+        GenerateNetherChunk(c.blocks, mNoise, mSeed, cx, cz);
         return;
     }
     if (mGenerator == WorldGenerator::Flat) {

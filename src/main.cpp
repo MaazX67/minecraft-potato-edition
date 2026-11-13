@@ -65,6 +65,19 @@ static ID3D10ShaderResourceView* gWhiteSRV = nullptr;
 static ID3D10Buffer* gOutlineVB = nullptr;
 static ID3D10Buffer* gZombieVB = nullptr;
 static std::vector<Zombie> gZombies;
+static FurnaceState gFurnace;
+static int gDimension = 0; // 0 overworld, 1 nether
+static WorldGenerator gOverworldGen = WorldGenerator::Climate;
+static EditMap gDimEdits[2];
+static float gDimPos[2][3] = {{8.5f, 90.0f, 8.5f}, {8.5f, 90.0f, 8.5f}};
+static bool gDimVisited[2] = {true, false};
+static float gPortalCooldown = 0;
+static float gElytraWear = 0;
+static std::unordered_map<uint64_t, ChestState> gChests;
+static uint64_t gChestKey = 0;
+static uint64_t ChestKey(int x, int z) {
+    return (uint64_t(uint32_t(x)) << 32) | uint64_t(uint32_t(z));
+}
 static HurtResistance gPlayerResistance;
 static float gMobSpawnTimer = 0;
 static uint64_t gCombatHits = 0, gCriticalHits = 0, gZombieKills = 0;
@@ -118,7 +131,7 @@ static void UpdateCursorCapture(HWND hwnd);
 static void SyncHotbar();
 
 static bool IsWorldScreen(Screen s) {
-    return s == Screen::Game || s == Screen::Pause || s == Screen::Inventory || s == Screen::Death;
+    return s == Screen::Game || s == Screen::Pause || s == Screen::Inventory || s == Screen::Furnace || s == Screen::Chest || s == Screen::Death;
 }
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -481,6 +494,14 @@ static void ResetWorld(uint32_t seed, EditMap edits = {}, WorldGenerator generat
     gCraftTable = false;
     gInventoryMessage.clear();
     gResumePending = false;
+    gOverworldGen = generator;
+    gDimension = 0;
+    gDimVisited[0] = true; gDimVisited[1] = false;
+    gDimEdits[0].clear(); gDimEdits[1].clear();
+    gPortalCooldown = 0;
+    gFurnace = {};
+    gChests.clear();
+    gChestKey = 0;
 }
 
 static bool SaveCurrentWorld() {
@@ -494,11 +515,18 @@ static bool SaveCurrentWorld() {
     for (const auto& s : gInventory.craft) { craft.push_back(slot(s)); toolDamage["craft"].push_back(s.damage); }
     nlohmann::json armor = nlohmann::json::array(), armorDamage = nlohmann::json::array();
     for (const auto& s : gInventory.armor) { armor.push_back(slot(s)); armorDamage.push_back(s.damage); }
+    nlohmann::json chests = nlohmann::json::array();
+    for (const auto& kv : gChests) {
+        nlohmann::json slots = nlohmann::json::array();
+        for (const auto& s : kv.second.slots) slots.push_back(slot(s));
+        chests.push_back({{"x", int32_t(kv.first >> 32)}, {"z", int32_t(kv.first & 0xFFFFFFFFu)},
+                          {"slots", slots}});
+    }
     FILETIME now;
     GetSystemTimeAsFileTime(&now);
     const uint64_t timestamp = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
     const nlohmann::json data = {
-        {"format", 3}, {"generator", GeneratorName(gWorld->Generator())}, {"name", gWorldName},
+        {"format", 3}, {"generator", GeneratorName(gOverworldGen)}, {"name", gWorldName},
         {"worldTime", gWorldClock.Ticks()},
         {"savedAt", timestamp}, {"seed", gWorldSeed}, {"mode", gGameMode},
         {"difficulty", gSettings.difficulty}, {"position", {gBody.x, gBody.y, gBody.z}},
@@ -510,6 +538,15 @@ static bool SaveCurrentWorld() {
         {"armor", armor}, {"armorDamage", armorDamage},
         {"offhand", slot(gInventory.offhand)}, {"offhandDamage", gInventory.offhand.damage},
         {"inventoryOpen", gScreen == Screen::Inventory}, {"craftTable", gCraftTable},
+        {"dimension", gDimension},
+        {"otherEdits", nlohmann::json::binary(EncodeEdits(gDimEdits[1 - gDimension]))},
+        {"otherPos", {gDimPos[1 - gDimension][0], gDimPos[1 - gDimension][1], gDimPos[1 - gDimension][2]}},
+        {"otherVisited", gDimVisited[1 - gDimension]},
+        {"furnace", {{"input", slot(gFurnace.input)}, {"fuel", slot(gFurnace.fuel)},
+                     {"output", slot(gFurnace.output)}, {"burn", gFurnace.burn},
+                     {"burnTotal", gFurnace.burnTotal}, {"cook", gFurnace.cook},
+                     {"x", gFurnace.x}, {"y", gFurnace.y}, {"z", gFurnace.z}}},
+        {"chests", chests},
         {"edits", nlohmann::json::binary(EncodeEdits(gWorld->SnapshotEdits()))}
     };
     const auto bytes = nlohmann::json::to_msgpack(data);
@@ -624,7 +661,31 @@ static bool LoadWorldSave(const std::string& path) {
         const auto& bytes = data.at("edits").get_binary();
         EditMap edits;
         if (!DecodeEdits(bytes.data(), bytes.size(), edits)) return false;
-        ResetWorld(seed, std::move(edits), generator);
+        const int dimension = data.value("dimension", 0);
+        EditMap otherEdits;
+        float otherPos[3] = {8.5f, 90.0f, 8.5f};
+        if (data.contains("otherEdits")) {
+            const auto& ob = data.at("otherEdits").get_binary();
+            DecodeEdits(ob.data(), ob.size(), otherEdits);
+        }
+        if (data.contains("otherPos")) {
+            const auto& op = data.at("otherPos");
+            otherPos[0] = op[0].get<float>(); otherPos[1] = op[1].get<float>(); otherPos[2] = op[2].get<float>();
+        }
+        const bool otherVisited = data.value("otherVisited", false);
+        if (dimension == 1) {
+            ResetWorld(seed, {}, generator);
+            gDimEdits[0] = std::move(otherEdits);
+            gDimPos[0][0] = otherPos[0]; gDimPos[0][1] = otherPos[1]; gDimPos[0][2] = otherPos[2];
+            gDimVisited[0] = otherVisited;
+            BuildDimensionWorld(1, std::move(edits));
+            gDimVisited[1] = true;
+        } else {
+            ResetWorld(seed, std::move(edits), generator);
+            gDimEdits[1] = std::move(otherEdits);
+            gDimPos[1][0] = otherPos[0]; gDimPos[1][1] = otherPos[1]; gDimPos[1][2] = otherPos[2];
+            gDimVisited[1] = otherVisited;
+        }
         StartGame();
         gWorldClock.Set(worldTime);
         gWorldName = name;
@@ -633,6 +694,38 @@ static bool LoadWorldSave(const std::string& path) {
         gSettings.difficulty = difficulty;
         gInventory = inventory;
         gCraftTable = craftTable;
+        if (data.contains("furnace")) {
+            const auto& f = data.at("furnace");
+            auto rd = [](const nlohmann::json& j) -> ItemSlot {
+                ItemSlot s;
+                s.id = uint8_t(j[0].get<int>());
+                s.count = j[1].get<int>();
+                if (!IsValidItem(s.id) || s.count < 0) return {};
+                return s;
+            };
+            gFurnace.input = rd(f.at("input"));
+            gFurnace.fuel = rd(f.at("fuel"));
+            gFurnace.output = rd(f.at("output"));
+            gFurnace.burn = f.value("burn", 0.0f);
+            gFurnace.burnTotal = f.value("burnTotal", 0.0f);
+            gFurnace.cook = f.value("cook", 0.0f);
+            gFurnace.x = f.value("x", 0); gFurnace.y = f.value("y", 0); gFurnace.z = f.value("z", 0);
+        }
+        if (data.contains("chests")) {
+            auto rd = [](const nlohmann::json& j) -> ItemSlot {
+                ItemSlot s;
+                s.id = uint8_t(j[0].get<int>());
+                s.count = j[1].get<int>();
+                if (!IsValidItem(s.id) || s.count < 0) return {};
+                return s;
+            };
+            for (const auto& c : data.at("chests")) {
+                const uint64_t key = ChestKey(c.value("x", 0), c.value("z", 0));
+                ChestState& chest = gChests[key];
+                const auto& slots = c.at("slots");
+                for (int i = 0; i < 27 && i < int(slots.size()); ++i) chest.slots[i] = rd(slots[i]);
+            }
+        }
         gResumeScreen = health == 0 ? Screen::Death : (inventoryOpen ? Screen::Inventory : Screen::Game);
         gHotbarSlot = selected;
         if (mode == 0) SyncHotbar();
@@ -1102,6 +1195,252 @@ static void HandleInventoryClick(int index, bool right) {
     }
 }
 
+static uint8_t SmeltResult(uint8_t id) {
+    switch (id) {
+        case BLOCK_IRON_ORE: case ITEM_RAW_IRON: return ITEM_IRON_INGOT;
+        case BLOCK_GOLD_ORE: case ITEM_RAW_GOLD: return ITEM_GOLD_INGOT;
+        case BLOCK_SAND: return BLOCK_GLASS;
+        case BLOCK_COBBLE: return BLOCK_STONE;
+        case BLOCK_CLAY: return BLOCK_BRICK;
+        default: return 0;
+    }
+}
+
+static float FuelSeconds(uint8_t id) {
+    switch (id) {
+        case ITEM_COAL: return 80.0f;
+        case ITEM_STICK: return 5.0f;
+        case BLOCK_PLANKS: case BLOCK_SPRUCE_PLANKS: case BLOCK_BIRCH_PLANKS:
+        case BLOCK_LOG: case BLOCK_SPRUCE_LOG: case BLOCK_BIRCH_LOG:
+        case BLOCK_CRAFTING_TABLE: case BLOCK_BOOKSHELF: return 15.0f;
+        default: return 0.0f;
+    }
+}
+
+static void TickFurnace(float dt) {
+    const uint8_t result = SmeltResult(gFurnace.input.id);
+    const bool canCook = result != 0 &&
+        (gFurnace.output.Empty() ||
+         (gFurnace.output.id == result && gFurnace.output.count < ItemStackLimit(result)));
+    if (gFurnace.burn > 0) {
+        gFurnace.burn -= dt;
+        if (gFurnace.burn < 0) gFurnace.burn = 0;
+    }
+    if (gFurnace.burn == 0 && canCook && FuelSeconds(gFurnace.fuel.id) > 0) {
+        gFurnace.burnTotal = FuelSeconds(gFurnace.fuel.id);
+        gFurnace.burn = gFurnace.burnTotal;
+        if (--gFurnace.fuel.count <= 0) gFurnace.fuel = {};
+    }
+    if (gFurnace.burn > 0 && canCook) {
+        gFurnace.cook += dt;
+        if (gFurnace.cook >= 10.0f) {
+            gFurnace.cook = 0;
+            if (--gFurnace.input.count <= 0) gFurnace.input = {};
+            if (gFurnace.output.Empty()) gFurnace.output = {result, 1};
+            else ++gFurnace.output.count;
+            gSound.PlayAt(SND_CLICK, float(gFurnace.x) + 0.5f, float(gFurnace.y) + 0.5f,
+                          float(gFurnace.z) + 0.5f, 0.5f, 1.2f);
+        }
+    } else if (gFurnace.cook > 0) {
+        gFurnace.cook -= dt * 2;
+        if (gFurnace.cook < 0) gFurnace.cook = 0;
+    }
+}
+
+static void CloseFurnace() {
+    if (!gInventory.Close()) {
+        gInventoryMessage = "Make room for the cursor items before closing.";
+        return;
+    }
+    gInventoryMessage.clear();
+    SyncHotbar();
+    SetScreen(gHwnd, Screen::Game);
+}
+
+static void HandleFurnaceClick(int index, bool right) {
+    if (index < 0) return;
+    ItemSlot& cursor = gInventory.cursor;
+    auto takeOutput = [&]() {
+        if (gFurnace.output.Empty()) return;
+        if (cursor.Empty()) { cursor = gFurnace.output; gFurnace.output = {}; }
+        else if (cursor.id == gFurnace.output.id &&
+                 cursor.count + gFurnace.output.count <= ItemStackLimit(cursor.id)) {
+            cursor.count += gFurnace.output.count;
+            gFurnace.output = {};
+        }
+    };
+    if (index == 102) {
+        if (gInput.keys[VK_SHIFT]) {
+            const int left = gInventory.Add(gFurnace.output.id, gFurnace.output.count);
+            if (left == 0) gFurnace.output = {};
+            else gFurnace.output.count = left;
+        } else takeOutput();
+        SyncHotbar();
+        return;
+    }
+    ItemSlot& slot = index == 100 ? gFurnace.input : index == 101 ? gFurnace.fuel : gInventory.slots[index];
+    if (gInput.keys[VK_SHIFT]) {
+        if (slot.Empty()) return;
+        if (index >= 100) {
+            const int left = gInventory.Add(slot.id, slot.count);
+            if (left == 0) slot = {};
+            else slot.count = left;
+        } else {
+            const int target = FuelSeconds(slot.id) > 0 ? 101 : 100;
+            ItemSlot& dst = target == 101 ? gFurnace.fuel : gFurnace.input;
+            if (dst.Empty()) { dst = slot; slot = {}; }
+            else if (dst.id == slot.id && dst.count < ItemStackLimit(dst.id)) {
+                const int move = std::min(slot.count, ItemStackLimit(dst.id) - dst.count);
+                dst.count += move; slot.count -= move;
+                if (slot.count <= 0) slot = {};
+            }
+        }
+        SyncHotbar();
+        return;
+    }
+    if (right) {
+        if (cursor.Empty() && !slot.Empty()) {
+            const int half = (slot.count + 1) / 2;
+            cursor = {slot.id, half};
+            slot.count -= half;
+            if (slot.count <= 0) slot = {};
+        } else if (!cursor.Empty() && (slot.Empty() || slot.id == cursor.id) &&
+                   slot.count < ItemStackLimit(cursor.id)) {
+            if (slot.Empty()) slot = {cursor.id, 0};
+            ++slot.count;
+            if (--cursor.count <= 0) cursor = {};
+        }
+    } else {
+        if (cursor.Empty()) { cursor = slot; slot = {}; }
+        else if (slot.Empty()) { slot = cursor; cursor = {}; }
+        else if (slot.id == cursor.id && slot.count < ItemStackLimit(slot.id)) {
+            const int move = std::min(cursor.count, ItemStackLimit(slot.id) - slot.count);
+            slot.count += move; cursor.count -= move;
+            if (cursor.count <= 0) cursor = {};
+        } else std::swap(cursor, slot);
+    }
+    SyncHotbar();
+}
+
+static void CloseChest() {
+    if (!gInventory.Close()) {
+        gInventoryMessage = "Make room for the cursor items before closing.";
+        return;
+    }
+    gInventoryMessage.clear();
+    SyncHotbar();
+    SetScreen(gHwnd, Screen::Game);
+}
+
+static void HandleChestClick(int index, bool right) {
+    if (index < 0) return;
+    ItemSlot& cursor = gInventory.cursor;
+    ChestState& chest = gChests[gChestKey];
+    ItemSlot& slot = index >= 100 ? chest.slots[index - 100] : gInventory.slots[index];
+    if (gInput.keys[VK_SHIFT]) {
+        if (slot.Empty()) return;
+        if (index >= 100) {
+            const int left = gInventory.Add(slot.id, slot.count);
+            if (left == 0) slot = {};
+            else slot.count = left;
+        } else {
+            int target = -1;
+            for (int i = 0; i < 27; ++i) {
+                ItemSlot& dst = chest.slots[i];
+                if (dst.id == slot.id && dst.count < ItemStackLimit(dst.id)) { target = i; break; }
+            }
+            if (target < 0) for (int i = 0; i < 27; ++i) if (chest.slots[i].Empty()) { target = i; break; }
+            if (target >= 0) {
+                ItemSlot& dst = chest.slots[target];
+                if (dst.Empty()) { dst = slot; slot = {}; }
+                else {
+                    const int move = std::min(slot.count, ItemStackLimit(dst.id) - dst.count);
+                    dst.count += move; slot.count -= move;
+                    if (slot.count <= 0) slot = {};
+                }
+            }
+        }
+        SyncHotbar();
+        return;
+    }
+    if (right) {
+        if (cursor.Empty() && !slot.Empty()) {
+            const int half = (slot.count + 1) / 2;
+            cursor = {slot.id, half};
+            slot.count -= half;
+            if (slot.count <= 0) slot = {};
+        } else if (!cursor.Empty() && (slot.Empty() || slot.id == cursor.id) &&
+                   slot.count < ItemStackLimit(cursor.id)) {
+            if (slot.Empty()) slot = {cursor.id, 0};
+            ++slot.count;
+            if (--cursor.count <= 0) cursor = {};
+        }
+    } else {
+        if (cursor.Empty()) { cursor = slot; slot = {}; }
+        else if (slot.Empty()) { slot = cursor; cursor = {}; }
+        else if (slot.id == cursor.id && slot.count < ItemStackLimit(slot.id)) {
+            const int move = std::min(cursor.count, ItemStackLimit(slot.id) - slot.count);
+            slot.count += move; cursor.count -= move;
+            if (cursor.count <= 0) cursor = {};
+        } else std::swap(cursor, slot);
+    }
+    SyncHotbar();
+}
+
+static void BuildDimensionWorld(int dim, EditMap edits) {
+    for (auto& kv : gGpu) {
+        SafeRelease(kv.second.vb);
+        SafeRelease(kv.second.ib);
+    }
+    gGpu.clear();
+    gSweepCursor = 0;
+    delete gWorld;
+    gDimension = dim;
+    const WorldGenerator gen = dim == 1 ? WorldGenerator::Nether : gOverworldGen;
+    gWorld = new World(gWorldSeed, gSettings.renderDistance, gen);
+    gWorld->SetBlockTiles(gTiles);
+    gWorld->SetEdits(std::move(edits));
+    gZombies.clear();
+    gMobSpawnTimer = 0;
+}
+
+static void EnterDimension(int dim) {
+    if (dim == gDimension || !gWorld) return;
+    gDimEdits[gDimension] = gWorld->SnapshotEdits();
+    gDimPos[gDimension][0] = gBody.x;
+    gDimPos[gDimension][1] = gBody.y;
+    gDimPos[gDimension][2] = gBody.z;
+    gDimVisited[gDimension] = true;
+    float tx, tz;
+    if (gDimVisited[dim]) {
+        tx = gDimPos[dim][0]; tz = gDimPos[dim][2];
+    } else {
+        const float scale = dim == 1 ? 0.125f : 8.0f;
+        tx = gBody.x * scale; tz = gBody.z * scale;
+    }
+    BuildDimensionWorld(dim, gDimEdits[dim]);
+    gBody.x = tx; gBody.z = tz;
+    gBody.y = dim == 1 ? 100.0f : 120.0f;
+    gBody.vx = gBody.vy = gBody.vz = 0;
+    gBody.onGround = false;
+    gFallStartY = gBody.y;
+    gPortalCooldown = 3.0f; // grace period: no fall damage while settling
+    gWorld->Update(gBody.x, gBody.z);
+    gSound.Play(SND_CLICK);
+}
+
+static void LightPortal(int hx, int hy, int hz, int nx, int nz) {
+    const int ax = hx + nx, az = hz + nz;
+    const int tx = nz, tz = nx; // horizontal tangent to the clicked face
+    for (int w = 0; w < 2; ++w)
+        for (int h = 0; h < 3; ++h) {
+            const int px = ax + tx * w, py = hy + h, pz = az + tz * w;
+            if (py >= 0 && py < CHUNK_Y && gWorld->GetBlock(px, py, pz) == BLOCK_AIR)
+                gWorld->SetBlock(px, py, pz, BLOCK_PORTAL);
+        }
+    gSound.PlayAt(SND_CLICK, float(hx), float(hy), float(hz), 0.8f, 0.7f);
+}
+
 static void HandleGameFrame(float dt) {
     gCamera.Look(gInput.mouseDX, gInput.mouseDY);
     const float cp = cosf(gCamera.pitch);
@@ -1170,12 +1509,23 @@ static void HandleGameFrame(float dt) {
     if (!gInput.keys['W'] || gBody.sneaking) gBody.sprintLatch = false;
 
     const bool wasGround = gBody.onGround;
+    gBody.elytraEquipped = !gInventory.armor[1].Empty() && gInventory.armor[1].id == ITEM_ELYTRA;
+    if (gPortalCooldown > 0) gPortalCooldown -= dt;
     gBody.Update(gInput, dt, gCamera, getBlock);
     gCamera.x = gBody.x;
     gCamera.y = gBody.y + PlayerBody::EYE;
     gCamera.z = gBody.z;
+    if (gPortalCooldown <= 0) {
+        const int fx = int(floorf(gBody.x)), fz = int(floorf(gBody.z));
+        const uint8_t atFeet = gWorld->GetBlock(fx, int(floorf(gBody.y + 0.2f)), fz);
+        const uint8_t atHead = gWorld->GetBlock(fx, int(floorf(gBody.y + 1.4f)), fz);
+        if (atFeet == BLOCK_PORTAL || atHead == BLOCK_PORTAL) {
+            EnterDimension(1 - gDimension);
+            return;
+        }
+    }
     if (gBody.onGround) {
-        if (!wasGround && !gBody.flying && !gBody.inWater && gGameMode == 0) {
+        if (!wasGround && !gBody.flying && !gBody.inWater && gGameMode == 0 && gPortalCooldown <= 0) {
             const float dist = gFallStartY - gBody.y;
             const int hp = gSurvival.health;
             if (dist > 0) gSurvival.OnLand(dist);
@@ -1188,6 +1538,17 @@ static void HandleGameFrame(float dt) {
     const bool moving = (gBody.vx * gBody.vx + gBody.vz * gBody.vz) > 0.01f;
     if (gGameMode == 0) {
         gSurvival.Update(dt, moving, gBody.sprinting, gSettings.difficulty);
+        const uint8_t feet = gWorld->GetBlock(int(floorf(gBody.x)),
+                                            int(floorf(gBody.y + 0.2f)), int(floorf(gBody.z)));
+        if (feet == BLOCK_LAVA) {
+            static float sLavaTimer = 0;
+            sLavaTimer += dt;
+            if (sLavaTimer >= 0.5f) { sLavaTimer -= 0.5f; gSurvival.health -= 2; gSound.Play(SND_HURT); }
+        }
+        if (gBody.gliding) {
+            gElytraWear += dt;
+            if (gElytraWear >= 1.0f) { gElytraWear -= 1.0f; WearTool(gInventory.armor[1], 1); }
+        }
     }
     if (moving && gBody.onGround && !gBody.flying && !gBody.inWater) {
         gStepTimer += dt;
@@ -1397,11 +1758,42 @@ static void HandleGameFrame(float dt) {
         gMiningY = -1;
     }
     if (gInput.leftClick && !gHaveTarget && !targetZombie) {
+        // Java: swinging at empty air plays no sound, only the arm animation.
         gCooldown.Swing(gNowMs);
-        gSound.Play(SND_HIT);
+    }
+
+    if (gInput.rightClick && gBody.gliding && gHotbar[gHotbarSlot] == ITEM_FIREWORK_ROCKET) {
+        gBody.vx += gCamera.fwdX * 16.0f;
+        gBody.vz += gCamera.fwdZ * 16.0f;
+        gBody.vy += 7.0f;
+        if (gGameMode == 0) {
+            if (--gInventory.slots[27 + gHotbarSlot].count <= 0) gInventory.slots[27 + gHotbarSlot] = {};
+            SyncHotbar();
+        }
+        gSound.Play(SND_CLICK);
+        return;
     }
 
     if (gInput.rightClick && gHaveTarget && (nx || ny || nz)) {
+        if (!gInput.keys[VK_SHIFT] && (nx || nz) && gHotbar[gHotbarSlot] == ITEM_FLINT_AND_STEEL &&
+            gWorld->GetBlock(hx, hy, hz) == BLOCK_OBSIDIAN) {
+            LightPortal(hx, hy, hz, nx, nz);
+            if (gGameMode == 0) WearTool(gInventory.slots[27 + gHotbarSlot], 1);
+            return;
+        }
+        if (!gInput.keys[VK_SHIFT] && gWorld->GetBlock(hx, hy, hz) == BLOCK_FURNACE) {
+            gFurnace.x = hx; gFurnace.y = hy; gFurnace.z = hz;
+            gInventoryMessage.clear();
+            SetScreen(gHwnd, Screen::Furnace);
+            return;
+        }
+        if (!gInput.keys[VK_SHIFT] && gWorld->GetBlock(hx, hy, hz) == BLOCK_CHEST) {
+            gChestKey = ChestKey(hx, hz);
+            gChests[gChestKey];
+            gInventoryMessage.clear();
+            SetScreen(gHwnd, Screen::Chest);
+            return;
+        }
         if (!gInput.keys[VK_SHIFT] && gWorld->GetBlock(hx, hy, hz) == BLOCK_CRAFTING_TABLE) {
             gCraftTable = true;
             if (gGameMode == 1) {
@@ -1489,11 +1881,10 @@ static void DrawBreakOverlay() {
     const int stage = std::min(9, int(gMiningProgress * 10));
     ID3D10ShaderResourceView* texture = gGui.texDestroy[stage].srv;
     if (!texture) return;
-    const float lo[3] = {float(gTargetX) - 0.002f, float(gTargetY) - 0.002f, float(gTargetZ) - 0.002f};
-    const float hi[3] = {float(gTargetX + 1) + 0.002f, float(gTargetY + 1) + 0.002f, float(gTargetZ + 1) + 0.002f};
-    gRC.device->PSSetShader(gRC.psUI);
+    const float base[3] = {float(gTargetX), float(gTargetY), float(gTargetZ)};
+    gRC.device->PSSetShader(gRC.psCrack);
     gRC.device->PSSetShaderResources(0, 1, &texture);
-    gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+    gRC.device->OMSetBlendState(gRC.crackBlend, nullptr, 0xFFFFFFFF);
     gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
     const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
     gRC.device->IASetVertexBuffers(0, 1, &gRC.celestialVB, &stride, &offset);
@@ -1506,9 +1897,11 @@ static void DrawBreakOverlay() {
         for (int i = 0; i < 6; ++i) {
             const int c = order[i];
             float p[3];
-            p[axis] = sign ? hi[axis] : lo[axis];
-            p[u] = (c == 1 || c == 2) ? hi[u] : lo[u];
-            p[v] = (c >= 2) ? hi[v] : lo[v];
+            // Offset the face outward 0.002 along its normal to avoid z-fighting;
+            // the face still spans the exact block edges on the other two axes.
+            p[axis] = base[axis] + (sign ? 1.002f : -0.002f);
+            p[u] = base[u] + ((c == 1 || c == 2) ? 1.0f : 0.0f);
+            p[v] = base[v] + ((c >= 2) ? 1.0f : 0.0f);
             vertices[i] = {p[0], p[1], p[2], 0, 0, uv[c][0], uv[c][1], 15, 1, 1, 1};
         }
         void* data = nullptr;
@@ -1733,7 +2126,14 @@ static void DrawWorld() {
     const XMMATRIX proj = XMMatrixPerspectiveFovRH(
         sFov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 1000.0f);
     const XMMATRIX vp = XMMatrixMultiply(view, proj);
-    const SkyState sky = gSkyTimeline.Sample(gWorldClock.Ticks(), gWorldClock.Fraction());
+    SkyState sky = gSkyTimeline.Sample(gWorldClock.Ticks(), gWorldClock.Fraction());
+    if (gDimension == 1) {
+        sky.skyColor = {0.22f, 0.05f, 0.04f};
+        sky.fogColor = {0.35f, 0.09f, 0.05f};
+        sky.lightColor = {1.0f, 0.62f, 0.5f};
+        sky.daylight = 0.65f;
+        sky.stars = 0.0f;
+    }
     const XMMATRIX skyView = XMMatrixLookAtRH(XMVectorZero(),
         XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0), XMVectorSet(0, 1, 0, 0));
     DrawWorldSky(skyView, proj, sky);
@@ -1761,6 +2161,7 @@ static void DrawWorld() {
     DrawZombies();
     DrawPlayer();
     DrawHand();
+    SetViewProj(gRC, vp, float(gSettings.renderDistance * CHUNK_X), &sky);
     gRC.device->PSSetShader(gRC.psWorld);
     gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
     // Liquid pass: alpha blended, depth-tested but never writing depth.
@@ -1887,6 +2288,10 @@ static void RenderFrame() {
                                   gInput.mouseY, gInventoryMessage);
         else
             DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gHotbarSlot, gHotbar);
+    } else if (gScreen == Screen::Furnace) {
+        DrawFurnace(gGui, gFurnace, gInventory, gInput.mouseX, gInput.mouseY);
+    } else if (gScreen == Screen::Chest) {
+        DrawChest(gGui, gChests[gChestKey], gInventory, gInput.mouseX, gInput.mouseY);
     } else {
         if (menuBg && !gRC.panoramaSRV) {
             gGui.DrawQuad(&gGui.texDirt, 0, 0, SCREEN_W, SCREEN_H, 0, 0,
@@ -2110,6 +2515,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                 if (gGameMode == 0 || gCraftTable) CloseInventory();
                 else SetScreen(hwnd, Screen::Game);
             }
+            else if (gScreen == Screen::Furnace) CloseFurnace();
+            else if (gScreen == Screen::Chest) CloseChest();
             else if (gScreen == Screen::Options || gScreen == Screen::VideoOptions ||
                      gScreen == Screen::SoundOptions || gScreen == Screen::ControlsOptions)
                 HandleMenuAction(ACT_OPTIONS_DONE);
@@ -2169,13 +2576,24 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                     }
                 }
             }
+        } else if (gScreen == Screen::Furnace) {
+            if (gInput.KeyPressed('E')) CloseFurnace();
+            else if (gInput.leftClick || gInput.rightClick)
+                HandleFurnaceClick(FurnaceHitTest(gInput.mouseX, gInput.mouseY), gInput.rightClick);
+        } else if (gScreen == Screen::Chest) {
+            if (gInput.KeyPressed('E')) CloseChest();
+            else if (gInput.leftClick || gInput.rightClick)
+                HandleChestClick(ChestHitTest(gInput.mouseX, gInput.mouseY), gInput.rightClick);
         } else if (gInput.leftClick) {
             HandleMenuAction(gMenu.HitTest(gInput.mouseX, gInput.mouseY));
         }
 
         if (gSpawned && !gResumePending && !gFreezeTime &&
-            (gScreen == Screen::Game || gScreen == Screen::Inventory || gScreen == Screen::Death))
+            (gScreen == Screen::Game || gScreen == Screen::Inventory ||
+             gScreen == Screen::Furnace || gScreen == Screen::Chest || gScreen == Screen::Death)) {
             gWorldClock.Advance(dt);
+            TickFurnace(dt);
+        }
 
         if (IsWorldScreen(gScreen)) {
             UploadMeshes();

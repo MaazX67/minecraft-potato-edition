@@ -148,6 +148,8 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texSliderHandleHi = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/slider_handle_highlighted.png");
     texInvBg          = LoadGui(rc, store, "minecraft/textures/gui/container/inventory.png");
     texCraftBg        = LoadGui(rc, store, "minecraft/textures/gui/container/crafting_table.png");
+    texFurnaceBg      = LoadGui(rc, store, "minecraft/textures/gui/container/furnace.png");
+    texChestBg        = LoadGui(rc, store, "minecraft/textures/gui/container/generic_54.png");
     texMenuBg         = LoadGui(rc, store, "minecraft/textures/gui/menu_background.png");
     texHeaderSeparator= LoadGui(rc, store, "minecraft/textures/gui/header_separator.png");
     texFooterSeparator= LoadGui(rc, store, "minecraft/textures/gui/footer_separator.png");
@@ -186,7 +188,7 @@ void GuiRenderer::Shutdown() {
                         &texCrosshair, &texHotbar, &texHotbarSel, &texFont, &texDirt,
                         &texWhite, &texBlack, &texAttackBg, &texAttackProgress, &texPanoramaOverlay,
                         &texSlider, &texSliderHi, &texSliderHandle, &texSliderHandleHi,
-                        &texInvBg, &texCraftBg, &texMenuBg, &texHeaderSeparator, &texFooterSeparator,
+                        &texInvBg, &texCraftBg, &texFurnaceBg, &texChestBg, &texMenuBg, &texHeaderSeparator, &texFooterSeparator,
                         &texTab, &texTabHi, &texTabSelected, &texTabSelectedHi, &texSkin, &texZombie,
                         &texHeart[0], &texHeart[1], &texHeart[2],
                         &texFood[0], &texFood[1], &texFood[2],
@@ -1107,6 +1109,143 @@ void DrawSurvivalInventory(GuiRenderer& ui, const InventoryState& model, bool ta
         }
     }
     DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, model.cursor);
+}
+
+int FurnaceHitTest(int mouseX, int mouseY) {
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f;
+    const float py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const struct { int index; float x, y; } fs[3] = {
+        {100, 56, 17}, {101, 56, 53}, {102, 116, 35}
+    };
+    for (const auto& s : fs) {
+        const float x = px + (s.x - 1) * INV_S, y = py + (s.y - 1) * INV_S;
+        if (mouseX >= x && mouseX < x + 18 * INV_S &&
+            mouseY >= y && mouseY < y + 18 * INV_S) return s.index;
+    }
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y);
+        x += px - INV_S; y += py - INV_S;
+        if (mouseX >= x && mouseX < x + 18 * INV_S &&
+            mouseY >= y && mouseY < y + 18 * INV_S) return i;
+    }
+    return -1;
+}
+
+void DrawFurnace(GuiRenderer& ui, const FurnaceState& f, const InventoryState& inv,
+                 int mouseX, int mouseY) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f;
+    const float py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texFurnaceBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Furnace", px + 28 * INV_S, py + 6 * INV_S,
+                INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+
+    // Lit flame shrinks from the bottom as fuel burns down.
+    if (f.burn > 0 && f.burnTotal > 0) {
+        const float t = f.burn / f.burnTotal;
+        const float h = 14 * t;
+        ui.DrawQuad(&ui.texWhite, px + 56 * INV_S, py + (36 + 14 - h) * INV_S,
+                    14 * INV_S, h * INV_S, 0, 0, 1, 1, 15, 1.0f, 0.6f, 0.1f);
+    }
+    // Cook progress arrow.
+    const float cw = 24 * (f.cook / 10.0f);
+    if (cw > 0)
+        ui.DrawQuad(&ui.texWhite, px + 79 * INV_S, py + 34 * INV_S,
+                    cw * INV_S, 16 * INV_S, 0, 0, 1, 1, 15, 0.9f, 0.9f, 0.9f);
+
+    const int hovered = FurnaceHitTest(mouseX, mouseY);
+    const ItemSlot* slots[3] = {&f.input, &f.fuel, &f.output};
+    const struct { float x, y; } pos[3] = {{56, 17}, {56, 53}, {116, 35}};
+    for (int i = 0; i < 3; ++i) {
+        const float x = px + pos[i].x * INV_S, y = py + pos[i].y * INV_S;
+        if (hovered == 100 + i)
+            ui.DrawQuad(&ui.texWhite, x, y, 16 * INV_S, 16 * INV_S, 0, 0, 1, 1, 15,
+                        0.85f, 0.85f, 0.85f);
+        DrawStack(ui, x, y, *slots[i]);
+    }
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y);
+        x += px; y += py;
+        if (hovered == i)
+            ui.DrawQuad(&ui.texWhite, x, y, 16 * INV_S, 16 * INV_S, 0, 0, 1, 1, 15,
+                        0.85f, 0.85f, 0.85f);
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    if (inv.cursor.Empty() && hovered >= 0) {
+        const ItemSlot& s = hovered >= 100 ? *slots[hovered - 100] : inv.slots[hovered];
+        if (!s.Empty() && IsValidItem(s.id)) {
+            std::string name = ItemName(s.id);
+            for (char& c : name) if (c == '_') c = ' ';
+            const float tw = ui.TextWidth(name, INV_S);
+            float tx = mouseX + 16, ty = mouseY - 12;
+            if (tx + tw + 12 > SCREEN_W) tx = SCREEN_W - tw - 12;
+            if (ty < 4) ty = 4;
+            ui.DrawQuad(&ui.texBlack, tx - 6, ty - 6, tw + 12, 28, 0, 0, 1, 1, 15, 0.1f, 0.05f, 0.2f);
+            ui.DrawText(name, tx, ty, INV_S, 15, true);
+        }
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+int ChestHitTest(int mouseX, int mouseY) {
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f;
+    const float py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    for (int i = 0; i < 27; ++i) {
+        const float x = px + (8 + (i % 9) * 18 - 1) * INV_S;
+        const float y = py + (18 + (i / 9) * 18 - 1) * INV_S;
+        if (mouseX >= x && mouseX < x + 18 * INV_S &&
+            mouseY >= y && mouseY < y + 18 * INV_S) return 100 + i;
+    }
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y);
+        x += px - INV_S; y += py - INV_S;
+        if (mouseX >= x && mouseX < x + 18 * INV_S &&
+            mouseY >= y && mouseY < y + 18 * INV_S) return i;
+    }
+    return -1;
+}
+
+void DrawChest(GuiRenderer& ui, const ChestState& chest, const InventoryState& inv,
+               int mouseX, int mouseY) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f;
+    const float py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texChestBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Chest", px + 8 * INV_S, py + 6 * INV_S,
+                INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    const int hovered = ChestHitTest(mouseX, mouseY);
+    for (int i = 0; i < 27; ++i) {
+        const float x = px + (8 + (i % 9) * 18) * INV_S;
+        const float y = py + (18 + (i / 9) * 18) * INV_S;
+        if (hovered == 100 + i)
+            ui.DrawQuad(&ui.texWhite, x, y, 16 * INV_S, 16 * INV_S, 0, 0, 1, 1, 15,
+                        0.85f, 0.85f, 0.85f);
+        DrawStack(ui, x, y, chest.slots[i]);
+    }
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y);
+        x += px; y += py;
+        if (hovered == i)
+            ui.DrawQuad(&ui.texWhite, x, y, 16 * INV_S, 16 * INV_S, 0, 0, 1, 1, 15,
+                        0.85f, 0.85f, 0.85f);
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    if (inv.cursor.Empty() && hovered >= 0) {
+        const ItemSlot& s = hovered >= 100 ? chest.slots[hovered - 100] : inv.slots[hovered];
+        if (!s.Empty() && IsValidItem(s.id)) {
+            std::string name = ItemName(s.id);
+            for (char& c : name) if (c == '_') c = ' ';
+            const float tw = ui.TextWidth(name, INV_S);
+            float tx = mouseX + 16, ty = mouseY - 12;
+            if (tx + tw + 12 > SCREEN_W) tx = SCREEN_W - tw - 12;
+            if (ty < 4) ty = 4;
+            ui.DrawQuad(&ui.texBlack, tx - 6, ty - 6, tw + 12, 28, 0, 0, 1, 1, 15, 0.1f, 0.05f, 0.2f);
+            ui.DrawText(name, tx, ty, INV_S, 15, true);
+        }
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
 }
 
 } // namespace potato
