@@ -79,6 +79,8 @@ static float gTimeSec = 0;
 static float gFps = 0;
 static bool gRunning = true;
 static bool gDebug = false;
+static bool gHideHud = false;
+static int gPerspective = 0; // 0 first person, 1 third person back, 2 third person front
 static bool gFlyHook = false;
 static bool gSpawned = false;
 static float gFallStartY = 0;
@@ -1231,7 +1233,9 @@ static void HandleGameFrame(float dt) {
         SetScreen(gHwnd, Screen::Inventory);
         return;
     }
+    if (gInput.KeyPressed(VK_F1)) gHideHud = !gHideHud;
     if (gInput.KeyPressed(VK_F3)) gDebug = !gDebug;
+    if (gInput.KeyPressed(VK_F5)) gPerspective = (gPerspective + 1) % 3;
 
     int hx, hy, hz, nx, ny, nz;
     gHaveTarget = RaycastDDA(getBlock, gCamera.x, gCamera.y, gCamera.z,
@@ -1550,8 +1554,72 @@ static void DrawZombies() {
     gRC.device->Draw(UINT(vertices.size()), 0);
 }
 
+static void DrawPlayer() {
+    if (gPerspective == 0 || !gZombieVB || !gGui.texSkin.srv) return;
+    std::vector<MeshVertex> vertices;
+    vertices.reserve(216);
+    const float cy = cosf(gCamera.yaw), sy = sinf(gCamera.yaw);
+    auto box = [&](float x, float y, float z, float w, float h, float d,
+                   float u, float v, float pivotY, float rotation) {
+        const float corners[8][3] = {{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
+            {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
+        const int faces[6][4] = {{0,1,2,3},{5,4,7,6},{4,0,3,7},{1,5,6,2},{3,2,6,7},{4,5,1,0}};
+        const float uv[6][4] = {{u+d,v+d,w,h},{u+2*d+w,v+d,w,h},{u,v+d,d,h},
+            {u+d+w,v+d,d,h},{u+d,v,w,d},{u+d+w,v,w,d}};
+        const int triangles[6] = {0,1,2,0,2,3};
+        const float cr = cosf(rotation), sr = sinf(rotation);
+        for (int face = 0; face < 6; ++face) {
+            for (int index : triangles) {
+                const float* p = corners[faces[face][index]];
+                const float localY = pivotY + (p[1] - pivotY) * cr - p[2] * sr;
+                const float localZ = (p[1] - pivotY) * sr + p[2] * cr;
+                const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
+                const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
+                vertices.push_back({gBody.x + (cy * p[0] - sy * localZ) / 16,
+                    gBody.y + localY / 16, gBody.z + (sy * p[0] + cy * localZ) / 16,
+                    0, 0, tu / 64, tv / 64, face == 4 ? 15.0f : 12.0f, 1, 1, 1});
+            }
+        }
+    };
+    const float moving = fabsf(gBody.vx) + fabsf(gBody.vz) > 0.1f ? sinf(gTimeSec * 5) * 0.5f : 0;
+    const float armSwing = gPlayer.attackCooldownProgress > 0 ? -1.0f : moving;
+    box(-4,24,-4,8,8,8,0,0,24,0);          // head
+    box(-4,12,-2,8,12,4,16,16,12,0);       // body
+    box(-8,12,-2,4,12,4,40,16,23,armSwing);// right arm
+    box(4,12,-2,4,12,4,32,48,23,-moving);  // left arm
+    box(-4,0,-2,4,12,4,0,16,12,moving);    // right leg
+    box(0,0,-2,4,12,4,16,48,12,-moving);   // left leg
+    void* data = nullptr;
+    if (FAILED(gZombieVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+    memcpy(data, vertices.data(), vertices.size() * sizeof(MeshVertex));
+    gZombieVB->Unmap();
+    gRC.device->PSSetShader(gRC.psEntity);
+    gRC.device->PSSetShaderResources(0, 1, &gGui.texSkin.srv);
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gZombieVB, &stride, &offset);
+    gRC.device->Draw(UINT(vertices.size()), 0);
+}
+
 static void DrawWorld() {
-    const XMVECTOR eye = XMVectorSet(gCamera.x, gCamera.y, gCamera.z, 1);
+    float eyeX = gCamera.x, eyeY = gCamera.y, eyeZ = gCamera.z;
+    if (gPerspective != 0) {
+        const float dir = gPerspective == 1 ? -1.0f : 1.0f;
+        float dist = 4.0f;
+        int hx, hy, hz, nx, ny, nz;
+        if (RaycastDDA([](int x, int y, int z) -> uint8_t { return gWorld->GetBlock(x, y, z); },
+                       gCamera.x, gCamera.y, gCamera.z,
+                       gCamera.fwdX * dir, gCamera.fwdY * dir, gCamera.fwdZ * dir,
+                       dist, hx, hy, hz, nx, ny, nz)) {
+            const float t = nx ? (float(hx + (nx > 0 ? 1 : 0)) - gCamera.x) / (gCamera.fwdX * dir)
+                          : ny ? (float(hy + (ny > 0 ? 1 : 0)) - gCamera.y) / (gCamera.fwdY * dir)
+                          : (float(hz + (nz > 0 ? 1 : 0)) - gCamera.z) / (gCamera.fwdZ * dir);
+            dist = std::max(0.5f, t - 0.3f);
+        }
+        eyeX += gCamera.fwdX * dir * dist;
+        eyeY += gCamera.fwdY * dir * dist;
+        eyeZ += gCamera.fwdZ * dir * dist;
+    }
+    const XMVECTOR eye = XMVectorSet(eyeX, eyeY, eyeZ, 1);
     const XMVECTOR at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
     const XMMATRIX view = XMMatrixLookAtRH(eye, at, XMVectorSet(0, 1, 0, 0));
     const XMMATRIX proj = XMMatrixPerspectiveFovRH(
@@ -1583,6 +1651,7 @@ static void DrawWorld() {
         gRC.device->DrawIndexed(gc.opaqueIndexCount, 0, 0);
     }
     DrawZombies();
+    DrawPlayer();
     gRC.device->PSSetShader(gRC.psWorld);
     gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
     // Liquid pass: alpha blended, depth-tested but never writing depth.
@@ -1697,10 +1766,11 @@ static void RenderFrame() {
     SetViewProj(gRC, ortho);
     gGui.BeginFrame();
     if (gScreen == Screen::Game) {
-        DrawHUD(gGui, gPlayer.attackCooldownProgress, gHotbarSlot, gHotbar,
-                gSurvival.health, gSurvival.hunger,
-                gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1,
-                gGameMode == 0 ? gInventory.slots + 27 : nullptr);
+        if (!gHideHud)
+            DrawHUD(gGui, gPlayer.attackCooldownProgress, gHotbarSlot, gHotbar,
+                    gSurvival.health, gSurvival.hunger,
+                    gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1,
+                    gGameMode == 0 ? gInventory.slots + 27 : nullptr);
         if (gDebug) DrawDebug();
     } else if (gScreen == Screen::Inventory) {
         if (gGameMode == 0 || gCraftTable)
@@ -1939,6 +2009,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                 HandleMenuAction(ACT_CANCEL_CREATE);
         }
         if (gInput.KeyPressed(VK_F2)) gScreenshotRequested = true;
+        if (gInput.KeyPressed(VK_F11) && !gAutomation) {
+            gSettings.fullscreen = !gSettings.fullscreen;
+            ApplyFullscreen();
+        }
 
         if (gScreen == Screen::Profile) {
             if (gInput.keys[VK_CONTROL] && gInput.KeyPressed('A')) gProfileNameSelected = true;
