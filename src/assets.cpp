@@ -681,7 +681,9 @@ static void ApplyBiomeTint(const std::string& name, uint8_t* px) {
     } else if (name.find("spruce_leaves") != std::string::npos) {
         TintTile(px, 0x61, 0x99, 0x61, ATLAS_TILE, 0);
     } else if (name.find("water_still") != std::string::npos) {
-        TintTile(px, 0x3F, 0x76, 0xE4, ATLAS_TILE, 170);
+        // alpha 0 preserves Java's baked 180/255 water opacity; tint RGB only.
+        // Scaling it down pushed water under the opaque pass alpha clip.
+        TintTile(px, 0x3F, 0x76, 0xE4, ATLAS_TILE, 0);
     } else if (name.find("/ice.png") != std::string::npos) {
         for (int i = 0; i < ATLAS_TILE * ATLAS_TILE; ++i) px[i * 4 + 3] = 255;
     }

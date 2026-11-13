@@ -28,7 +28,7 @@ static void TestShaders() {
         {"VSMain", "vs_4_0"}, {"PSMain", "ps_4_0"},
         {"PSMainUI", "ps_4_0"}, {"PSMainSky", "ps_4_0"},
         {"PSMainWorldSky", "ps_4_0"}, {"PSMainCelestial", "ps_4_0"}, {"PSMainEntity", "ps_4_0"},
-        {"PSMainCrack", "ps_4_0"}
+        {"PSMainCrack", "ps_4_0"}, {"PSMainWater", "ps_4_0"}
     };
     for (const Shader& shader : shaders) {
         ID3DBlob* code = nullptr;

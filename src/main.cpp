@@ -2135,12 +2135,22 @@ static void DrawWorld() {
         sky.daylight = 0.65f;
         sky.stars = 0.0f;
     }
+    const bool underwater = gDimension == 0 &&
+        gWorld->GetBlock(int(floorf(eyeX)), int(floorf(eyeY)), int(floorf(eyeZ))) == BLOCK_WATER;
+    float fogDist = float(gSettings.renderDistance * CHUNK_X);
+    if (underwater) {
+        sky.skyColor = {0.05f, 0.18f, 0.45f};
+        sky.fogColor = {0.05f, 0.18f, 0.45f};
+        sky.stars = 0.0f;
+        fogDist *= 0.35f;
+    }
+    const float waterTime = float(gWorldClock.Ticks() % 64u) / 64.0f;
     const XMMATRIX skyView = XMMatrixLookAtRH(XMVectorZero(),
         XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0), XMVectorSet(0, 1, 0, 0));
     DrawWorldSky(skyView, proj, sky);
     Frustum frustum;
     ExtractFrustum(vp, frustum);
-    SetViewProj(gRC, vp, float(gSettings.renderDistance * CHUNK_X), &sky);
+    SetViewProj(gRC, vp, fogDist, &sky, 1.0f, 0.0f, waterTime);
     gRC.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
     gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
@@ -2162,8 +2172,8 @@ static void DrawWorld() {
     DrawZombies();
     DrawPlayer();
     DrawHand();
-    SetViewProj(gRC, vp, float(gSettings.renderDistance * CHUNK_X), &sky);
-    gRC.device->PSSetShader(gRC.psWorld);
+    SetViewProj(gRC, vp, fogDist, &sky, 1.0f, 0.0f, waterTime);
+    gRC.device->PSSetShader(gRC.psWater);
     gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
     // Liquid pass: alpha blended, depth-tested but never writing depth.
     gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);

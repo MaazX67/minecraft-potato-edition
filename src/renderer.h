@@ -19,6 +19,7 @@ struct RenderContext {
     ID3D10PixelShader* psWorld = nullptr;
     ID3D10PixelShader* psUI = nullptr;
     ID3D10PixelShader* psCrack = nullptr;
+    ID3D10PixelShader* psWater = nullptr;
     ID3D10InputLayout* layout = nullptr;
     ID3D10Buffer* perFrameCB = nullptr;
     ID3D10SamplerState* pointSampler = nullptr;
@@ -54,7 +55,7 @@ bool CreatePanorama(RenderContext& rc, AssetStore& store);
 bool CreateCelestials(RenderContext& rc, AssetStore& store);
 void SetViewProj(RenderContext& rc, const DirectX::XMMATRIX& m, float fogEnd = 0.0f,
                  const SkyState* sky = nullptr, float celestialOpacity = 1.0f,
-                 float starRotation = 0.0f);
+                 float starRotation = 0.0f, float waterTime = 0.0f);
 void SetBrightness(RenderContext& rc, float b);
 
 } // namespace potato

@@ -131,6 +131,13 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     extra->Release();
     if (FAILED(hr)) { vsBlob->Release(); return false; }
 
+    if (!CompileOne(shaderSource, "PSMainWater", "ps_4_0", &extra, hwnd)) {
+        vsBlob->Release(); return false;
+    }
+    hr = rc.device->CreatePixelShader(extra->GetBufferPointer(), extra->GetBufferSize(), &rc.psWater);
+    extra->Release();
+    if (FAILED(hr)) { vsBlob->Release(); return false; }
+
     const D3D10_INPUT_ELEMENT_DESC elems[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D10_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 12, D3D10_INPUT_PER_VERTEX_DATA, 0},
@@ -144,7 +151,7 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     if (FAILED(hr)) return false;
 
     D3D10_BUFFER_DESC cbd = {};
-    cbd.ByteWidth = sizeof(XMFLOAT4X4) + 96;
+    cbd.ByteWidth = sizeof(XMFLOAT4X4) + 112;
     cbd.Usage = D3D10_USAGE_DYNAMIC;
     cbd.BindFlags = D3D10_BIND_CONSTANT_BUFFER;
     cbd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
@@ -300,6 +307,7 @@ void ShutdownRenderer(RenderContext& rc) {
     SafeRelease(rc.psCelestial);
     SafeRelease(rc.psEntity);
     SafeRelease(rc.psCrack);
+    SafeRelease(rc.psWater);
     SafeRelease(rc.psWorldSky);
     SafeRelease(rc.skyVB);
     SafeRelease(rc.panoramaSRV);
@@ -470,15 +478,17 @@ static float gBrightnessVal = 0.5f;
 void SetBrightness(RenderContext& rc, float b) { gBrightnessVal = b; }
 
 void SetViewProj(RenderContext& rc, const XMMATRIX& m, float fogEnd,
-                 const SkyState* sky, float celestialOpacity, float starRotation) {
+                 const SkyState* sky, float celestialOpacity, float starRotation,
+                 float waterTime) {
     void* data = nullptr;
     if (SUCCEEDED(rc.perFrameCB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) {
         struct PerFrame {
             XMFLOAT4X4 vp;
             float brightness, fogStart, fogEnd, starRotation;
             XMFLOAT4 skyColorDaylight, fogColorStars, lightColorOpacity, twilight, sunDirection;
+            float waterTime;
         };
-        static_assert(sizeof(PerFrame) == 160, "Shader constant-buffer layout");
+        static_assert(sizeof(PerFrame) == 176, "Shader constant-buffer layout");
         PerFrame* pf = static_cast<PerFrame*>(data);
         const SkyState state = sky ? *sky : SkyState{};
         XMStoreFloat4x4(&pf->vp, m);
@@ -491,6 +501,7 @@ void SetViewProj(RenderContext& rc, const XMMATRIX& m, float fogEnd,
         pf->lightColorOpacity = {state.lightColor.x, state.lightColor.y, state.lightColor.z, celestialOpacity};
         pf->twilight = state.twilight;
         pf->sunDirection = {-sinf(state.sunAngle), cosf(state.sunAngle), 0, 0};
+        pf->waterTime = waterTime;
         rc.perFrameCB->Unmap();
     }
 }

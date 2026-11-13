@@ -15,6 +15,7 @@ cbuffer PerFrame : register(b0)
     float4 gLightColorOpacity;
     float4 gTwilight;
     float4 gSunDirection;
+    float gWaterTime;
 };
 
 Texture2D gAtlas : register(t0);
@@ -70,6 +71,29 @@ float4 PSMain(PSIn input) : SV_TARGET
     float2 atlasUV = input.tile + (floor(frac(input.uv) * tileSize) + 0.5f) * scale / 1024.0f;
     float4 tex = gAtlas.SampleLevel(gPoint, atlasUV, lod);
     clip(tex.a - 0.5f);
+    float3 light = saturate(input.shade * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
+    float3 dark = 1.0f - light;
+    light = lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
+    float3 col = tex.rgb * light * input.tint;
+    float fog = 0.0f;
+    if (gFogEnd > 0.0f) fog = smoothstep(gFogStart, gFogEnd, input.fogDepth);
+    col = lerp(col, gFogColorStars.rgb, fog);
+    return float4(col, tex.a);
+}
+
+// Liquid pass: water/lava keep their partial alpha (no opaque alpha clip) and
+// scroll their tile UV on the 20 TPS world clock so the surface animates.
+float4 PSMainWater(PSIn input) : SV_TARGET
+{
+    float2 uv = input.uv + float2(0.0f, gWaterTime);
+    float2 dx = ddx(uv) * 16.0f;
+    float2 dy = ddy(uv) * 16.0f;
+    float footprint2 = max(dot(dx, dx), dot(dy, dy));
+    float lod = clamp(floor(0.5f * log2(max(footprint2, 1.0f)) + 0.5f), 0.0f, 4.0f);
+    float scale = exp2(lod);
+    float tileSize = 16.0f / scale;
+    float2 atlasUV = input.tile + (floor(frac(uv) * tileSize) + 0.5f) * scale / 1024.0f;
+    float4 tex = gAtlas.SampleLevel(gPoint, atlasUV, lod);
     float3 light = saturate(input.shade * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
     float3 dark = 1.0f - light;
     light = lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
