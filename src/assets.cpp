@@ -332,6 +332,61 @@ const BlockDef BLOCK_DEFS[BLOCK_COUNT] = {
     {"ice",               "ice",                  "ice",                  "ice"},
     {"clay",              "clay",                 "clay",                 "clay"},
     {"snow",              "snow",                 "snow",                 "snow"},
+    {"deepslate",             "deepslate_top",          "deepslate",              "deepslate_top"},
+    {"cobbled_deepslate",     "cobbled_deepslate",      "cobbled_deepslate",      "cobbled_deepslate"},
+    {"polished_deepslate",    "polished_deepslate",     "polished_deepslate",     "polished_deepslate"},
+    {"deepslate_bricks",      "deepslate_bricks",       "deepslate_bricks",       "deepslate_bricks"},
+    {"deepslate_tiles",       "deepslate_tiles",        "deepslate_tiles",        "deepslate_tiles"},
+    {"deepslate_coal_ore",    "deepslate_coal_ore",     "deepslate_coal_ore",     "deepslate_coal_ore"},
+    {"deepslate_iron_ore",    "deepslate_iron_ore",     "deepslate_iron_ore",     "deepslate_iron_ore"},
+    {"deepslate_gold_ore",    "deepslate_gold_ore",     "deepslate_gold_ore",     "deepslate_gold_ore"},
+    {"deepslate_diamond_ore", "deepslate_diamond_ore",  "deepslate_diamond_ore",  "deepslate_diamond_ore"},
+    {"deepslate_redstone_ore","deepslate_redstone_ore", "deepslate_redstone_ore", "deepslate_redstone_ore"},
+    {"deepslate_lapis_ore",   "deepslate_lapis_ore",    "deepslate_lapis_ore",    "deepslate_lapis_ore"},
+    {"deepslate_emerald_ore", "deepslate_emerald_ore",  "deepslate_emerald_ore",  "deepslate_emerald_ore"},
+    {"deepslate_copper_ore",  "deepslate_copper_ore",   "deepslate_copper_ore",   "deepslate_copper_ore"},
+    {"copper_ore",            "copper_ore",             "copper_ore",             "copper_ore"},
+    {"emerald_ore",           "emerald_ore",            "emerald_ore",            "emerald_ore"},
+    {"coal_block",            "coal_block",             "coal_block",             "coal_block"},
+    {"iron_block",            "iron_block",             "iron_block",             "iron_block"},
+    {"gold_block",            "gold_block",             "gold_block",             "gold_block"},
+    {"diamond_block",         "diamond_block",          "diamond_block",          "diamond_block"},
+    {"emerald_block",         "emerald_block",          "emerald_block",          "emerald_block"},
+    {"redstone_block",        "redstone_block",         "redstone_block",         "redstone_block"},
+    {"lapis_block",           "lapis_block",            "lapis_block",            "lapis_block"},
+    {"copper_block",          "copper_block",           "copper_block",           "copper_block"},
+    {"netherite_block",       "netherite_block",        "netherite_block",        "netherite_block"},
+    {"raw_iron_block",        "raw_iron_block",         "raw_iron_block",         "raw_iron_block"},
+    {"raw_gold_block",        "raw_gold_block",         "raw_gold_block",         "raw_gold_block"},
+    {"raw_copper_block",      "raw_copper_block",       "raw_copper_block",       "raw_copper_block"},
+    {"netherrack",            "netherrack",             "netherrack",             "netherrack"},
+    {"soul_sand",             "soul_sand",              "soul_sand",              "soul_sand"},
+    {"glowstone",             "glowstone",              "glowstone",              "glowstone"},
+    {"magma",                 "magma",                  "magma",                  "magma"},
+    {"basalt",                "basalt_top",             "basalt_side",            "basalt_top"},
+    {"polished_basalt",       "polished_basalt_top",    "polished_basalt_side",   "polished_basalt_top"},
+    {"smooth_basalt",         "smooth_basalt",          "smooth_basalt",          "smooth_basalt"},
+    {"blackstone",            "blackstone_top",         "blackstone",             "blackstone_top"},
+    {"polished_blackstone",   "polished_blackstone",    "polished_blackstone",    "polished_blackstone"},
+    {"nether_bricks",         "nether_bricks",          "nether_bricks",          "nether_bricks"},
+    {"red_nether_bricks",     "red_nether_bricks",      "red_nether_bricks",      "red_nether_bricks"},
+    {"cracked_nether_bricks", "cracked_nether_bricks",  "cracked_nether_bricks",  "cracked_nether_bricks"},
+    {"quartz_block",          "quartz_block_top",       "quartz_block_side",      "quartz_block_bottom"},
+    {"terracotta",            "terracotta",             "terracotta",             "terracotta"},
+    {"orange_wool",           "orange_wool",            "orange_wool",            "orange_wool"},
+    {"magenta_wool",          "magenta_wool",           "magenta_wool",           "magenta_wool"},
+    {"light_blue_wool",       "light_blue_wool",        "light_blue_wool",        "light_blue_wool"},
+    {"green_wool",            "green_wool",             "green_wool",             "green_wool"},
+    {"brown_wool",            "brown_wool",             "brown_wool",             "brown_wool"},
+    {"cyan_wool",             "cyan_wool",              "cyan_wool",              "cyan_wool"},
+    {"purple_wool",           "purple_wool",            "purple_wool",            "purple_wool"},
+    {"pink_wool",             "pink_wool",              "pink_wool",              "pink_wool"},
+    {"gray_wool",             "gray_wool",              "gray_wool",              "gray_wool"},
+    {"light_gray_wool",       "light_gray_wool",        "light_gray_wool",        "light_gray_wool"},
+    {"amethyst_block",        "amethyst_block",         "amethyst_block",         "amethyst_block"},
+    {"dripstone_block",       "dripstone_block",        "dripstone_block",        "dripstone_block"},
+    {"moss_block",            "moss_block",             "moss_block",             "moss_block"},
+    {"purpur_block",          "purpur_block",           "purpur_block",           "purpur_block"},
 };
 
 const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
@@ -385,6 +440,61 @@ const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
     BF_SOLID | BF_OPAQUE,                           // ice
     BF_SOLID | BF_OPAQUE,                           // clay
     BF_SOLID | BF_OPAQUE,                           // snow
+    BF_SOLID | BF_OPAQUE,                           // deepslate
+    BF_SOLID | BF_OPAQUE,                           // cobbled_deepslate
+    BF_SOLID | BF_OPAQUE,                           // polished_deepslate
+    BF_SOLID | BF_OPAQUE,                           // deepslate_bricks
+    BF_SOLID | BF_OPAQUE,                           // deepslate_tiles
+    BF_SOLID | BF_OPAQUE,                           // deepslate_coal_ore
+    BF_SOLID | BF_OPAQUE,                           // deepslate_iron_ore
+    BF_SOLID | BF_OPAQUE,                           // deepslate_gold_ore
+    BF_SOLID | BF_OPAQUE,                           // deepslate_diamond_ore
+    BF_SOLID | BF_OPAQUE,                           // deepslate_redstone_ore
+    BF_SOLID | BF_OPAQUE,                           // deepslate_lapis_ore
+    BF_SOLID | BF_OPAQUE,                           // deepslate_emerald_ore
+    BF_SOLID | BF_OPAQUE,                           // deepslate_copper_ore
+    BF_SOLID | BF_OPAQUE,                           // copper_ore
+    BF_SOLID | BF_OPAQUE,                           // emerald_ore
+    BF_SOLID | BF_OPAQUE,                           // coal_block
+    BF_SOLID | BF_OPAQUE,                           // iron_block
+    BF_SOLID | BF_OPAQUE,                           // gold_block
+    BF_SOLID | BF_OPAQUE,                           // diamond_block
+    BF_SOLID | BF_OPAQUE,                           // emerald_block
+    BF_SOLID | BF_OPAQUE,                           // redstone_block
+    BF_SOLID | BF_OPAQUE,                           // lapis_block
+    BF_SOLID | BF_OPAQUE,                           // copper_block
+    BF_SOLID | BF_OPAQUE,                           // netherite_block
+    BF_SOLID | BF_OPAQUE,                           // raw_iron_block
+    BF_SOLID | BF_OPAQUE,                           // raw_gold_block
+    BF_SOLID | BF_OPAQUE,                           // raw_copper_block
+    BF_SOLID | BF_OPAQUE,                           // netherrack
+    BF_SOLID | BF_OPAQUE,                           // soul_sand
+    BF_SOLID | BF_OPAQUE,                           // glowstone
+    BF_SOLID | BF_OPAQUE,                           // magma
+    BF_SOLID | BF_OPAQUE,                           // basalt
+    BF_SOLID | BF_OPAQUE,                           // polished_basalt
+    BF_SOLID | BF_OPAQUE,                           // smooth_basalt
+    BF_SOLID | BF_OPAQUE,                           // blackstone
+    BF_SOLID | BF_OPAQUE,                           // polished_blackstone
+    BF_SOLID | BF_OPAQUE,                           // nether_bricks
+    BF_SOLID | BF_OPAQUE,                           // red_nether_bricks
+    BF_SOLID | BF_OPAQUE,                           // cracked_nether_bricks
+    BF_SOLID | BF_OPAQUE,                           // quartz_block
+    BF_SOLID | BF_OPAQUE,                           // terracotta
+    BF_SOLID | BF_OPAQUE,                           // orange_wool
+    BF_SOLID | BF_OPAQUE,                           // magenta_wool
+    BF_SOLID | BF_OPAQUE,                           // light_blue_wool
+    BF_SOLID | BF_OPAQUE,                           // green_wool
+    BF_SOLID | BF_OPAQUE,                           // brown_wool
+    BF_SOLID | BF_OPAQUE,                           // cyan_wool
+    BF_SOLID | BF_OPAQUE,                           // purple_wool
+    BF_SOLID | BF_OPAQUE,                           // pink_wool
+    BF_SOLID | BF_OPAQUE,                           // gray_wool
+    BF_SOLID | BF_OPAQUE,                           // light_gray_wool
+    BF_SOLID | BF_OPAQUE,                           // amethyst_block
+    BF_SOLID | BF_OPAQUE,                           // dripstone_block
+    BF_SOLID | BF_OPAQUE,                           // moss_block
+    BF_SOLID | BF_OPAQUE,                           // purpur_block
 };
 
 static const ToolDef TOOLS[] = {
@@ -421,7 +531,7 @@ const ToolDef* FindTool(uint8_t id) {
 bool IsValidItem(int id) {
     return (id >= 0 && id < BLOCK_COUNT) || id == ITEM_STICK ||
         (id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD) ||
-        (id >= ITEM_COAL && id <= ITEM_NETHERITE_INGOT);
+        (id >= ITEM_COAL && id <= ITEM_RAW_COPPER);
 }
 
 const char* ItemName(uint8_t id) {
@@ -429,8 +539,8 @@ const char* ItemName(uint8_t id) {
     if (id == ITEM_STICK) return "stick";
     if (const ToolDef* tool = FindTool(id)) return tool->name;
     static const char* materials[] = {"coal", "raw_iron", "raw_gold", "diamond", "redstone", "lapis_lazuli",
-                                      "iron_ingot", "gold_ingot", "netherite_ingot"};
-    if (id >= ITEM_COAL && id <= ITEM_NETHERITE_INGOT) return materials[id - ITEM_COAL];
+                                      "iron_ingot", "gold_ingot", "netherite_ingot", "emerald", "raw_copper"};
+    if (id >= ITEM_COAL && id <= ITEM_RAW_COPPER) return materials[id - ITEM_COAL];
     return "unknown";
 }
 

@@ -188,6 +188,18 @@ bool IsTreeLeaf(uint8_t block) {
     return block == BLOCK_OAK_LEAVES || block == BLOCK_BIRCH_LEAVES || block == BLOCK_SPRUCE_LEAVES;
 }
 
+uint8_t DeepslateOre(uint8_t ore) {
+    switch (ore) {
+        case BLOCK_COAL_ORE: return BLOCK_DEEPSLATE_COAL_ORE;
+        case BLOCK_IRON_ORE: return BLOCK_DEEPSLATE_IRON_ORE;
+        case BLOCK_GOLD_ORE: return BLOCK_DEEPSLATE_GOLD_ORE;
+        case BLOCK_DIAMOND_ORE: return BLOCK_DEEPSLATE_DIAMOND_ORE;
+        case BLOCK_REDSTONE_ORE: return BLOCK_DEEPSLATE_REDSTONE_ORE;
+        case BLOCK_LAPIS_ORE: return BLOCK_DEEPSLATE_LAPIS_ORE;
+        default: return ore;
+    }
+}
+
 } // namespace
 
 TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z) {
@@ -247,21 +259,22 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t se
             int veinCell = -1;
             ClimateVein vein;
             for (int y = 0; y <= h; ++y) {
-                uint8_t block = BLOCK_STONE;
+                uint8_t block = y < 8 ? BLOCK_DEEPSLATE : BLOCK_STONE;
                 if (y == 0) block = BLOCK_BEDROCK;
                 else if (river && y >= h - 2) block = BLOCK_GRAVEL;
                 else if (sandy && y >= h - 3) block = BLOCK_SAND;
                 else if (sandy && y >= h - 6) block = BLOCK_SANDSTONE;
                 else if (y == h) block = snowy ? BLOCK_SNOW : (rocky ? BLOCK_STONE : BLOCK_GRASS);
                 else if (!rocky && y >= h - 3) block = BLOCK_DIRT;
-                if (block == BLOCK_STONE) {
+                if (block == BLOCK_STONE || block == BLOCK_DEEPSLATE) {
                     const int cellY = y / 8;
                     if (cellY != veinCell) {
                         vein = SampleClimateVein(wx, cellY, wz, seed);
                         veinCell = cellY;
                     }
                     const float dy = (float(y) - vein.centerY) * vein.invRadiusY;
-                    if (y < h - 3 && y < vein.maxY && vein.lateral + dy * dy < 1.0f) block = vein.block;
+                    if (y < h - 3 && y < vein.maxY && vein.lateral + dy * dy < 1.0f && vein.block != BLOCK_STONE)
+                        block = y < 8 ? DeepslateOre(vein.block) : vein.block;
                 }
                 // Keep a solid roof and seal cave faces beside water, including across chunk edges.
                 if (!submerged && y > 6 && y < h - 5 && (y > CLIMATE_SEA || y <= waterFloor)) {

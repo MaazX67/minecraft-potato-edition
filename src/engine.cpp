@@ -379,10 +379,13 @@ static ToolKind EffectiveTool(uint8_t b) {
         b == BLOCK_SANDSTONE || b == BLOCK_SMOOTH_STONE || b == BLOCK_STONE_BRICKS ||
         b == BLOCK_MOSSY_COBBLE || b == BLOCK_OBSIDIAN || b == BLOCK_FURNACE || b == BLOCK_BRICK || b == BLOCK_ICE)
         return ToolKind::Pickaxe;
+    if ((b >= BLOCK_DEEPSLATE && b <= BLOCK_QUARTZ_BLOCK && b != BLOCK_SOUL_SAND && b != BLOCK_GLOWSTONE) ||
+        b == BLOCK_TERRACOTTA || b == BLOCK_AMETHYST_BLOCK || b == BLOCK_DRIPSTONE_BLOCK || b == BLOCK_PURPUR_BLOCK)
+        return ToolKind::Pickaxe;
     if (b == BLOCK_PLANKS || b == BLOCK_LOG || (b >= BLOCK_SPRUCE_PLANKS && b <= BLOCK_BIRCH_LOG) ||
         b == BLOCK_CRAFTING_TABLE || b == BLOCK_BOOKSHELF) return ToolKind::Axe;
     if (b == BLOCK_DIRT || b == BLOCK_GRASS || b == BLOCK_SAND || b == BLOCK_GRAVEL ||
-        b == BLOCK_CLAY || b == BLOCK_SNOW) return ToolKind::Shovel;
+        b == BLOCK_CLAY || b == BLOCK_SNOW || b == BLOCK_SOUL_SAND) return ToolKind::Shovel;
     return ToolKind::None;
 }
 
@@ -402,6 +405,24 @@ float BlockHardness(uint8_t b) {
     if (b == BLOCK_GLASS) return 0.3f;
     if (b >= BLOCK_OAK_LEAVES && b <= BLOCK_BIRCH_LEAVES) return 0.2f;
     if (b == BLOCK_SNOW) return 0.2f;
+    if (b == BLOCK_DEEPSLATE) return 3;
+    if (b >= BLOCK_COBBLED_DEEPSLATE && b <= BLOCK_DEEPSLATE_TILES) return 3.5f;
+    if (b >= BLOCK_DEEPSLATE_COAL_ORE && b <= BLOCK_DEEPSLATE_COPPER_ORE) return 4.5f;
+    if (b == BLOCK_COPPER_ORE || b == BLOCK_EMERALD_ORE) return 3;
+    if (b == BLOCK_NETHERITE_BLOCK) return 50;
+    if (b == BLOCK_GOLD_BLOCK || b == BLOCK_LAPIS_BLOCK || b == BLOCK_COPPER_BLOCK) return 3;
+    if (b >= BLOCK_COAL_BLOCK && b <= BLOCK_RAW_COPPER_BLOCK) return 5;
+    if (b == BLOCK_NETHERRACK) return 0.4f;
+    if (b == BLOCK_SOUL_SAND || b == BLOCK_MAGMA) return 0.5f;
+    if (b == BLOCK_GLOWSTONE) return 0.3f;
+    if (b >= BLOCK_BASALT && b <= BLOCK_SMOOTH_BASALT) return 1.25f;
+    if (b == BLOCK_BLACKSTONE) return 1.5f;
+    if (b >= BLOCK_POLISHED_BLACKSTONE && b <= BLOCK_CRACKED_NETHER_BRICKS) return 2;
+    if (b == BLOCK_QUARTZ_BLOCK) return 0.8f;
+    if (b == BLOCK_TERRACOTTA) return 1.25f;
+    if (b >= BLOCK_ORANGE_WOOL && b <= BLOCK_LIGHT_GRAY_WOOL) return 0.8f;
+    if (b == BLOCK_MOSS_BLOCK) return 0.1f;
+    if (b == BLOCK_AMETHYST_BLOCK || b == BLOCK_DRIPSTONE_BLOCK || b == BLOCK_PURPUR_BLOCK) return 1.5f;
     return 0.5f;
 }
 
@@ -409,9 +430,17 @@ bool CanHarvest(uint8_t b, uint8_t item) {
     if (BlockHardness(b) < 0) return false;
     if (EffectiveTool(b) != ToolKind::Pickaxe || b == BLOCK_ICE) return true;
     const ToolDef* tool = FindTool(item);
-    const int required = b == BLOCK_OBSIDIAN ? 3 :
-        (b == BLOCK_DIAMOND_ORE || b == BLOCK_GOLD_ORE || b == BLOCK_REDSTONE_ORE ? 2 :
-         (b == BLOCK_IRON_ORE || b == BLOCK_LAPIS_ORE ? 1 : 0));
+    const int required =
+        (b == BLOCK_OBSIDIAN || b == BLOCK_NETHERITE_BLOCK) ? 3 :
+        (b == BLOCK_DIAMOND_ORE || b == BLOCK_GOLD_ORE || b == BLOCK_REDSTONE_ORE || b == BLOCK_EMERALD_ORE ||
+         b == BLOCK_DEEPSLATE_GOLD_ORE || b == BLOCK_DEEPSLATE_DIAMOND_ORE || b == BLOCK_DEEPSLATE_REDSTONE_ORE ||
+         b == BLOCK_DEEPSLATE_EMERALD_ORE || b == BLOCK_GOLD_BLOCK || b == BLOCK_DIAMOND_BLOCK ||
+         b == BLOCK_EMERALD_BLOCK || b == BLOCK_REDSTONE_BLOCK || b == BLOCK_RAW_GOLD_BLOCK ||
+         b == BLOCK_AMETHYST_BLOCK) ? 2 :
+        (b == BLOCK_IRON_ORE || b == BLOCK_LAPIS_ORE || b == BLOCK_COPPER_ORE ||
+         b == BLOCK_DEEPSLATE_IRON_ORE || b == BLOCK_DEEPSLATE_LAPIS_ORE || b == BLOCK_DEEPSLATE_COPPER_ORE ||
+         b == BLOCK_IRON_BLOCK || b == BLOCK_LAPIS_BLOCK || b == BLOCK_COPPER_BLOCK ||
+         b == BLOCK_RAW_IRON_BLOCK || b == BLOCK_RAW_COPPER_BLOCK) ? 1 : 0;
     return tool && tool->kind == ToolKind::Pickaxe && tool->tier >= required;
 }
 
@@ -441,6 +470,15 @@ ItemSlot BlockDrops(uint8_t b, uint8_t item) {
         case BLOCK_DIAMOND_ORE: return {ITEM_DIAMOND, 1};
         case BLOCK_REDSTONE_ORE: return {ITEM_REDSTONE, 4};
         case BLOCK_LAPIS_ORE: return {ITEM_LAPIS, 4};
+        case BLOCK_DEEPSLATE: return {BLOCK_COBBLED_DEEPSLATE, 1};
+        case BLOCK_DEEPSLATE_COAL_ORE: return {ITEM_COAL, 1};
+        case BLOCK_DEEPSLATE_IRON_ORE: return {ITEM_RAW_IRON, 1};
+        case BLOCK_DEEPSLATE_GOLD_ORE: return {ITEM_RAW_GOLD, 1};
+        case BLOCK_DEEPSLATE_DIAMOND_ORE: return {ITEM_DIAMOND, 1};
+        case BLOCK_DEEPSLATE_REDSTONE_ORE: return {ITEM_REDSTONE, 4};
+        case BLOCK_DEEPSLATE_LAPIS_ORE: return {ITEM_LAPIS, 4};
+        case BLOCK_DEEPSLATE_EMERALD_ORE: case BLOCK_EMERALD_ORE: return {ITEM_EMERALD, 1};
+        case BLOCK_DEEPSLATE_COPPER_ORE: case BLOCK_COPPER_ORE: return {ITEM_RAW_COPPER, 2};
         case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES:
         case BLOCK_GLASS: case BLOCK_ICE: case BLOCK_AIR: return {};
         default: return {b, 1};

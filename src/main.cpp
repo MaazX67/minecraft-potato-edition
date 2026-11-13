@@ -443,7 +443,7 @@ static void RefreshWorldList() {
             if (!save.is_object()) continue;
             const int format = save.at("format").get<int>();
             WorldGenerator generator;
-            if ((format != 1 && format != 2) ||
+            if ((format != 1 && format != 2 && format != 3) ||
                 !ParseGenerator(save.at("generator").get<std::string>(), generator)) continue;
             const int mode = save.at("mode").get<int>();
             const std::string details = std::string(mode == 1 ? "Creative" : "Survival") +
@@ -494,7 +494,7 @@ static bool SaveCurrentWorld() {
     GetSystemTimeAsFileTime(&now);
     const uint64_t timestamp = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
     const nlohmann::json data = {
-        {"format", 2}, {"generator", GeneratorName(gWorld->Generator())}, {"name", gWorldName},
+        {"format", 3}, {"generator", GeneratorName(gWorld->Generator())}, {"name", gWorldName},
         {"worldTime", gWorldClock.Ticks()},
         {"savedAt", timestamp}, {"seed", gWorldSeed}, {"mode", gGameMode},
         {"difficulty", gSettings.difficulty}, {"position", {gBody.x, gBody.y, gBody.z}},
@@ -522,7 +522,7 @@ static bool LoadWorldSave(const std::string& path) {
         if (!data.is_object()) return false;
         const int format = data.at("format").get<int>();
         WorldGenerator generator;
-        if ((format != 1 && format != 2) ||
+        if ((format != 1 && format != 2 && format != 3) ||
             !ParseGenerator(data.at("generator").get<std::string>(), generator)) return false;
         uint64_t worldTime = 0;
         if (format == 2) {
@@ -539,10 +539,13 @@ static bool LoadWorldSave(const std::string& path) {
         for (float v : position) if (!std::isfinite(v) || fabsf(v) > 1000000) return false;
         for (float v : rotation) if (!std::isfinite(v) || fabsf(v) > 1000000) return false;
         if (position[1] < -64 || position[1] > 1024) return false;
+        const bool legacy = format < 3;
         InventoryState inventory;
-        auto readSlot = [](const nlohmann::json& value, ItemSlot& s) {
+        auto readSlot = [legacy](const nlohmann::json& value, ItemSlot& s) {
             if (!value.is_array() || value.size() != 2) return false;
-            const int id = value.at(0).get<int>(), count = value.at(1).get<int>();
+            int id = value.at(0).get<int>();
+            const int count = value.at(1).get<int>();
+            if (legacy && id >= 64 && id <= 104) id += 64;
             if (!IsValidItem(id) || count < 0 || count > ItemStackLimit(uint8_t(id)) || (id == 0) != (count == 0)) return false;
             s = {uint8_t(id), count};
             return true;
@@ -569,11 +572,13 @@ static bool LoadWorldSave(const std::string& path) {
             for (int i = 0; i < 9; ++i) if (!readDamage(damage.at("craft").at(i), inventory.craft[i])) return false;
             if (!readDamage(damage.at("cursor"), inventory.cursor)) return false;
         }
-        const auto hotbar = data.at("hotbar").get<std::vector<uint8_t>>();
+        auto hotbar = data.at("hotbar").get<std::vector<uint8_t>>();
         if (hotbar.size() != 9) return false;
-        for (const auto& value : data.at("hotbar")) {
-            const int id = value.get<int>();
+        for (auto& slotId : hotbar) {
+            int id = slotId;
+            if (legacy && id >= 64 && id <= 104) id += 64;
             if (!IsValidItem(id)) return false;
+            slotId = uint8_t(id);
         }
         const int selected = data.at("selected").get<int>();
         const int health = data.at("health").get<int>(), hunger = data.at("hunger").get<int>();

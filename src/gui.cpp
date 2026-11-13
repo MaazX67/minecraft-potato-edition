@@ -878,7 +878,7 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
 namespace {
 constexpr int INV_COLS = 9;
 constexpr int INV_CELL = 40;
-constexpr int INV_ROWS = (BLOCK_COUNT - 1 + 34 + INV_COLS - 1) / INV_COLS;
+constexpr int INV_ROWS = (BLOCK_COUNT - 1 + 36 + INV_COLS - 1) / INV_COLS;
 constexpr float INV_PAD = 12;
 constexpr float INV_W = INV_COLS * INV_CELL + INV_PAD * 2;
 constexpr float INV_TITLE_H = 40;

@@ -12,7 +12,7 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 
 ## What works so far
 
-- Versioned climate terrain with nine biome categories, rivers, mountains, layered surfaces, coherent ore deposits, underground caves and oak/birch/spruce trees; legacy terrain and Superflat remain available
+- Versioned climate terrain with nine biome categories, rivers, mountains, layered surfaces, a deepslate layer below y=8, coherent ore deposits with deepslate variants, underground caves and oak/birch/spruce trees; legacy terrain and Superflat remain available
 - Create New World: Game / World / More tabs, functional world type, name, seed, draft difficulty and Survival/Creative modes; unavailable features stay disabled
 - Seeds currently use a 32-bit generator; terrain and seed results do not match Java Edition
 - Select World list with paging, new-world creation, and Save and Quit; player state and changed blocks survive restarting or chunk eviction
@@ -32,7 +32,7 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 - Local/offline profiles with username, nine installed default skins, wide/slim models, and a textured inventory preview; no Microsoft account integration
 - Survival inventory and crafting table: stack counts, splitting, shift transfers, ingredient consumption, and safe return of cursor/crafting items
 - HUD with hearts, hunger, hotbar and the attack-cooldown indicator
-- 50 blocks using the real vanilla textures
+- 105 blocks using the real vanilla textures, including the deepslate family, deepslate/copper/emerald ores, mineral storage blocks, nether/basalt/blackstone/quartz blocks, terracotta and the full wool palette
 - Headless regression tests run on every cloud build, covering camera frusta, mesh orientation, item conservation, crafting and survival rules
 - Native Windows smoke tests exercise real clicks and compare screenshot sidecars against expected inventory state
 
@@ -74,7 +74,7 @@ Run the native checks on Windows with the downloaded executable and an existing 
 
 The script launches isolated test instances, checks crafting and save/reload after a process restart, and exercises save failures and damaged edit streams. It also captures noon, sunset, midnight, sunrise and all eight moon phases, checks clock/pause behaviour and tests world-time persistence and old-save loading. New fixtures exercise timed mining, crack stages, item textures, durability, terrain occlusion, zombie/player damage, knockback, critical hits and climate terrain. Test profiles and worlds stay in the output directory; regular preferences live under `%APPDATA%\MinecraftPotatoEdition\preferences.json`.
 
-Worlds live under `%APPDATA%\MinecraftPotatoEdition\saves\world-*\world.potato`. Each file contains the name, generator version, seed, game mode, difficulty, world time, position, rotation, health/hunger, inventory, optional tool wear and block edits in a versioned MessagePack container. Existing saves retain their legacy generator; newly created worlds default to climate terrain. Zombies are session-only and are not saved yet. Terrain remains 0–255 blocks high rather than Java's -64–319. Format-two saves include time; previous format-one worlds load at day zero and upgrade on their next save. Save and Quit and normal window close write a temporary file before atomically replacing the previous save. There is no periodic autosave yet. This is a Potato-only format, not Java's Anvil/NBT format; do not open Java worlds with it.
+Worlds live under `%APPDATA%\MinecraftPotatoEdition\saves\world-*\world.potato`. Each file contains the name, generator version, seed, game mode, difficulty, world time, position, rotation, health/hunger, inventory, optional tool wear and block edits in a versioned MessagePack container. Existing saves retain their legacy generator; newly created worlds default to climate terrain. Zombies are session-only and are not saved yet. Terrain remains 0–255 blocks high rather than Java's -64–319. Format-three saves are current; format-two added world time and format-one worlds load at day zero. Older saves stored items at IDs 64–104 and are remapped to the new 128+ item range on load, then upgraded on their next save. Save and Quit and normal window close write a temporary file before atomically replacing the previous save. There is no periodic autosave yet. This is a Potato-only format, not Java's Anvil/NBT format; do not open Java worlds with it.
 
 ## Still to do
 

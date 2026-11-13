@@ -436,7 +436,7 @@ static void TestToolDefinitions() {
     for (int id = 0; id < 256; ++id) {
         const bool tool = id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD;
         const bool expected = id < BLOCK_COUNT || id == ITEM_STICK || tool ||
-                              (id >= ITEM_COAL && id <= ITEM_NETHERITE_INGOT);
+                              (id >= ITEM_COAL && id <= ITEM_RAW_COPPER);
         if (IsValidItem(id) != expected || (FindTool(uint8_t(id)) != nullptr) != tool) itemRanges = false;
         if (expected && ItemStackLimit(uint8_t(id)) != (tool ? 1 : 64)) itemRanges = false;
         if (expected && std::string(ItemName(uint8_t(id))) == "unknown") itemRanges = false;
@@ -900,6 +900,58 @@ static void TestClimateGeneration() {
            caveAir, oreCounts[0], oreCounts[1], oreCounts[2], oreCounts[3], oreCounts[4], oreCounts[5]);
 }
 
+static void TestBlockExpansion() {
+    CHECK(BLOCK_COUNT == 105 && ITEM_STICK == 128 && ITEM_RAW_COPPER == 170,
+          "block registry grows to 105 entries with items relocated above the block range");
+    bool solid = true;
+    for (int b = BLOCK_DEEPSLATE; b < BLOCK_COUNT; ++b) {
+        if (BLOCK_FLAGS[b] != (BF_SOLID | BF_OPAQUE) || !BLOCK_DEFS[b].name || !BLOCK_DEFS[b].side) solid = false;
+    }
+    CHECK(solid, "all 55 added blocks are solid opaque cubes with texture definitions");
+    CHECK(BlockDrops(BLOCK_DEEPSLATE, ITEM_DIAMOND_PICKAXE).id == BLOCK_COBBLED_DEEPSLATE &&
+          BlockDrops(BLOCK_DEEPSLATE_DIAMOND_ORE, ITEM_IRON_PICKAXE).id == ITEM_DIAMOND &&
+          BlockDrops(BLOCK_DEEPSLATE_DIAMOND_ORE, ITEM_STONE_PICKAXE).Empty() &&
+          BlockDrops(BLOCK_DEEPSLATE_COPPER_ORE, ITEM_STONE_PICKAXE).id == ITEM_RAW_COPPER &&
+          BlockDrops(BLOCK_DEEPSLATE_COPPER_ORE, ITEM_WOOD_PICKAXE).Empty() &&
+          BlockDrops(BLOCK_EMERALD_ORE, ITEM_IRON_PICKAXE).id == ITEM_EMERALD &&
+          BlockDrops(BLOCK_EMERALD_ORE, ITEM_STONE_PICKAXE).Empty() &&
+          BlockDrops(BLOCK_COPPER_ORE, ITEM_STONE_PICKAXE).count == 2,
+          "deepslate/copper/emerald ores enforce harvest tiers and yield the correct material");
+    CHECK(BlockDrops(BLOCK_IRON_BLOCK, ITEM_STONE_PICKAXE).id == BLOCK_IRON_BLOCK &&
+          BlockDrops(BLOCK_IRON_BLOCK, 0).Empty() &&
+          BlockDrops(BLOCK_DIAMOND_BLOCK, ITEM_IRON_PICKAXE).id == BLOCK_DIAMOND_BLOCK &&
+          BlockDrops(BLOCK_DIAMOND_BLOCK, ITEM_STONE_PICKAXE).Empty() &&
+          BlockDrops(BLOCK_NETHERITE_BLOCK, ITEM_DIAMOND_PICKAXE).id == BLOCK_NETHERITE_BLOCK &&
+          BlockDrops(BLOCK_NETHERITE_BLOCK, ITEM_IRON_PICKAXE).Empty(),
+          "mineral storage blocks drop themselves and enforce pickaxe tiers");
+    CHECK(CanHarvest(BLOCK_ORANGE_WOOL, 0) && CanHarvest(BLOCK_GLOWSTONE, 0) &&
+          CanHarvest(BLOCK_SOUL_SAND, 0) && !CanHarvest(BLOCK_NETHERRACK, 0) &&
+          CanHarvest(BLOCK_NETHERRACK, ITEM_WOOD_PICKAXE) &&
+          BlockDrops(BLOCK_PURPUR_BLOCK, ITEM_WOOD_PICKAXE).id == BLOCK_PURPUR_BLOCK,
+          "wool/glowstone/soul sand break by hand while netherrack needs a pickaxe");
+    const uint32_t seed = 1337;
+    PerlinNoise noise(seed);
+    std::vector<uint8_t> blocks(CHUNK_VOL);
+    GenerateClimateChunk(blocks.data(), noise, seed, 0, 0);
+    bool deepslate = false;
+    for (int y = 1; y < 8 && !deepslate; ++y)
+        for (int i = 0; i < CHUNK_X * CHUNK_Z; ++i)
+            if (blocks[i + CHUNK_X * CHUNK_Z * y] == BLOCK_DEEPSLATE) { deepslate = true; break; }
+    CHECK(deepslate, "climate generation places a deepslate layer below y=8");
+    bool deepOre = false;
+    for (int cz = -2; cz <= 2 && !deepOre; ++cz) {
+        for (int cx = -2; cx <= 2 && !deepOre; ++cx) {
+            GenerateClimateChunk(blocks.data(), noise, seed, cx, cz);
+            for (int y = 1; y < 8 && !deepOre; ++y)
+                for (int i = 0; i < CHUNK_X * CHUNK_Z; ++i) {
+                    const uint8_t b = blocks[i + CHUNK_X * CHUNK_Z * y];
+                    if (b >= BLOCK_DEEPSLATE_COAL_ORE && b <= BLOCK_DEEPSLATE_COPPER_ORE) { deepOre = true; break; }
+                }
+        }
+    }
+    CHECK(deepOre, "climate generation converts deep ores into deepslate ore variants");
+}
+
 int main() {
     TestShaders();
     TestSkyTimeline();
@@ -910,6 +962,7 @@ int main() {
     TestMiningAndDurability();
     TestHurtAndZombies();
     TestClimateGeneration();
+    TestBlockExpansion();
 
     // --- Perlin determinism and bounds ---
     PerlinNoise a(1337), b(1337), c(7);
