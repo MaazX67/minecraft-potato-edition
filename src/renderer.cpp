@@ -103,6 +103,20 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     psSkyBlob->Release();
     if (FAILED(hr)) { vsBlob->Release(); return false; }
 
+    ID3DBlob* extra = nullptr;
+    if (!CompileOne(shaderSource, "PSMainWorldSky", "ps_4_0", &extra, hwnd)) {
+        vsBlob->Release(); return false;
+    }
+    hr = rc.device->CreatePixelShader(extra->GetBufferPointer(), extra->GetBufferSize(), &rc.psWorldSky);
+    extra->Release();
+    if (FAILED(hr)) { vsBlob->Release(); return false; }
+    if (!CompileOne(shaderSource, "PSMainCelestial", "ps_4_0", &extra, hwnd)) {
+        vsBlob->Release(); return false;
+    }
+    hr = rc.device->CreatePixelShader(extra->GetBufferPointer(), extra->GetBufferSize(), &rc.psCelestial);
+    extra->Release();
+    if (FAILED(hr)) { vsBlob->Release(); return false; }
+
     const D3D10_INPUT_ELEMENT_DESC elems[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D10_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 12, D3D10_INPUT_PER_VERTEX_DATA, 0},
@@ -116,7 +130,7 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     if (FAILED(hr)) return false;
 
     D3D10_BUFFER_DESC cbd = {};
-    cbd.ByteWidth = sizeof(XMFLOAT4X4) + 16; // matrix + brightness + fog + pad
+    cbd.ByteWidth = sizeof(XMFLOAT4X4) + 96;
     cbd.Usage = D3D10_USAGE_DYNAMIC;
     cbd.BindFlags = D3D10_BIND_CONSTANT_BUFFER;
     cbd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
@@ -149,6 +163,9 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     bd.BlendOpAlpha = D3D10_BLEND_OP_ADD;
     bd.RenderTargetWriteMask[0] = D3D10_COLOR_WRITE_ENABLE_ALL;
     hr = rc.device->CreateBlendState(&bd, &rc.alphaBlend);
+    if (FAILED(hr)) return false;
+    bd.DestBlend = D3D10_BLEND_ONE;
+    hr = rc.device->CreateBlendState(&bd, &rc.additiveBlend);
     if (FAILED(hr)) return false;
 
     D3D10_DEPTH_STENCIL_DESC dsd = {};
@@ -206,10 +223,60 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     D3D10_SUBRESOURCE_DATA ssub = {};
     ssub.pSysMem = sky;
     if (FAILED(rc.device->CreateBuffer(&sbd, &ssub, &rc.skyVB))) return false;
+
+    std::vector<MeshVertex> stars;
+    stars.reserve(1500 * 6);
+    uint32_t random = 10842;
+    auto next = [&]() {
+        random = random * 1664525u + 1013904223u;
+        return float(random >> 8) / 16777216.0f;
+    };
+    for (int i = 0; i < 1500; ++i) {
+        const float y = next() * 2.0f - 1.0f;
+        const float azimuth = next() * XM_2PI;
+        const float radius = sqrtf(1.0f - y * y);
+        const XMVECTOR direction = XMVectorSet(radius * cosf(azimuth), y, radius * sinf(azimuth), 0);
+        const XMVECTOR reference = fabsf(y) > 0.9f ? XMVectorSet(1, 0, 0, 0) : XMVectorSet(0, 1, 0, 0);
+        const XMVECTOR right = XMVector3Normalize(XMVector3Cross(reference, direction));
+        const XMVECTOR up = XMVector3Cross(direction, right);
+        const float size = 0.15f + next() * 0.1f;
+        const float rotation = next() * XM_2PI;
+        const XMVECTOR r = XMVectorScale(XMVectorAdd(XMVectorScale(right, cosf(rotation)),
+            XMVectorScale(up, sinf(rotation))), size);
+        const XMVECTOR u = XMVectorScale(XMVectorSubtract(XMVectorScale(up, cosf(rotation)),
+            XMVectorScale(right, sinf(rotation))), size);
+        const XMVECTOR center = XMVectorScale(direction, 100.0f);
+        const int corners[6] = {0, 1, 2, 0, 2, 3};
+        const float uv[4][2] = {{0,0}, {1,0}, {1,1}, {0,1}};
+        for (int corner : corners) {
+            const XMVECTOR p = XMVectorAdd(center, XMVectorAdd(
+                XMVectorScale(r, corner == 0 || corner == 3 ? -1.0f : 1.0f),
+                XMVectorScale(u, corner < 2 ? 1.0f : -1.0f)));
+            XMFLOAT3 position;
+            XMStoreFloat3(&position, p);
+            stars.push_back({position.x, position.y, position.z, 0, 0,
+                uv[corner][0], uv[corner][1], 15, 1, 1, 1});
+        }
+    }
+    rc.starVertexCount = UINT(stars.size());
+    sbd.ByteWidth = UINT(stars.size() * sizeof(MeshVertex));
+    ssub.pSysMem = stars.data();
+    if (FAILED(rc.device->CreateBuffer(&sbd, &ssub, &rc.starsVB))) return false;
+    sbd.ByteWidth = 6 * UINT(sizeof(MeshVertex));
+    sbd.Usage = D3D10_USAGE_DYNAMIC;
+    sbd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
+    if (FAILED(rc.device->CreateBuffer(&sbd, nullptr, &rc.celestialVB))) return false;
     return true;
 }
 
 void ShutdownRenderer(RenderContext& rc) {
+    for (auto& moon : rc.moonSRV) SafeRelease(moon);
+    SafeRelease(rc.sunSRV);
+    SafeRelease(rc.celestialVB);
+    SafeRelease(rc.starsVB);
+    SafeRelease(rc.additiveBlend);
+    SafeRelease(rc.psCelestial);
+    SafeRelease(rc.psWorldSky);
     SafeRelease(rc.skyVB);
     SafeRelease(rc.panoramaSRV);
     SafeRelease(rc.psSky);
@@ -353,20 +420,52 @@ bool CreatePanorama(RenderContext& rc, AssetStore& store) {
     return SUCCEEDED(hr);
 }
 
+bool CreateCelestials(RenderContext& rc, AssetStore& store) {
+    auto load = [&](const std::string& path) {
+        std::vector<uint8_t> bytes, pixels;
+        int w = 0, h = 0;
+        if (!store.ReadFile(path, bytes) || !DecodePNGAny(bytes, pixels, w, h))
+            return static_cast<ID3D10ShaderResourceView*>(nullptr);
+        return CreateTextureSRV(rc, pixels.data(), w, h);
+    };
+    const std::string root = "minecraft/textures/environment/celestial/";
+    rc.sunSRV = load(root + "sun.png");
+    const char* phases[8] = {"full_moon", "waning_gibbous", "third_quarter", "waning_crescent",
+        "new_moon", "waxing_crescent", "first_quarter", "waxing_gibbous"};
+    bool loaded = rc.sunSRV != nullptr;
+    for (int i = 0; i < 8; ++i) {
+        rc.moonSRV[i] = load(root + "moon/" + phases[i] + ".png");
+        loaded = loaded && rc.moonSRV[i] != nullptr;
+    }
+    return loaded;
+}
+
 static float gBrightnessVal = 0.5f;
 
 void SetBrightness(RenderContext& rc, float b) { gBrightnessVal = b; }
 
-void SetViewProj(RenderContext& rc, const XMMATRIX& m, float fogEnd) {
+void SetViewProj(RenderContext& rc, const XMMATRIX& m, float fogEnd,
+                 const SkyState* sky, float celestialOpacity, float starRotation) {
     void* data = nullptr;
     if (SUCCEEDED(rc.perFrameCB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) {
-        struct PerFrame { XMFLOAT4X4 vp; float brightness, fogStart, fogEnd, pad; };
+        struct PerFrame {
+            XMFLOAT4X4 vp;
+            float brightness, fogStart, fogEnd, starRotation;
+            XMFLOAT4 skyColorDaylight, fogColorStars, lightColorOpacity, twilight, sunDirection;
+        };
+        static_assert(sizeof(PerFrame) == 160, "Shader constant-buffer layout");
         PerFrame* pf = static_cast<PerFrame*>(data);
+        const SkyState state = sky ? *sky : SkyState{};
         XMStoreFloat4x4(&pf->vp, m);
         pf->brightness = gBrightnessVal;
         pf->fogStart = 0.65f * fogEnd;
         pf->fogEnd = 0.9f * fogEnd;
-        pf->pad = 0.0f;
+        pf->starRotation = starRotation;
+        pf->skyColorDaylight = {state.skyColor.x, state.skyColor.y, state.skyColor.z, state.daylight};
+        pf->fogColorStars = {state.fogColor.x, state.fogColor.y, state.fogColor.z, state.stars};
+        pf->lightColorOpacity = {state.lightColor.x, state.lightColor.y, state.lightColor.z, celestialOpacity};
+        pf->twilight = state.twilight;
+        pf->sunDirection = {-sinf(state.sunAngle), cosf(state.sunAngle), 0, 0};
         rc.perFrameCB->Unmap();
     }
 }

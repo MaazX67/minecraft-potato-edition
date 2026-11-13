@@ -32,6 +32,14 @@ struct RenderContext {
     ID3D10PixelShader* psSky = nullptr;
     ID3D10ShaderResourceView* panoramaSRV = nullptr;
     ID3D10Buffer* skyVB = nullptr;
+    ID3D10PixelShader* psWorldSky = nullptr;
+    ID3D10PixelShader* psCelestial = nullptr;
+    ID3D10BlendState* additiveBlend = nullptr;
+    ID3D10Buffer* starsVB = nullptr;
+    UINT starVertexCount = 0;
+    ID3D10Buffer* celestialVB = nullptr;
+    ID3D10ShaderResourceView* sunSRV = nullptr;
+    ID3D10ShaderResourceView* moonSRV[8] = {};
 };
 
 bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource);
@@ -40,7 +48,10 @@ ID3D10ShaderResourceView* CreateTextureSRV(RenderContext& rc, const uint8_t* rgb
 ID3D10ShaderResourceView* CreateBlockAtlasSRV(RenderContext& rc, const uint8_t* rgba, int w, int h);
 // Loads gui/title/background/panorama_0..5 into a TextureCube. False if missing.
 bool CreatePanorama(RenderContext& rc, AssetStore& store);
-void SetViewProj(RenderContext& rc, const DirectX::XMMATRIX& m, float fogEnd = 0.0f);
+bool CreateCelestials(RenderContext& rc, AssetStore& store);
+void SetViewProj(RenderContext& rc, const DirectX::XMMATRIX& m, float fogEnd = 0.0f,
+                 const SkyState* sky = nullptr, float celestialOpacity = 1.0f,
+                 float starRotation = 0.0f);
 void SetBrightness(RenderContext& rc, float b);
 
 } // namespace potato

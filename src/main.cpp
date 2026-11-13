@@ -94,6 +94,9 @@ static std::string gSavePath;
 static std::string gWorldName;
 static bool gResumePending = false;
 static Screen gResumeScreen = Screen::Game;
+static WorldClock gWorldClock;
+static SkyTimeline gSkyTimeline;
+static bool gFreezeTime = false;
 
 static void SetScreen(HWND hwnd, Screen s);
 static void UpdateCursorCapture(HWND hwnd);
@@ -108,6 +111,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (msg == WM_APP + 1) {
             gInput.mouseDX += float(int(wp));
             gInput.mouseDY += float(int(lp));
+            return 0;
+        }
+        if (msg == WM_APP + 2) {
+            gWorldClock.Set(uint64_t(wp) | (uint64_t(uint32_t(lp)) << 32));
+            return 0;
+        }
+        if (msg == WM_APP + 3) {
+            gFreezeTime = wp != 0;
             return 0;
         }
         if (msg >= WM_APP + WM_KEYFIRST && msg <= WM_APP + WM_MOUSELAST) {
@@ -372,7 +383,9 @@ static void RefreshWorldList() {
         const std::string path = root + "/" + entry.cFileName + "/world.potato";
         const auto save = ReadWorldSave(path);
         try {
-            if (!save.is_object() || save.at("format").get<int>() != 1 ||
+            if (!save.is_object()) continue;
+            const int format = save.at("format").get<int>();
+            if ((format != 1 && format != 2) ||
                 save.at("generator").get<std::string>() != "potato-perlin-v1") continue;
             const int mode = save.at("mode").get<int>();
             const std::string details = std::string(mode == 1 ? "Creative" : "Survival") +
@@ -391,6 +404,7 @@ static void RefreshWorldList() {
 }
 
 static void ResetWorld(uint32_t seed, EditMap edits = {}) {
+    gWorldClock.Set(0);
     for (auto& kv : gGpu) {
         SafeRelease(kv.second.vb);
         SafeRelease(kv.second.ib);
@@ -418,7 +432,8 @@ static bool SaveCurrentWorld() {
     GetSystemTimeAsFileTime(&now);
     const uint64_t timestamp = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
     const nlohmann::json data = {
-        {"format", 1}, {"generator", "potato-perlin-v1"}, {"name", gWorldName},
+        {"format", 2}, {"generator", "potato-perlin-v1"}, {"name", gWorldName},
+        {"worldTime", gWorldClock.Ticks()},
         {"savedAt", timestamp}, {"seed", gWorldSeed}, {"mode", gGameMode},
         {"difficulty", gSettings.difficulty}, {"position", {gBody.x, gBody.y, gBody.z}},
         {"rotation", {gCamera.yaw, gCamera.pitch}}, {"flying", gBody.flying},
@@ -442,8 +457,15 @@ static bool SaveCurrentWorld() {
 static bool LoadWorldSave(const std::string& path) {
     const auto data = ReadWorldSave(path);
     try {
-        if (!data.is_object() || data.at("format").get<int>() != 1 ||
+        if (!data.is_object()) return false;
+        const int format = data.at("format").get<int>();
+        if ((format != 1 && format != 2) ||
             data.at("generator").get<std::string>() != "potato-perlin-v1") return false;
+        uint64_t worldTime = 0;
+        if (format == 2) {
+            if (!data.at("worldTime").is_number_unsigned()) return false;
+            worldTime = data.at("worldTime").get<uint64_t>();
+        }
         const uint32_t seed = data.at("seed").get<uint32_t>();
         const std::string name = data.at("name").get<std::string>();
         const int mode = data.at("mode").get<int>(), difficulty = data.at("difficulty").get<int>();
@@ -488,6 +510,7 @@ static bool LoadWorldSave(const std::string& path) {
         if (!DecodeEdits(bytes.data(), bytes.size(), edits)) return false;
         ResetWorld(seed, std::move(edits));
         StartGame();
+        gWorldClock.Set(worldTime);
         gWorldName = name;
         gSavePath = path;
         gGameMode = mode;
@@ -808,6 +831,12 @@ static void SaveTestState(const char* screenshot) {
         {"worldName", gWorldName}, {"worldSeed", gWorldSeed}, {"mode", gGameMode}, {"worldCount", gMenu.worlds.size()},
         {"worldPage", gMenu.worldPage}, {"selectedWorld", gMenu.selectedWorld}, {"resumePending", gResumePending},
         {"health", gSurvival.health}, {"hunger", gSurvival.hunger},
+        {"worldTime", gWorldClock.Ticks()}, {"daylight", gSkyTimeline.Sample(gWorldClock.Ticks()).daylight},
+        {"sunAngle", gSkyTimeline.Sample(gWorldClock.Ticks()).sunAngle},
+        {"stars", gSkyTimeline.Sample(gWorldClock.Ticks()).stars},
+        {"moonPhase", gSkyTimeline.Sample(gWorldClock.Ticks()).moonPhase},
+        {"timelineLoaded", gSkyTimeline.Loaded()}, {"sunLoaded", gRC.sunSRV != nullptr},
+        {"moonLoaded", gRC.moonSRV[gSkyTimeline.Sample(gWorldClock.Ticks()).moonPhase] != nullptr},
         {"fixtureBlock", gWorld ? gWorld->GetBlock(8, 64, 6) : 0},
         {"fixtureAbove", gWorld ? gWorld->GetBlock(8, 65, 6) : 0}, {"actionBar", gActionBar}
     };
@@ -1170,6 +1199,54 @@ static void DrawBlockOutline() {
     gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
 }
 
+static void DrawWorldSky(const XMMATRIX& view, const XMMATRIX& proj, const SkyState& sky) {
+    const XMMATRIX vp = XMMatrixMultiply(view, proj);
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->OMSetDepthStencilState(gRC.depthOff, 0);
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    gRC.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    SetViewProj(gRC, vp, 0, &sky);
+    gRC.device->PSSetShader(gRC.psWorldSky);
+    gRC.device->IASetVertexBuffers(0, 1, &gRC.skyVB, &stride, &offset);
+    gRC.device->Draw(36, 0);
+
+    gRC.device->PSSetShader(gRC.psCelestial);
+    gRC.device->OMSetBlendState(gRC.additiveBlend, nullptr, 0xFFFFFFFF);
+    if (sky.stars > 0 && gWhiteSRV) {
+        SetViewProj(gRC, XMMatrixMultiply(XMMatrixRotationZ(sky.sunAngle), vp),
+            0, &sky, sky.stars, sky.sunAngle);
+        gRC.device->PSSetShaderResources(0, 1, &gWhiteSRV);
+        gRC.device->IASetVertexBuffers(0, 1, &gRC.starsVB, &stride, &offset);
+        gRC.device->Draw(gRC.starVertexCount, 0);
+    }
+    SetViewProj(gRC, vp, 0, &sky);
+    auto celestial = [&](ID3D10ShaderResourceView* texture, float angle, float size) {
+        if (!texture) return;
+        MeshVertex vertices[6];
+        const int corners[6] = {0, 1, 2, 0, 2, 3};
+        const float uv[4][2] = {{0,0}, {1,0}, {1,1}, {0,1}};
+        for (int i = 0; i < 6; ++i) {
+            const int corner = corners[i];
+            const float across = corner == 0 || corner == 3 ? -size : size;
+            const float vertical = corner < 2 ? size : -size;
+            vertices[i] = {-100.0f * sinf(angle) + vertical * cosf(angle),
+                100.0f * cosf(angle) + vertical * sinf(angle), across,
+                0, 0, uv[corner][0], uv[corner][1], 15, 1, 1, 1};
+        }
+        void* data = nullptr;
+        if (FAILED(gRC.celestialVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+        memcpy(data, vertices, sizeof(vertices));
+        gRC.celestialVB->Unmap();
+        gRC.device->PSSetShaderResources(0, 1, &texture);
+        gRC.device->IASetVertexBuffers(0, 1, &gRC.celestialVB, &stride, &offset);
+        gRC.device->Draw(6, 0);
+    };
+    celestial(gRC.sunSRV, sky.sunAngle, 30.0f);
+    celestial(gRC.moonSRV[sky.moonPhase], sky.sunAngle + XM_PI, 20.0f);
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+}
+
 static void DrawWorld() {
     const XMVECTOR eye = XMVectorSet(gCamera.x, gCamera.y, gCamera.z, 1);
     const XMVECTOR at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
@@ -1177,9 +1254,13 @@ static void DrawWorld() {
     const XMMATRIX proj = XMMatrixPerspectiveFovRH(
         gSettings.fov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 1000.0f);
     const XMMATRIX vp = XMMatrixMultiply(view, proj);
+    const SkyState sky = gSkyTimeline.Sample(gWorldClock.Ticks(), gWorldClock.Fraction());
+    const XMMATRIX skyView = XMMatrixLookAtRH(XMVectorZero(),
+        XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0), XMVectorSet(0, 1, 0, 0));
+    DrawWorldSky(skyView, proj, sky);
     Frustum frustum;
     ExtractFrustum(vp, frustum);
-    SetViewProj(gRC, vp, float(gSettings.renderDistance * CHUNK_X));
+    SetViewProj(gRC, vp, float(gSettings.renderDistance * CHUNK_X), &sky);
     gRC.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
     gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
@@ -1416,6 +1497,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             const auto version = nlohmann::json::parse(versionBytes.begin(), versionBytes.end(), nullptr, false);
             if (version.is_object() && version.contains("id") && version["id"].is_string())
                 gAssetVersion = version["id"].get<std::string>();
+            std::vector<uint8_t> dayBytes;
+            if (versionArchive.Read("data/minecraft/timeline/day.json", dayBytes))
+                gSkyTimeline.LoadDay(std::string(dayBytes.begin(), dayBytes.end()));
         }
     }
     const int tilesLoaded = (storeOk || jarOk) ? BuildBlockAtlas(gStore, gAtlas) : 0;
@@ -1442,6 +1526,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
     gSound.Init(gStore);
     CreatePanorama(gRC, gStore); // optional; null falls back to dirt title
+    if (!CreateCelestials(gRC, gStore) || !gSkyTimeline.Loaded()) {
+        gActionBar = "Sky data missing: install the Java 26.3 client assets.";
+        gActionBarUntil = SystemTimeMs() + 6000;
+    }
     LoadSplash();
     if (gGameMode == 1) memcpy(gHotbar, HOTBAR_BLOCKS, sizeof(gHotbar));
 
@@ -1483,6 +1571,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         gSavePath = NewSavePath();
         gWorldName = "Save regression";
     }
+    gFreezeTime = gAutomation && strstr(GetCommandLineA(), "--freeze-time");
     if (strstr(GetCommandLineA(), "--autostart")) StartGame();
     if (strstr(GetCommandLineA(), "--show-worlds")) HandleMenuAction(ACT_SINGLEPLAYER);
     if (strstr(GetCommandLineA(), "--debug")) gDebug = true;
@@ -1572,6 +1661,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         } else if (gInput.leftClick) {
             HandleMenuAction(gMenu.HitTest(gInput.mouseX, gInput.mouseY));
         }
+
+        if (gSpawned && !gResumePending && !gFreezeTime &&
+            (gScreen == Screen::Game || gScreen == Screen::Inventory || gScreen == Screen::Death))
+            gWorldClock.Advance(dt);
 
         if (IsWorldScreen(gScreen)) {
             UploadMeshes();

@@ -16,6 +16,8 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 - Create New World: Game / World / More tabs, name, seed, draft difficulty and Survival/Creative modes; unavailable features stay disabled
 - Seeds currently use a 32-bit generator; terrain and seed results do not match Java Edition
 - Select World list with paging, new-world creation, and Save and Quit; player state and changed blocks survive restarting or chunk eviction
+- Day/night at 20 ticks per second: reads the installed Java 26.3 timeline for eased celestial motion, sky/light/fog colours, twilight and star brightness; installed sun and eight moon textures
+- Pause freezes world time; inventory keeps the celestial clock running; world time survives saving and reopening
 - Chunk streaming with a render-distance setting, two worker threads, greedy meshing and frustum culling
 - Survival: health, hunger, fall damage, sprinting and swimming — no flying
 - Creative: double-tap-space flight, no hearts/hunger on the HUD
@@ -66,9 +68,9 @@ Run the native checks on Windows with the downloaded executable and an existing 
 .\native-smoke.ps1 -Exe C:\Games\PotatoEdition.exe -OutputRoot C:\Temp
 ```
 
-The script launches isolated test instances, checks crafting and save/reload after a process restart, and exercises save failures and damaged edit streams. Test profiles and worlds stay in the output directory; regular preferences live under `%APPDATA%\MinecraftPotatoEdition\preferences.json`.
+The script launches isolated test instances, checks crafting and save/reload after a process restart, and exercises save failures and damaged edit streams. It also captures noon, sunset, midnight, sunrise and all eight moon phases, checks clock/pause behaviour and tests world-time persistence and old-save loading. Test profiles and worlds stay in the output directory; regular preferences live under `%APPDATA%\MinecraftPotatoEdition\preferences.json`.
 
-Worlds live under `%APPDATA%\MinecraftPotatoEdition\saves\world-*\world.potato`. Each file contains the name, generator version, seed, game mode, difficulty, position, rotation, health/hunger, inventory and block edits in a versioned MessagePack container. Save and Quit and normal window close write a temporary file before atomically replacing the previous save. There is no periodic autosave yet. This is a Potato-only format, not Java's Anvil/NBT format; do not open Java worlds with it.
+Worlds live under `%APPDATA%\MinecraftPotatoEdition\saves\world-*\world.potato`. Each file contains the name, generator version, seed, game mode, difficulty, world time, position, rotation, health/hunger, inventory and block edits in a versioned MessagePack container. Format-two saves include time; previous format-one worlds load at day zero and upgrade on their next save. Save and Quit and normal window close write a temporary file before atomically replacing the previous save. There is no periodic autosave yet. This is a Potato-only format, not Java's Anvil/NBT format; do not open Java worlds with it.
 
 ## Still to do
 
@@ -76,7 +78,7 @@ Worlds live under `%APPDATA%\MinecraftPotatoEdition\saves\world-*\world.potato`.
 - Java terrain/biomes, structures, 64-bit seed parity and flowing liquids
 - Mobs, entities, tool-aware mining, loot, equipment, furnaces and the full item/recipe registry
 - Armor/offhand mechanics, third-person player rendering, custom skin import and account integration
-- Day/night cycle, weather, music, subtitles, multiplayer, game rules, data packs and experiments
+- Clouds, weather, biome sky/fog colours, exact Java lightmap/block lighting, music, subtitles, multiplayer, game rules, data packs and experiments
 
 [Java 26.3](https://www.minecraft.net/en-us/article/minecraft-java-edition-26-3) is the reference baseline, not a claim of full compatibility. The version is checked against [Mojang's release manifest](https://piston-meta.mojang.com/mc/game/version_manifest_v2.json) and the locally installed client. This remains an incomplete implementation.
 

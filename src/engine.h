@@ -7,6 +7,7 @@
 #include <functional>
 #include <mutex>
 #include <random>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -51,6 +52,49 @@ public:
 private:
     LARGE_INTEGER mFreq;
     LARGE_INTEGER mLast;
+};
+
+class WorldClock {
+public:
+    void Advance(double seconds);
+    void Set(uint64_t ticks);
+    uint64_t Ticks() const { return mTicks; }
+    double Fraction() const { return mFraction; }
+private:
+    uint64_t mTicks = 0;
+    double mFraction = 0;
+    double mCompensation = 0;
+};
+
+struct SkyState {
+    DirectX::XMFLOAT3 skyColor{0.47f, 0.65f, 1.0f};
+    DirectX::XMFLOAT3 fogColor{0.47f, 0.65f, 1.0f};
+    DirectX::XMFLOAT3 lightColor{1.0f, 1.0f, 1.0f};
+    float daylight = 1.0f, sunAngle = 0.0f, stars = 0.0f;
+    DirectX::XMFLOAT4 twilight{0, 0, 0, 0};
+    int moonPhase = 0;
+};
+
+// Loads caller-supplied day.json from the installed client, never bundled tables.
+class SkyTimeline {
+public:
+    bool LoadDay(const std::string& json);
+    bool Loaded() const { return mLoaded; }
+    SkyState Sample(uint64_t ticks, double fraction = 0) const;
+private:
+    struct Keyframe {
+        uint32_t ticks;
+        DirectX::XMFLOAT4 value;
+    };
+    struct Track {
+        std::vector<Keyframe> keyframes;
+        bool eased = false, angleWrap = false;
+        double bezier[4] = {0, 0, 1, 1};
+        DirectX::XMFLOAT4 Sample(double time) const;
+    };
+    enum { SkyColor, FogColor, LightColor, Daylight, Stars, Twilight, SunAngle, TrackCount };
+    Track mTracks[TrackCount];
+    bool mLoaded = false;
 };
 
 // Rigid request ring buffer: fixed capacity, no allocation at push/pop time.

@@ -257,6 +257,101 @@ try {
   Capture '27-world-page-one' 11
   Check ($state.worldPage -eq 0) 'Previous page returns to the first five entries'
   CloseGame
+  Launch '--autostart --save-test --freeze-time --debug'
+  Post 0x8002 6000
+  Start-Sleep -Milliseconds 500
+  Capture 'sky-noon-terrain' 4
+  Check ($state.timelineLoaded -and $state.sunLoaded -and $state.moonLoaded) 'installed Java timeline and celestial textures load'
+  Check ($state.worldTime -eq 6000 -and $state.daylight -eq 1 -and $state.stars -eq 0) 'noon has full daylight and no stars'
+  Post 0x8001 0 -620
+  Start-Sleep -Milliseconds 500
+  Capture 'sky-noon-sun' 4
+  Post 0x8001 0 620
+  Post 0x8002 18000
+  Start-Sleep -Milliseconds 500
+  Capture 'sky-midnight-terrain' 4
+  Check ([Math]::Abs($state.daylight - 0.24) -lt 0.001 -and $state.stars -eq 0.5) 'midnight uses Java night light and star brightness'
+  Post 0x8001 -628 -160
+  Post 0x8002 12500
+  Start-Sleep -Milliseconds 500
+  Capture 'sky-sunset' 4
+  Post 0x8001 1256 0
+  Post 0x8002 23500
+  Start-Sleep -Milliseconds 500
+  Capture 'sky-sunrise' 4
+  Post 0x8001 -628 -620
+  $moonHashes = @()
+  for ($phase = 0; $phase -lt 8; $phase++) {
+    Post 0x8002 ($phase * 24000 + 18000)
+    Start-Sleep -Milliseconds 350
+    Capture ('sky-moon-phase-' + $phase) 4
+    Check ($state.moonPhase -eq $phase -and $state.moonLoaded) "moon phase $phase selects its installed texture"
+    $phaseImage = [Drawing.Bitmap]::FromFile((Join-Path $out ('sky-moon-phase-' + $phase + '.png')))
+    $crop = $phaseImage.Clone([Drawing.Rectangle]::new(500, 240, 366, 288), $phaseImage.PixelFormat)
+    $stream = [IO.MemoryStream]::new()
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try {
+      $crop.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
+      $moonHashes += [BitConverter]::ToString($hash.ComputeHash($stream.ToArray()))
+    } finally { $hash.Dispose(); $stream.Dispose(); $crop.Dispose(); $phaseImage.Dispose() }
+  }
+  Check (@($moonHashes | Select-Object -Unique).Count -eq 8) 'all eight moon phases produce distinct rendered pixels'
+  Post 0x8002 138000
+  Key 0x1B
+  Post 0x8003 0
+  Start-Sleep -Seconds 2
+  Capture 'sky-paused-clock' 3
+  Check ($state.worldTime -eq 138000) 'Pause freezes world time even when the clock is enabled'
+  Key 0x1B
+  Start-Sleep -Seconds 2
+  Capture 'sky-running-clock' 4
+  Check ($state.worldTime -gt 138020 -and $state.worldTime -lt 138080) 'running clock advances at twenty ticks per second'
+  Key 0x45
+  $timeBeforeInventory = $state.worldTime
+  Start-Sleep -Seconds 2
+  Capture 'sky-inventory-clock' 5
+  Check ($state.worldTime -gt ($timeBeforeInventory + 20)) 'inventory does not stop the celestial clock'
+  Key 0x1B
+  Post 0x8003 1
+  Post 0x8002 138000
+  Key 0x1B
+  Click 683 296
+  Capture 'sky-save-title' 0
+  CloseGame
+  Launch '--show-worlds --freeze-time'
+  Click 413 736
+  Start-Sleep -Seconds 5
+  Capture 'sky-time-reloaded' 4
+  Check ($state.worldTime -eq 138000 -and $state.moonPhase -eq 5) 'world time and moon phase survive process restart exactly'
+  CloseGame
+  $skySave = Get-ChildItem (Join-Path $out 'saves') -Recurse -Filter '*.potato' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  $skyBytes = [IO.File]::ReadAllBytes($skySave.FullName)
+  $formatOffset = [Text.Encoding]::ASCII.GetString($skyBytes).IndexOf('format') + 6
+  Check ($formatOffset -ge 6 -and $skyBytes[$formatOffset] -eq 2) 'new world save has format two'
+  $legacyBytes = $skyBytes.Clone()
+  $legacyBytes[$formatOffset] = 1
+  [IO.File]::WriteAllBytes($skySave.FullName, $legacyBytes)
+  try {
+    Launch '--show-worlds --freeze-time'
+    Click 413 736
+    Start-Sleep -Seconds 5
+    Capture 'sky-legacy-save' 4
+    Check ($state.worldTime -eq 0) 'previous format-one worlds still load and start at day zero'
+    CloseGame
+  } finally { [IO.File]::WriteAllBytes($skySave.FullName, $skyBytes) }
+  $badTimeBytes = $skyBytes.Clone()
+  $timeOffset = [Text.Encoding]::ASCII.GetString($badTimeBytes).IndexOf('worldTime') + 9
+  Check ($timeOffset -ge 9 -and $badTimeBytes[$timeOffset] -eq 0xCE) 'time fixture uses an unsigned thirty-two-bit tick count'
+  $badTimeBytes[$timeOffset] = 0xD2
+  for ($i = 1; $i -le 4; $i++) { $badTimeBytes[$timeOffset + $i] = 0xFF }
+  [IO.File]::WriteAllBytes($skySave.FullName, $badTimeBytes)
+  try {
+    Launch '--show-worlds --freeze-time'
+    Click 413 736
+    Capture 'sky-invalid-time' 11
+    Check ($state.actionBar -like '*Could not load world*') 'negative saved world time is rejected without replacing the live world'
+    CloseGame
+  } finally { [IO.File]::WriteAllBytes($skySave.FullName, $skyBytes) }
   Write-Host "CAPTURES=$out"
 } finally {
   if ($script:p -and !$script:p.HasExited) {

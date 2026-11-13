@@ -2,11 +2,13 @@
 #include "engine.h"
 #include "world.h"
 #include "shader_embed.h"
+#include "json.hpp"
 #include <d3dcompiler.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -23,7 +25,8 @@ static void TestShaders() {
     struct Shader { const char* entry; const char* profile; };
     const Shader shaders[] = {
         {"VSMain", "vs_4_0"}, {"PSMain", "ps_4_0"},
-        {"PSMainUI", "ps_4_0"}, {"PSMainSky", "ps_4_0"}
+        {"PSMainUI", "ps_4_0"}, {"PSMainSky", "ps_4_0"},
+        {"PSMainWorldSky", "ps_4_0"}, {"PSMainCelestial", "ps_4_0"}
     };
     for (const Shader& shader : shaders) {
         ID3DBlob* code = nullptr;
@@ -39,6 +42,202 @@ static void TestShaders() {
         if (errors) errors->Release();
         if (code) code->Release();
     }
+}
+
+static void TestSkyTimeline() {
+    auto closeEnough = [](double a, double b) { return std::abs(a - b) < 1e-5; };
+    SkyTimeline timeline;
+    const SkyState fallback = timeline.Sample(3 * uint64_t(24000));
+    CHECK(!timeline.Loaded() && closeEnough(fallback.skyColor.x, 0.47) &&
+          closeEnough(fallback.skyColor.y, 0.65) && closeEnough(fallback.skyColor.z, 1) &&
+          closeEnough(fallback.fogColor.x, 0.47) && closeEnough(fallback.fogColor.y, 0.65) &&
+          closeEnough(fallback.fogColor.z, 1) && closeEnough(fallback.lightColor.x, 1) &&
+          closeEnough(fallback.lightColor.y, 1) && closeEnough(fallback.lightColor.z, 1) &&
+          fallback.daylight == 1 && fallback.stars == 0 && fallback.sunAngle == 0 &&
+          fallback.twilight.w == 0 && fallback.moonPhase == 3,
+          "missing sky timeline returns daylight defaults and the current moon phase");
+    CHECK(!timeline.LoadDay("{}") && !timeline.Loaded(), "incomplete initial timeline stays unloaded");
+
+    // Deliberately small invented tracks and easing, not installed game content.
+    const std::string synthetic = R"json({
+      "clock": "minecraft:overworld", "period_ticks": 24000,
+      "tracks": {
+        "minecraft:visual/sky_color": {"keyframes": [
+          {"ticks": 2000, "value": "#000000"}, {"ticks": 14000, "value": "#FFFFFF"}]},
+        "minecraft:visual/fog_color": {"keyframes": [
+          {"ticks": 2000, "value": "#ff0000"}, {"ticks": 14000, "value": "#0000ff"}]},
+        "minecraft:visual/sky_light_color": {"keyframes": [
+          {"ticks": 500, "value": "#abcdef"}]},
+        "minecraft:visual/sky_light_factor": {"keyframes": [
+          {"ticks": 2000, "value": 0.2}, {"ticks": 14000, "value": 0.8}]},
+        "minecraft:visual/star_brightness": {"keyframes": [
+          {"ticks": 2000, "value": 0.0}, {"ticks": 14000, "value": 0.5}]},
+        "minecraft:visual/sunrise_sunset_color": {"keyframes": [
+          {"ticks": 2000, "value": "#00000000"}, {"ticks": 14000, "value": "#80402010"}]},
+        "minecraft:visual/sun_angle": {"ease": {"cubic_bezier": [0.2, 0.1, 0.8, 0.9]},
+          "keyframes": [{"ticks": 6000, "value": 360}, {"ticks": 6000, "value": 0}]}
+      }
+    })json";
+    CHECK(timeline.LoadDay(synthetic) && timeline.Loaded(), "complete synthetic sky timeline loads");
+    const SkyState middle = timeline.Sample(8000);
+    CHECK(closeEnough(middle.skyColor.x, 0.47 * 0.5) && closeEnough(middle.skyColor.y, 0.65 * 0.5) &&
+          closeEnough(middle.skyColor.z, 0.5) && closeEnough(middle.daylight, 0.5) && closeEnough(middle.stars, 0.25),
+          "sky RGB multiplier, daylight and actual star brightness interpolate linearly");
+    CHECK(closeEnough(middle.fogColor.x, 0.47 * 0.5) && middle.fogColor.y == 0 &&
+          closeEnough(middle.fogColor.z, 0.5) && closeEnough(middle.lightColor.x, 171.0 / 255) &&
+          closeEnough(middle.lightColor.y, 205.0 / 255) && closeEnough(middle.lightColor.z, 239.0 / 255),
+          "fog uses the sky base and single-keyframe light RGB remains constant");
+    CHECK(closeEnough(middle.twilight.x, 32.0 / 255) && closeEnough(middle.twilight.y, 16.0 / 255) &&
+          closeEnough(middle.twilight.z, 8.0 / 255) && closeEnough(middle.twilight.w, 64.0 / 255),
+          "AARRGGBB twilight decodes and interpolates all four channels");
+    const SkyState wrap = timeline.Sample(20000);
+    CHECK(closeEnough(wrap.skyColor.z, 0.5) && closeEnough(wrap.daylight, 0.5) &&
+          closeEnough(wrap.stars, 0.25) && closeEnough(wrap.twilight.w, 64.0 / 255) &&
+          closeEnough(timeline.Sample(0).skyColor.z, 1.0 / 6),
+          "last-to-first interpolation crosses midnight instead of clamping");
+    CHECK(timeline.Sample(2000).skyColor.z == 0 && timeline.Sample(14000).skyColor.z == 1 &&
+          timeline.Sample(14000).stars == 0.5f && timeline.Sample(2000).stars == 0,
+          "exact color and brightness keyframes include the full 0..0.5 star range");
+    CHECK(closeEnough(timeline.Sample(2000, 0.5).skyColor.z, 0.5 / 12000) &&
+          closeEnough(timeline.Sample(23999, 1).skyColor.z, timeline.Sample(0).skyColor.z),
+          "fractional ticks interpolate and roll over the period boundary");
+    CHECK(timeline.Sample(6000).sunAngle == 0 && closeEnough(timeline.Sample(18000).sunAngle, DirectX::XM_PI),
+          "duplicate sun endpoints wrap to zero at 6000 and pi at 18000");
+    // For t=0.25 these invented controls give x=0.2125 and y=0.184375.
+    CHECK(closeEnough(timeline.Sample(11100).sunAngle, 0.184375 * DirectX::XM_2PI),
+          "cubic easing solves Bezier x before evaluating y using input controls");
+    bool monotonic = true;
+    float previous = -1;
+    for (uint64_t step = 0; step < 24000; step += 37) {
+        const float angle = timeline.Sample(6000 + step).sunAngle;
+        if (angle < previous || angle < 0 || angle >= DirectX::XM_2PI) monotonic = false;
+        previous = angle;
+    }
+    CHECK(monotonic && timeline.Sample(5999).sunAngle > 6.0f,
+          "eased sun angle is monotonic through one revolution and wraps at noon");
+    bool phases = true;
+    for (uint64_t day = 0; day < 16; ++day) {
+        if (timeline.Sample(day * 24000).moonPhase != int(day % 8) ||
+            SkyTimeline().Sample(day * 24000 + 23999).moonPhase != int(day % 8)) phases = false;
+    }
+    CHECK(phases, "loaded and fallback skies cycle through all eight moon phases");
+
+    auto sameVisual = [closeEnough](const SkyState& a, const SkyState& b) {
+        return closeEnough(a.skyColor.x, b.skyColor.x) && closeEnough(a.skyColor.y, b.skyColor.y) &&
+            closeEnough(a.skyColor.z, b.skyColor.z) && closeEnough(a.fogColor.x, b.fogColor.x) &&
+            closeEnough(a.fogColor.y, b.fogColor.y) && closeEnough(a.fogColor.z, b.fogColor.z) &&
+            closeEnough(a.lightColor.x, b.lightColor.x) && closeEnough(a.lightColor.y, b.lightColor.y) &&
+            closeEnough(a.lightColor.z, b.lightColor.z) && closeEnough(a.daylight, b.daylight) &&
+            closeEnough(a.stars, b.stars) && closeEnough(a.twilight.x, b.twilight.x) &&
+            closeEnough(a.twilight.y, b.twilight.y) && closeEnough(a.twilight.z, b.twilight.z) &&
+            closeEnough(a.twilight.w, b.twilight.w) && closeEnough(a.sunAngle, b.sunAngle);
+    };
+    const uint64_t largeTicks[] = {uint64_t(1) << 53, (uint64_t(1) << 60) + 17,
+                                  (std::numeric_limits<uint64_t>::max)()};
+    bool largeModulo = true;
+    for (uint64_t ticks : largeTicks) {
+        const SkyState large = timeline.Sample(ticks, 0.375);
+        if (!sameVisual(large, timeline.Sample(ticks % 24000, 0.375)) ||
+            large.moonPhase != int((ticks / 24000) % 8)) largeModulo = false;
+    }
+    CHECK(largeModulo, "uint64 time above double precision retains exact day modulo and moon phase");
+
+    const auto original = nlohmann::json::parse(synthetic);
+    std::vector<std::string> invalid = {"{", "{}", "null", "[]"};
+    auto mutation = [&](const std::function<void(nlohmann::json&)>& change) {
+        auto bad = original;
+        change(bad);
+        invalid.push_back(bad.dump());
+    };
+    mutation([](nlohmann::json& j) { j["clock"] = "minecraft:other"; });
+    mutation([](nlohmann::json& j) { j["period_ticks"] = 23999; });
+    const char* required[] = {"sky_color", "fog_color", "sky_light_color", "sky_light_factor",
+                             "star_brightness", "sunrise_sunset_color", "sun_angle"};
+    for (const char* track : required) {
+        mutation([track](nlohmann::json& j) { j["tracks"].erase(std::string("minecraft:visual/") + track); });
+    }
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_color"]["keyframes"] = nlohmann::json::array(); });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_color"]["keyframes"][0]["ticks"] = 24000; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_color"]["keyframes"][0]["ticks"] = -1; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_color"]["keyframes"][0]["ticks"] = 1.5; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_color"]["keyframes"][0]["ticks"] = 16000; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_color"]["keyframes"][1]["ticks"] = 2000; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_color"]["keyframes"][0]["value"] = "#xyzxyz"; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_color"]["keyframes"][0]["value"] = "#1234"; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_light_factor"]["keyframes"][0]["value"] = nullptr; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sky_light_factor"]["keyframes"][0]["value"] = "NaN"; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/star_brightness"]["keyframes"][0]["value"] = 0.6; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sun_angle"]["keyframes"][0]["value"] = 359; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sun_angle"]["ease"]["cubic_bezier"] = {0.2, 0.1, 0.8}; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sun_angle"]["ease"]["cubic_bezier"][0] = 1.2; });
+    mutation([](nlohmann::json& j) { j["tracks"]["minecraft:visual/sun_angle"]["ease"] = "unknown"; });
+    mutation([](nlohmann::json& j) {
+        auto& frames = j["tracks"]["minecraft:visual/sky_color"]["keyframes"];
+        frames = nlohmann::json::array();
+        for (int i = 0; i < 1025; ++i) frames.push_back({{"ticks", i}, {"value", "#000000"}});
+    });
+    std::string nonfinite = synthetic;
+    const size_t scalar = nonfinite.find("\"value\": 0.2");
+    nonfinite.replace(scalar, std::string("\"value\": 0.2").size(), "\"value\": 1e999");
+    invalid.push_back(nonfinite);
+    std::string nonfiniteTick = synthetic;
+    const size_t tick = nonfiniteTick.find("\"ticks\": 2000");
+    nonfiniteTick.replace(tick, std::string("\"ticks\": 2000").size(), "\"ticks\": 1e999");
+    invalid.push_back(nonfiniteTick);
+    invalid.push_back(std::string(40, '[') + "0" + std::string(40, ']'));
+    invalid.push_back(std::string(1024 * 1024 + 1, ' '));
+    bool rejected = true, preserved = true;
+    for (const std::string& bad : invalid) {
+        if (timeline.LoadDay(bad)) rejected = false;
+        if (!timeline.Loaded() || !sameVisual(timeline.Sample(8000), middle)) preserved = false;
+    }
+    CHECK(rejected && preserved,
+          "invalid, incomplete, nonfinite, unsorted and oversized timelines preserve the last valid state");
+    auto linear = original;
+    linear["tracks"]["minecraft:visual/sun_angle"].erase("ease");
+    CHECK(timeline.LoadDay(linear.dump()) && closeEnough(timeline.Sample(12000).sunAngle, DirectX::XM_PIDIV2),
+          "successful reload replaces easing instead of retaining previous data");
+
+    WorldClock clock;
+    CHECK(clock.Ticks() == 0 && clock.Fraction() == 0, "world clock starts at zero without advancing itself");
+    clock.Advance(1);
+    CHECK(clock.Ticks() == 20 && clock.Fraction() == 0, "world clock runs at exactly 20 TPS");
+    clock.Advance(0.025);
+    clock.Advance(0.0125);
+    CHECK(clock.Ticks() == 20 && closeEnough(clock.Fraction(), 0.75), "sub-tick world time is retained across advances");
+    clock.Advance(0.0125);
+    CHECK(clock.Ticks() == 21 && clock.Fraction() == 0, "fractional advances carry into whole ticks");
+    clock.Set(0);
+    clock.Advance(1200);
+    CHECK(clock.Ticks() == 24000 && clock.Fraction() == 0, "exactly 1200 seconds advances one 24000-tick day");
+    WorldClock split, combined;
+    for (int i = 0; i < 72000; ++i) split.Advance(1.0 / 60.0);
+    combined.Advance(1200);
+    CHECK(split.Ticks() == combined.Ticks() && std::abs(split.Fraction() - combined.Fraction()) < 1e-10,
+          "72000 frame advances equal one combined day without fractional drift");
+    split.Advance(0.0125);
+    split.Advance(0.025);
+    combined.Advance(0.0375);
+    CHECK(split.Ticks() == combined.Ticks() && closeEnough(split.Fraction(), combined.Fraction()) &&
+          closeEnough(split.Fraction(), 0.75), "split and combined advances preserve the same remaining fraction");
+    WorldClock tiny;
+    for (int i = 0; i < 10000; ++i) tiny.Advance(1e-8);
+    CHECK(tiny.Ticks() == 0 && std::abs(tiny.Fraction() - 0.002) < 1e-15,
+          "tiny positive advances are accumulated rather than discarded");
+    clock.Advance(0.025);
+    clock.Set(123);
+    clock.Advance(-1);
+    clock.Advance(0);
+    clock.Advance(std::numeric_limits<double>::quiet_NaN());
+    clock.Advance(std::numeric_limits<double>::infinity());
+    CHECK(clock.Ticks() == 123 && clock.Fraction() == 0, "Set resets the fraction and invalid deltas do not advance time");
+    clock.Set(largeTicks[2] - 40);
+    clock.Advance(1);
+    CHECK(clock.Ticks() == largeTicks[2] - 20 && clock.Fraction() == 0,
+          "world clock retains uint64 tick precision near its maximum");
+    clock.Advance(2);
+    CHECK(clock.Ticks() == largeTicks[2] && clock.Fraction() == 0,
+          "world clock saturates safely instead of overflowing uint64 ticks");
 }
 
 static void TestFrusta() {
@@ -205,6 +404,7 @@ static void CheckBoxMesh(const MeshData& mesh, float minX, float minY, float min
 
 int main() {
     TestShaders();
+    TestSkyTimeline();
     TestFrusta();
 
     // --- Perlin determinism and bounds ---

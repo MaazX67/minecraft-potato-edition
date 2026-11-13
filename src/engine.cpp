@@ -1,8 +1,216 @@
 #include "engine.h"
 #include "assets.h"
+#include "json.hpp"
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
 
 namespace potato {
+
+void WorldClock::Set(uint64_t ticks) {
+    mTicks = ticks;
+    mFraction = mCompensation = 0;
+}
+
+void WorldClock::Advance(double seconds) {
+    if (!std::isfinite(seconds) || seconds <= 0) return;
+    const uint64_t maximum = (std::numeric_limits<uint64_t>::max)();
+    const double elapsed = seconds * 20.0;
+    if (elapsed >= double(maximum)) { Set(maximum); return; }
+    double whole;
+    const double part = std::modf(elapsed, &whole);
+    const double adjusted = part - mCompensation;
+    double sum = mFraction + adjusted;
+    mCompensation = (sum - mFraction) - adjusted;
+    // Normalize roundoff at a tick boundary, not small fractional advances.
+    const double boundary = std::round(sum);
+    if (boundary >= 1 && std::abs(sum - boundary) <= 4 * std::numeric_limits<double>::epsilon()) {
+        sum = boundary;
+        mCompensation = 0;
+    }
+    const double carry = std::floor(sum);
+    const uint64_t integral = uint64_t(whole);
+    const uint64_t extra = uint64_t(carry);
+    if (integral > maximum - mTicks || extra > maximum - mTicks - integral) {
+        Set(maximum);
+        return;
+    }
+    mTicks += integral + extra;
+    mFraction = sum - carry;
+}
+
+namespace {
+constexpr uint32_t SKY_PERIOD = 24000;
+constexpr size_t MAX_SKY_KEYFRAMES = 1024;
+
+bool SkyNumber(const nlohmann::json& value, double& result) {
+    if (!value.is_number()) return false;
+    result = value.get<double>();
+    return std::isfinite(result);
+}
+
+bool SkyHexColor(const nlohmann::json& value, DirectX::XMFLOAT4& result) {
+    if (!value.is_string()) return false;
+    const std::string& text = value.get_ref<const std::string&>();
+    if ((text.size() != 7 && text.size() != 9) || text[0] != '#') return false;
+    uint32_t packed = 0;
+    for (size_t i = 1; i < text.size(); ++i) {
+        const char c = text[i];
+        int digit;
+        if (c >= '0' && c <= '9') digit = c - '0';
+        else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+        else return false;
+        packed = (packed << 4) | uint32_t(digit);
+    }
+    result = DirectX::XMFLOAT4(float((packed >> 16) & 255) / 255.0f,
+        float((packed >> 8) & 255) / 255.0f, float(packed & 255) / 255.0f,
+        text.size() == 9 ? float(packed >> 24) / 255.0f : 1.0f);
+    return true;
+}
+
+double SkyBezier(double t, double a, double b) {
+    const double u = 1.0 - t;
+    return 3.0 * u * u * t * a + 3.0 * u * t * t * b + t * t * t;
+}
+}
+
+bool SkyTimeline::LoadDay(const std::string& json) {
+    // Bound both parser allocation/recursion and retained untrusted jar data.
+    if (json.empty() || json.size() > 1024 * 1024) return false;
+    try {
+        const auto root = nlohmann::json::parse(json,
+            [](int depth, nlohmann::json::parse_event_t, nlohmann::json&) {
+                if (depth > 32) throw std::length_error("sky timeline nesting");
+                return true;
+            });
+        double period;
+        if (!root.is_object() || !root.contains("clock") ||
+            root["clock"] != "minecraft:overworld" || !root.contains("period_ticks") ||
+            !SkyNumber(root["period_ticks"], period) || period != SKY_PERIOD ||
+            !root.contains("tracks") || !root["tracks"].is_object()) return false;
+        const auto& tracks = root["tracks"];
+        const char* names[TrackCount] = {
+            "minecraft:visual/sky_color", "minecraft:visual/fog_color",
+            "minecraft:visual/sky_light_color", "minecraft:visual/sky_light_factor",
+            "minecraft:visual/star_brightness", "minecraft:visual/sunrise_sunset_color",
+            "minecraft:visual/sun_angle"
+        };
+        SkyTimeline candidate;
+        for (int i = 0; i < TrackCount; ++i) {
+            if (!tracks.contains(names[i])) return false;
+            const auto& source = tracks[names[i]];
+            if (!source.is_object() || !source.contains("keyframes")) return false;
+            const auto& frames = source["keyframes"];
+            if (!frames.is_array() || frames.empty() || frames.size() > MAX_SKY_KEYFRAMES)
+                return false;
+            Track& track = candidate.mTracks[i];
+            if (source.contains("ease")) {
+                const auto& ease = source["ease"];
+                if (ease.is_object() && ease.contains("cubic_bezier")) {
+                    const auto& curve = ease["cubic_bezier"];
+                    if (!curve.is_array() || curve.size() != 4) return false;
+                    for (int j = 0; j < 4; ++j) {
+                        if (!SkyNumber(curve[j], track.bezier[j]) ||
+                            track.bezier[j] < 0 || track.bezier[j] > 1) return false;
+                    }
+                    track.eased = true;
+                } else if (ease != "linear") return false;
+            }
+            track.keyframes.reserve(frames.size());
+            for (const auto& frame : frames) {
+                double tick;
+                if (!frame.is_object() || !frame.contains("ticks") || !frame.contains("value") ||
+                    !SkyNumber(frame["ticks"], tick) || tick < 0 || tick >= SKY_PERIOD ||
+                    std::floor(tick) != tick) return false;
+                Keyframe key;
+                key.ticks = uint32_t(tick);
+                if (i == SkyColor || i == FogColor || i == LightColor || i == Twilight) {
+                    if (!SkyHexColor(frame["value"], key.value)) return false;
+                } else {
+                    double value;
+                    if (!SkyNumber(frame["value"], value) ||
+                        std::abs(value) > (std::numeric_limits<float>::max)()) return false;
+                    if ((i == Daylight && (value < 0 || value > 1)) ||
+                        (i == Stars && (value < 0 || value > 0.5))) return false;
+                    key.value = DirectX::XMFLOAT4(float(value), 0, 0, 0);
+                }
+                track.keyframes.push_back(key);
+            }
+            // Equal-time endpoints encode one full revolution, not a zero-length edge.
+            track.angleWrap = i == SunAngle && track.keyframes.size() == 2 &&
+                track.keyframes[0].ticks == 6000 && track.keyframes[1].ticks == 6000 &&
+                frames[0]["value"] == 360.0 && frames[1]["value"] == 0.0;
+            if (!track.angleWrap) {
+                for (size_t j = 1; j < track.keyframes.size(); ++j)
+                    if (track.keyframes[j].ticks <= track.keyframes[j - 1].ticks) return false;
+            }
+        }
+        candidate.mLoaded = true;
+        *this = std::move(candidate);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+DirectX::XMFLOAT4 SkyTimeline::Track::Sample(double time) const {
+    if (keyframes.size() == 1) return keyframes.front().value;
+    const Keyframe* a;
+    const Keyframe* b;
+    double progress;
+    if (angleWrap) {
+        a = &keyframes[1];
+        b = &keyframes[0];
+        progress = std::fmod(time - a->ticks + SKY_PERIOD, double(SKY_PERIOD)) / SKY_PERIOD;
+    } else {
+        const auto next = std::upper_bound(keyframes.begin(), keyframes.end(), time,
+            [](double t, const Keyframe& key) { return t < key.ticks; });
+        b = next == keyframes.end() ? &keyframes.front() : &*next;
+        a = next == keyframes.begin() ? &keyframes.back() : &*(next - 1);
+        double duration = double(b->ticks) - a->ticks;
+        double elapsed = time - a->ticks;
+        if (duration <= 0) duration += SKY_PERIOD;
+        if (elapsed < 0) elapsed += SKY_PERIOD;
+        progress = elapsed / duration;
+    }
+    if (eased && progress > 0 && progress < 1) {
+        double lo = 0, hi = 1;
+        for (int iteration = 0; iteration < 48; ++iteration) {
+            const double mid = (lo + hi) * 0.5;
+            if (SkyBezier(mid, bezier[0], bezier[2]) < progress) lo = mid;
+            else hi = mid;
+        }
+        progress = SkyBezier((lo + hi) * 0.5, bezier[1], bezier[3]);
+    }
+    auto lerp = [progress](float from, float to) {
+        return float(double(from) + (double(to) - from) * progress);
+    };
+    return DirectX::XMFLOAT4(lerp(a->value.x, b->value.x), lerp(a->value.y, b->value.y),
+        lerp(a->value.z, b->value.z), lerp(a->value.w, b->value.w));
+}
+
+SkyState SkyTimeline::Sample(uint64_t ticks, double fraction) const {
+    SkyState state;
+    state.moonPhase = int((ticks / SKY_PERIOD) % 8);
+    if (!mLoaded) return state;
+    // Reduce integer time before converting to double, including beyond 2^53.
+    if (!std::isfinite(fraction)) fraction = 0;
+    double time = std::fmod(double(ticks % SKY_PERIOD) +
+        std::fmod(fraction, double(SKY_PERIOD)), double(SKY_PERIOD));
+    if (time < 0) time += SKY_PERIOD;
+    const auto sky = mTracks[SkyColor].Sample(time);
+    const auto fog = mTracks[FogColor].Sample(time);
+    const auto light = mTracks[LightColor].Sample(time);
+    state.skyColor = DirectX::XMFLOAT3(0.47f * sky.x, 0.65f * sky.y, sky.z);
+    state.fogColor = DirectX::XMFLOAT3(0.47f * fog.x, 0.65f * fog.y, fog.z);
+    state.lightColor = DirectX::XMFLOAT3(light.x, light.y, light.z);
+    state.daylight = mTracks[Daylight].Sample(time).x;
+    state.stars = mTracks[Stars].Sample(time).x;
+    state.twilight = mTracks[Twilight].Sample(time);
+    state.sunAngle = mTracks[SunAngle].Sample(time).x * (DirectX::XM_PI / 180.0f);
+    return state;
+}
 
 void ExtractFrustum(const DirectX::XMMATRIX& vp, Frustum& f) {
     using namespace DirectX;

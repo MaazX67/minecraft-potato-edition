@@ -9,7 +9,12 @@ cbuffer PerFrame : register(b0)
     float gBrightness;
     float gFogStart;
     float gFogEnd;
-    float gPad;
+    float gStarRotation;
+    float4 gSkyColorDaylight;
+    float4 gFogColorStars;
+    float4 gLightColorOpacity;
+    float4 gTwilight;
+    float4 gSunDirection;
 };
 
 Texture2D gAtlas : register(t0);
@@ -65,11 +70,13 @@ float4 PSMain(PSIn input) : SV_TARGET
     float2 atlasUV = input.tile + (floor(frac(input.uv) * tileSize) + 0.5f) * scale / 1024.0f;
     float4 tex = gAtlas.SampleLevel(gPoint, atlasUV, lod);
     clip(tex.a - 0.5f);
-    float lit = input.shade * clamp(0.6f + 0.8f * gBrightness, 0.3f, 1.0f);
-    float3 col = tex.rgb * lit * input.tint;
+    float3 light = saturate(input.shade * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
+    float3 dark = 1.0f - light;
+    light = lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
+    float3 col = tex.rgb * light * input.tint;
     float fog = 0.0f;
     if (gFogEnd > 0.0f) fog = smoothstep(gFogStart, gFogEnd, input.fogDepth);
-    col = lerp(col, float3(0.47f, 0.65f, 1.0f), fog);
+    col = lerp(col, gFogColorStars.rgb, fog);
     return float4(col, tex.a);
 }
 
@@ -79,6 +86,27 @@ float4 PSMainUI(PSIn input) : SV_TARGET
 {
     float4 tex = gAtlas.Sample(gPoint, frac(input.uv));
     return float4(tex.rgb * input.shade * input.tint, tex.a);
+}
+
+float4 PSMainWorldSky(PSIn input) : SV_TARGET
+{
+    float3 d = normalize(input.dir);
+    float horizon = 1.0f - smoothstep(0.0f, 0.35f, abs(d.y));
+    float3 col = lerp(gSkyColorDaylight.rgb, gFogColorStars.rgb, horizon);
+    float facingSun = saturate(d.x * (gSunDirection.x >= 0.0f ? 1.0f : -1.0f));
+    float glow = horizon * facingSun * facingSun * gTwilight.a;
+    col = lerp(col, gTwilight.rgb, glow);
+    return float4(col, 1.0f);
+}
+
+float4 PSMainCelestial(PSIn input) : SV_TARGET
+{
+    float4 tex = gAtlas.Sample(gPoint, input.uv);
+    float3 d = normalize(input.dir);
+    float height = d.x * sin(gStarRotation) + d.y * cos(gStarRotation);
+    float aboveHorizon = smoothstep(0.0f, 0.02f, height);
+    return float4(tex.rgb * input.shade * input.tint,
+                  tex.a * gLightColorOpacity.w * aboveHorizon);
 }
 
 // Title panorama: sample the cubemap along the interpolated view direction.
