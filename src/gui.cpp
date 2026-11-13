@@ -878,16 +878,19 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
 namespace {
 constexpr int INV_COLS = 9;
 constexpr int INV_CELL = 40;
-constexpr int INV_ROWS = (BLOCK_COUNT - 1 + 36 + INV_COLS - 1) / INV_COLS;
+constexpr int INV_VIS_ROWS = 9;
 constexpr float INV_PAD = 12;
 constexpr float INV_W = INV_COLS * INV_CELL + INV_PAD * 2;
 constexpr float INV_TITLE_H = 40;
 constexpr float INV_HINT_H = 36;
-constexpr float INV_H = INV_TITLE_H + INV_ROWS * INV_CELL + INV_HINT_H;
+constexpr float INV_H = INV_TITLE_H + INV_VIS_ROWS * INV_CELL + INV_HINT_H;
 constexpr float INV_X = (SCREEN_W - INV_W) * 0.5f;
 constexpr float INV_Y = (SCREEN_H - INV_H) * 0.5f - 20;
 constexpr float INV_GX = INV_X + INV_PAD;
 constexpr float INV_GY = INV_Y + INV_TITLE_H;
+constexpr float INV_GRID_H = INV_VIS_ROWS * INV_CELL;
+
+int gCreativeScroll = 0;
 
 const std::vector<uint8_t>& CreativeItems() {
     static const std::vector<uint8_t> items = [] {
@@ -898,21 +901,39 @@ const std::vector<uint8_t>& CreativeItems() {
     return items;
 }
 
+int CreativeTotalRows() {
+    return (int(CreativeItems().size()) + INV_COLS - 1) / INV_COLS;
+}
+
+int CreativeMaxScroll() {
+    const int extra = CreativeTotalRows() - INV_VIS_ROWS;
+    return extra > 0 ? extra : 0;
+}
+
 void CellRect(int i, float& x, float& y) {
     x = INV_GX + (i % INV_COLS) * INV_CELL;
-    y = INV_GY + (i / INV_COLS) * INV_CELL;
+    y = INV_GY + (i / INV_COLS - gCreativeScroll) * INV_CELL;
 }
 } // namespace
 
+void ScrollCreativeInventory(int deltaRows) {
+    gCreativeScroll += deltaRows;
+    if (gCreativeScroll < 0) gCreativeScroll = 0;
+    const int maxScroll = CreativeMaxScroll();
+    if (gCreativeScroll > maxScroll) gCreativeScroll = maxScroll;
+}
+
+void ResetCreativeScroll() { gCreativeScroll = 0; }
+
 int InventoryHitTest(int mouseX, int mouseY) {
-    for (int i = 0; i < int(CreativeItems().size()); ++i) {
-        const uint8_t b = CreativeItems()[i];
-        float x, y;
-        CellRect(i, x, y);
-        if (mouseX >= x && mouseX < x + INV_CELL && mouseY >= y && mouseY < y + INV_CELL)
-            return b;
-    }
-    return -1;
+    const float rx = mouseX - INV_GX, ry = mouseY - INV_GY;
+    if (rx < 0 || ry < 0 || rx >= INV_COLS * INV_CELL || ry >= INV_GRID_H) return -1;
+    const int col = int(rx) / INV_CELL;
+    const int visRow = int(ry) / INV_CELL;
+    const int index = (gCreativeScroll + visRow) * INV_COLS + col;
+    const std::vector<uint8_t>& items = CreativeItems();
+    if (index < 0 || index >= int(items.size())) return -1;
+    return items[index];
 }
 
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, const uint8_t* hotbar) {
@@ -926,9 +947,13 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, co
     ui.DrawQuad(&ui.texWhite, INV_X + INV_W - 2, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
     ui.DrawText("Creative Inventory", INV_X + INV_PAD, INV_Y + 12, 2, 15, false, 0.25f, 0.25f, 0.25f);
 
+    const std::vector<uint8_t>& items = CreativeItems();
+    const int total = int(items.size());
+    const int first = gCreativeScroll * INV_COLS;
+    const int last = std::min(total, first + INV_VIS_ROWS * INV_COLS);
     const int hovered = InventoryHitTest(mouseX, mouseY);
-    for (int i = 0; i < int(CreativeItems().size()); ++i) {
-        const uint8_t b = CreativeItems()[i];
+    for (int i = first; i < last; ++i) {
+        const uint8_t b = items[i];
         float x, y;
         CellRect(i, x, y);
         ui.DrawQuad(&ui.texWhite, x + 2, y + 2, INV_CELL - 4, INV_CELL - 4, 0, 0, 1, 1, 15, 0.55f, 0.55f, 0.55f);
@@ -939,7 +964,20 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, co
         DrawItemIcon(ui, b, x + 4, y + 4);
     }
 
+    const float sbX = INV_X + INV_W - 8;
+    ui.DrawQuad(&ui.texWhite, sbX, INV_GY, 4, INV_GRID_H, 0, 0, 1, 1, 15, 0.4f, 0.4f, 0.4f);
+    const int totalRows = CreativeTotalRows();
+    if (totalRows > INV_VIS_ROWS) {
+        const float thumbH = std::max(16.0f, INV_GRID_H * INV_VIS_ROWS / totalRows);
+        const float thumbY = INV_GY + (INV_GRID_H - thumbH) * gCreativeScroll / CreativeMaxScroll();
+        ui.DrawQuad(&ui.texWhite, sbX, thumbY, 4, thumbH, 0, 0, 1, 1, 15, 0.85f, 0.85f, 0.85f);
+    }
+
     ui.DrawText("Click an item to select it", INV_X + INV_PAD, INV_Y + INV_H - 26, 2, 15, false, 0.3f, 0.3f, 0.3f);
+    char pageBuf[32];
+    std::snprintf(pageBuf, sizeof(pageBuf), "%d/%d", gCreativeScroll + 1, std::max(1, totalRows - INV_VIS_ROWS + 1));
+    const float pw = ui.TextWidth(pageBuf, 2);
+    ui.DrawText(pageBuf, INV_X + INV_W - INV_PAD - pw, INV_Y + INV_H - 26, 2, 15, false, 0.3f, 0.3f, 0.3f);
 
     if (hovered > 0) {
         std::string name = ItemName(uint8_t(hovered));

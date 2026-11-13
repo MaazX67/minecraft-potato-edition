@@ -185,6 +185,8 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
                    const uint8_t* hotbar);
 int InventoryHitTest(int mouseX, int mouseY);
+void ScrollCreativeInventory(int deltaRows);
+void ResetCreativeScroll();
 
 // Slot indices for the survival screen: 0..26 storage, 27..35 hotbar,
 // 36..44 crafting grid (3x3; the 2x2 uses 36,37,39,40), 45 = craft result.

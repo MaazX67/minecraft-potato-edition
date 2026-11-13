@@ -1227,6 +1227,7 @@ static void HandleGameFrame(float dt) {
     if (gInput.KeyPressed('E')) {
         gCraftTable = false;
         gInventoryMessage.clear();
+        ResetCreativeScroll();
         SetScreen(gHwnd, Screen::Inventory);
         return;
     }
@@ -1974,11 +1975,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                     HandleInventoryClick(
                         SurvivalInvHitTest(gInput.mouseX, gInput.mouseY, gCraftTable),
                         gInput.rightClick);
-            } else if (gInput.leftClick) {
-                const int b = InventoryHitTest(gInput.mouseX, gInput.mouseY);
-                if (b > 0) {
-                    gHotbar[gHotbarSlot] = uint8_t(b);
-                    gSound.Play(SND_CLICK);
+            } else {
+                if (gInput.wheel != 0)
+                    ScrollCreativeInventory(gInput.wheel > 0 ? -1 : 1);
+                if (gInput.leftClick) {
+                    const int b = InventoryHitTest(gInput.mouseX, gInput.mouseY);
+                    if (b > 0) {
+                        gHotbar[gHotbarSlot] = uint8_t(b);
+                        gSound.Play(SND_CLICK);
+                    }
                 }
             }
         } else if (gInput.leftClick) {
