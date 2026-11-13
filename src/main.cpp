@@ -78,6 +78,7 @@ static uint64_t gChestKey = 0;
 static uint64_t ChestKey(int x, int z) {
     return (uint64_t(uint32_t(x)) << 32) | uint64_t(uint32_t(z));
 }
+static void BuildDimensionWorld(int dim, EditMap edits);
 static HurtResistance gPlayerResistance;
 static float gMobSpawnTimer = 0;
 static uint64_t gCombatHits = 0, gCriticalHits = 0, gZombieKills = 0;
