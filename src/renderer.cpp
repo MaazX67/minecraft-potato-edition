@@ -487,6 +487,7 @@ void SetViewProj(RenderContext& rc, const XMMATRIX& m, float fogEnd,
             float brightness, fogStart, fogEnd, starRotation;
             XMFLOAT4 skyColorDaylight, fogColorStars, lightColorOpacity, twilight, sunDirection;
             float waterTime;
+            float waterPad[3]; // D3D10 cbuffer size must be a multiple of 16 bytes
         };
         static_assert(sizeof(PerFrame) == 176, "Shader constant-buffer layout");
         PerFrame* pf = static_cast<PerFrame*>(data);
