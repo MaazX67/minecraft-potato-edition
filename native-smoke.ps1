@@ -18,7 +18,7 @@ public static class NativeSmokeInput {
 "@
 function Post($message, $w = 0, $l = 0) {
   if ($message -ge 0x100 -and $message -le 0x20E) { $message += 0x8000 }
-  if (![NativeSmokeInput]::PostMessageW($script:h, $message, [UIntPtr]::new([uint64]$w), [IntPtr]::new([int64]$l))) { throw 'Window message failed' }
+  if (![NativeSmokeInput]::PostMessageW($script:h, $message, [UIntPtr]::new([uint64]([int64]$w -band 4294967295)), [IntPtr]::new([int64]$l))) { throw 'Window message failed' }
 }
 function Key($key, $duration = 100) {
   Post 0x100 $key
