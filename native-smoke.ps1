@@ -337,7 +337,7 @@ try {
   $skySave = Get-ChildItem (Join-Path $out 'saves') -Recurse -Filter '*.potato' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   $skyBytes = [IO.File]::ReadAllBytes($skySave.FullName)
   $formatOffset = [Text.Encoding]::ASCII.GetString($skyBytes).IndexOf('format') + 6
-  Check ($formatOffset -ge 6 -and $skyBytes[$formatOffset] -eq 2) 'new world save has format two'
+  Check ($formatOffset -ge 6 -and $skyBytes[$formatOffset] -eq 3) 'new world save has format three'
   $legacyBytes = $skyBytes.Clone()
   $legacyBytes[$formatOffset] = 1
   [IO.File]::WriteAllBytes($skySave.FullName, $legacyBytes)
