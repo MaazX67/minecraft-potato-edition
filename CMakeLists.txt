@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.21)
 # entirely and keeps the shipped exe self-contained.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(MinecraftPotatoEdition LANGUAGES CXX)
+project(MinecraftPotatoEdition LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,7 +27,7 @@ add_library(potato_core STATIC src/world.cpp src/assets.cpp src/engine.cpp)
 target_include_directories(potato_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(potato_core SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
-add_executable(PotatoEdition WIN32 src/main.cpp src/renderer.cpp src/gui.cpp src/sound.cpp)
+add_executable(PotatoEdition WIN32 src/main.cpp src/renderer.cpp src/gui.cpp src/sound.cpp src/app.rc)
 target_include_directories(PotatoEdition PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(PotatoEdition PRIVATE potato_core d3d10 dxgi d3dcompiler dxguid xaudio2)
 

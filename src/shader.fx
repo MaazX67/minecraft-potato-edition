@@ -88,6 +88,17 @@ float4 PSMainUI(PSIn input) : SV_TARGET
     return float4(tex.rgb * input.shade * input.tint, tex.a);
 }
 
+float4 PSMainEntity(PSIn input) : SV_TARGET
+{
+    float4 tex = gAtlas.Sample(gPoint, input.uv);
+    clip(tex.a - 0.1f);
+    float3 light = saturate(input.shade * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
+    float3 dark = 1.0f - light;
+    light = lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
+    float fog = gFogEnd > 0 ? smoothstep(gFogStart, gFogEnd, input.fogDepth) : 0;
+    return float4(lerp(tex.rgb * light * input.tint, gFogColorStars.rgb, fog), tex.a);
+}
+
 float4 PSMainWorldSky(PSIn input) : SV_TARGET
 {
     float3 d = normalize(input.dir);

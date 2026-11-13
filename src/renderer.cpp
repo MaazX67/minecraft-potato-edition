@@ -117,6 +117,13 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     extra->Release();
     if (FAILED(hr)) { vsBlob->Release(); return false; }
 
+    if (!CompileOne(shaderSource, "PSMainEntity", "ps_4_0", &extra, hwnd)) {
+        vsBlob->Release(); return false;
+    }
+    hr = rc.device->CreatePixelShader(extra->GetBufferPointer(), extra->GetBufferSize(), &rc.psEntity);
+    extra->Release();
+    if (FAILED(hr)) { vsBlob->Release(); return false; }
+
     const D3D10_INPUT_ELEMENT_DESC elems[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D10_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 12, D3D10_INPUT_PER_VERTEX_DATA, 0},
@@ -276,6 +283,7 @@ void ShutdownRenderer(RenderContext& rc) {
     SafeRelease(rc.starsVB);
     SafeRelease(rc.additiveBlend);
     SafeRelease(rc.psCelestial);
+    SafeRelease(rc.psEntity);
     SafeRelease(rc.psWorldSky);
     SafeRelease(rc.skyVB);
     SafeRelease(rc.panoramaSRV);

@@ -89,6 +89,31 @@ enum BlockId : uint8_t {
     BLOCK_COUNT
 };
 
+enum ItemId : uint8_t {
+    ITEM_STICK = 64,
+    ITEM_WOOD_PICKAXE, ITEM_WOOD_AXE, ITEM_WOOD_SHOVEL, ITEM_WOOD_SWORD,
+    ITEM_STONE_PICKAXE, ITEM_STONE_AXE, ITEM_STONE_SHOVEL, ITEM_STONE_SWORD,
+    ITEM_IRON_PICKAXE, ITEM_IRON_AXE, ITEM_IRON_SHOVEL, ITEM_IRON_SWORD,
+    ITEM_DIAMOND_PICKAXE, ITEM_DIAMOND_AXE, ITEM_DIAMOND_SHOVEL, ITEM_DIAMOND_SWORD,
+    ITEM_GOLD_PICKAXE, ITEM_GOLD_AXE, ITEM_GOLD_SHOVEL, ITEM_GOLD_SWORD,
+    ITEM_NETHERITE_PICKAXE, ITEM_NETHERITE_AXE, ITEM_NETHERITE_SHOVEL, ITEM_NETHERITE_SWORD,
+    ITEM_COAL = 96, ITEM_RAW_IRON, ITEM_RAW_GOLD, ITEM_DIAMOND,
+    ITEM_REDSTONE, ITEM_LAPIS, ITEM_IRON_INGOT, ITEM_GOLD_INGOT, ITEM_NETHERITE_INGOT
+};
+
+enum class ToolKind { None, Pickaxe, Axe, Shovel, Sword };
+struct ToolDef {
+    const char* name;
+    ToolKind kind;
+    int tier, durability;
+    float speed, damage, attackSpeed;
+};
+const ToolDef* FindTool(uint8_t id);
+bool IsValidItem(int id);
+const char* ItemName(uint8_t id);
+std::string ItemTexture(uint8_t id);
+int ItemStackLimit(uint8_t id);
+
 // SOLID: collides with the player. OPAQUE: culls neighbor faces. CUTOUT:
 // alpha-tested (leaves/glass). LIQUID: rendered in the transparent pass.
 enum BlockFlags : uint8_t {

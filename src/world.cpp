@@ -111,6 +111,230 @@ static uint32_t Hash3(uint32_t x, uint32_t y, uint32_t z, uint32_t seed) {
     return h ^ (h >> 16);
 }
 
+const char* GeneratorName(WorldGenerator generator) {
+    switch (generator) {
+        case WorldGenerator::Legacy: return "potato-perlin-v1";
+        case WorldGenerator::Climate: return "potato-climate-v2";
+        case WorldGenerator::Flat: return "potato-flat-v1";
+    }
+    return "unknown";
+}
+
+bool ParseGenerator(const std::string& name, WorldGenerator& generator) {
+    if (name == "potato-perlin-v1" || name == "legacy") generator = WorldGenerator::Legacy;
+    else if (name == "potato-climate-v2" || name == "climate") generator = WorldGenerator::Climate;
+    else if (name == "potato-flat-v1" || name == "flat") generator = WorldGenerator::Flat;
+    else return false;
+    return true;
+}
+
+const char* BiomeName(Biome biome) {
+    switch (biome) {
+        case Biome::Plains: return "Plains";
+        case Biome::Forest: return "Forest";
+        case Biome::BirchForest: return "Birch Forest";
+        case Biome::Taiga: return "Taiga";
+        case Biome::Desert: return "Desert";
+        case Biome::Snowy: return "Snowy";
+        case Biome::Mountains: return "Mountains";
+        case Biome::River: return "River";
+        case Biome::Ocean: return "Ocean";
+    }
+    return "Unknown";
+}
+
+namespace {
+
+constexpr int CLIMATE_SEA = 63;
+
+float SmoothRange(float lo, float hi, float value) {
+    const float t = std::clamp((value - lo) / (hi - lo), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+int FloorCell8(int value) {
+    return value / 8 - (value % 8 < 0 ? 1 : 0);
+}
+
+struct ClimateVein {
+    uint8_t block = BLOCK_STONE;
+    int maxY = 0;
+    float lateral = 0, centerY = 0, invRadiusY = 1;
+};
+
+ClimateVein SampleClimateVein(int x, int cellY, int z, uint32_t seed) {
+    const int cellX = FloorCell8(x), cellZ = FloorCell8(z);
+    const uint32_t hash = Hash3(uint32_t(cellX), uint32_t(cellY), uint32_t(cellZ), seed ^ 0xA341316Cu);
+    const uint32_t roll = hash % 100;
+    const int bottom = cellY * 8;
+    ClimateVein vein;
+    if (bottom < 16 && roll < 3) { vein.block = BLOCK_DIAMOND_ORE; vein.maxY = 16; }
+    else if (bottom < 24 && roll < 7) { vein.block = BLOCK_REDSTONE_ORE; vein.maxY = 24; }
+    else if (bottom < 32 && roll < 11) { vein.block = BLOCK_LAPIS_ORE; vein.maxY = 32; }
+    else if (bottom < 40 && roll < 15) { vein.block = BLOCK_GOLD_ORE; vein.maxY = 40; }
+    else if (bottom < 80 && roll < 31) { vein.block = BLOCK_IRON_ORE; vein.maxY = 80; }
+    else if (bottom < 144 && roll < 53) { vein.block = BLOCK_COAL_ORE; vein.maxY = 144; }
+    const float dx = float(x - cellX * 8 - 2 - int((hash >> 8) & 3u));
+    const float dz = float(z - cellZ * 8 - 2 - int((hash >> 10) & 3u));
+    const float rx = 1.8f + float((hash >> 16) & 3u) * 0.35f;
+    const float rz = 1.8f + float((hash >> 18) & 3u) * 0.35f;
+    vein.lateral = dx * dx / (rx * rx) + dz * dz / (rz * rz);
+    vein.centerY = float(bottom + 2 + int((hash >> 12) & 3u));
+    vein.invRadiusY = 1.0f / (1.5f + float((hash >> 20) & 3u) * 0.35f);
+    return vein;
+}
+
+bool IsTreeLeaf(uint8_t block) {
+    return block == BLOCK_OAK_LEAVES || block == BLOCK_BIRCH_LEAVES || block == BLOCK_SPRUCE_LEAVES;
+}
+
+} // namespace
+
+TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z) {
+    const float wx = float(x), wz = float(z);
+    const float continental = noise.Fbm2(wx * 0.0012f + 37.1f, wz * 0.0012f - 19.4f, 3);
+    const float erosion = noise.Fbm2(wx * 0.0027f - 83.2f, wz * 0.0027f + 41.8f, 3);
+    const float ridge = 1.0f - std::clamp(fabsf(noise.Fbm2(wx * 0.007f + 53.8f, wz * 0.007f - 31.4f, 2)), 0.0f, 1.0f);
+    const float inland = SmoothRange(-0.12f, 0.20f, continental);
+    const float mountains = 105.0f * ridge * ridge * ridge
+        * (1.0f - SmoothRange(-0.38f, 0.20f, erosion)) * SmoothRange(-0.08f, 0.18f, continental);
+    const float hills = noise.Fbm2(wx * 0.012f - 15.3f, wz * 0.012f + 67.9f, 2);
+    float elevation = float(CLIMATE_SEA) + continental * 95.0f + inland * (8.0f + hills * 13.0f) + mountains;
+    const float riverNoise = noise.Noise2(wx * 0.004f + 91.7f + erosion * 0.8f,
+                                         wz * 0.004f - 72.5f + continental * 0.6f);
+    const float river = 1.0f - SmoothRange(0.016f, 0.085f, fabsf(riverNoise));
+    const float riverBed = float(CLIMATE_SEA - 5) + hills * 1.5f;
+    elevation = LerpN(river, elevation, std::min(elevation, riverBed));
+    const int height = int(floorf(std::clamp(elevation, 5.0f, 210.0f)));
+    const float temperature = std::clamp(0.5f + 0.7f * noise.Fbm2(wx * 0.0016f - 137.6f, wz * 0.0016f + 89.2f, 3)
+        - float(std::max(0, height - 85)) * 0.0045f, 0.0f, 1.0f);
+    const float humidity = std::clamp(0.5f + 0.7f * noise.Fbm2(wx * 0.0018f + 173.3f, wz * 0.0018f - 121.7f, 3), 0.0f, 1.0f);
+    Biome biome = Biome::Plains;
+    if (river > 0.82f && continental > -0.12f && height <= CLIMATE_SEA + 1) biome = Biome::River;
+    else if (height < CLIMATE_SEA) biome = Biome::Ocean;
+    else if (height >= 118 || (mountains > 27.0f && height > 95)) biome = Biome::Mountains;
+    else if (temperature < 0.24f) biome = Biome::Snowy;
+    else if (temperature < 0.40f && humidity > 0.42f) biome = Biome::Taiga;
+    else if (temperature > 0.64f && humidity < 0.40f) biome = Biome::Desert;
+    else if (temperature >= 0.43f && temperature < 0.67f && humidity > 0.62f) biome = Biome::BirchForest;
+    else if (humidity > 0.49f) biome = Biome::Forest;
+    return {height, biome, temperature, humidity};
+}
+
+void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz) {
+    memset(blocks, BLOCK_AIR, CHUNK_VOL * sizeof(uint8_t));
+    const int originX = cx * CHUNK_X, originZ = cz * CHUNK_Z;
+    TerrainColumn columns[CHUNK_X + 2][CHUNK_Z + 2];
+    for (int x = -1; x <= CHUNK_X; ++x) {
+        for (int z = -1; z <= CHUNK_Z; ++z) {
+            columns[x + 1][z + 1] = SampleTerrain(noise, originX + x, originZ + z);
+        }
+    }
+    for (int x = 0; x < CHUNK_X; ++x) {
+        for (int z = 0; z < CHUNK_Z; ++z) {
+            const int wx = originX + x, wz = originZ + z;
+            const TerrainColumn column = columns[x + 1][z + 1];
+            const int h = column.height;
+            const bool river = column.biome == Biome::River;
+            const bool sandy = column.biome == Biome::Desert || (!river && h <= CLIMATE_SEA + 2);
+            const bool rocky = column.biome == Biome::Mountains && h > 104;
+            const bool snowy = !sandy && !river && (column.temperature < 0.24f || h >= 155);
+            const bool submerged = h <= CLIMATE_SEA + 1 || river || column.biome == Biome::Ocean;
+            const int neighborHeights[4] = {columns[x][z + 1].height, columns[x + 2][z + 1].height,
+                                           columns[x + 1][z].height, columns[x + 1][z + 2].height};
+            int waterFloor = CLIMATE_SEA;
+            for (int floor : neighborHeights) waterFloor = std::min(waterFloor, floor);
+            int veinCell = -1;
+            ClimateVein vein;
+            for (int y = 0; y <= h; ++y) {
+                uint8_t block = BLOCK_STONE;
+                if (y == 0) block = BLOCK_BEDROCK;
+                else if (river && y >= h - 2) block = BLOCK_GRAVEL;
+                else if (sandy && y >= h - 3) block = BLOCK_SAND;
+                else if (sandy && y >= h - 6) block = BLOCK_SANDSTONE;
+                else if (y == h) block = snowy ? BLOCK_SNOW : (rocky ? BLOCK_STONE : BLOCK_GRASS);
+                else if (!rocky && y >= h - 3) block = BLOCK_DIRT;
+                if (block == BLOCK_STONE) {
+                    const int cellY = y / 8;
+                    if (cellY != veinCell) {
+                        vein = SampleClimateVein(wx, cellY, wz, seed);
+                        veinCell = cellY;
+                    }
+                    const float dy = (float(y) - vein.centerY) * vein.invRadiusY;
+                    if (y < h - 3 && y < vein.maxY && vein.lateral + dy * dy < 1.0f) block = vein.block;
+                }
+                // Keep a solid roof and seal cave faces beside water, including across chunk edges.
+                if (!submerged && y > 6 && y < h - 5 && (y > CLIMATE_SEA || y <= waterFloor)) {
+                    const float a = noise.Noise3(float(wx) * 0.036f, float(y) * 0.055f, float(wz) * 0.036f);
+                    const float b = noise.Noise3(float(wx) * 0.038f + 47.2f, float(y) * 0.057f - 19.8f, float(wz) * 0.038f + 83.1f);
+                    if ((fabsf(a) < 0.055f && fabsf(b) < 0.055f) || (y < 32 && a > 0.62f && b > 0.25f)) block = BLOCK_AIR;
+                }
+                blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = block;
+            }
+            for (int y = h + 1; y <= CLIMATE_SEA; ++y) {
+                blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] =
+                    y == CLIMATE_SEA && column.temperature < 0.27f ? BLOCK_ICE : BLOCK_WATER;
+            }
+        }
+    }
+
+    auto place = [&](int wx, int y, int wz, uint8_t block, bool trunk) {
+        const int x = wx - originX, z = wz - originZ;
+        if (x < 0 || x >= CHUNK_X || z < 0 || z >= CHUNK_Z || y < 0 || y >= CHUNK_Y) return;
+        uint8_t& target = blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
+        if (target == BLOCK_AIR || (trunk && IsTreeLeaf(target))) target = block;
+    };
+    // A four-block halo and shared candidate order keep tree overlap deterministic at chunk seams.
+    for (int wx = originX - 4; wx < originX + CHUNK_X + 4; ++wx) {
+        for (int wz = originZ - 4; wz < originZ + CHUNK_Z + 4; ++wz) {
+            const uint32_t hash = Hash3(uint32_t(wx), 0, uint32_t(wz), seed ^ 0x51ED270Bu);
+            if ((hash & 255u) >= 16u) continue;
+            const TerrainColumn column = SampleTerrain(noise, wx, wz);
+            if (column.height <= CLIMATE_SEA + 2 || column.height > 145) continue;
+            uint32_t density = 0;
+            uint8_t log = BLOCK_LOG, leaves = BLOCK_OAK_LEAVES;
+            switch (column.biome) {
+                case Biome::Plains: density = 2; break;
+                case Biome::Forest:
+                    density = 13;
+                    if ((hash >> 8) % 5 == 0) { log = BLOCK_BIRCH_LOG; leaves = BLOCK_BIRCH_LEAVES; }
+                    break;
+                case Biome::BirchForest: density = 16; log = BLOCK_BIRCH_LOG; leaves = BLOCK_BIRCH_LEAVES; break;
+                case Biome::Taiga: density = 14; log = BLOCK_SPRUCE_LOG; leaves = BLOCK_SPRUCE_LEAVES; break;
+                case Biome::Snowy: density = 2; log = BLOCK_SPRUCE_LOG; leaves = BLOCK_SPRUCE_LEAVES; break;
+                default: continue;
+            }
+            if ((hash & 255u) >= density) continue;
+            const int base = column.height + 1;
+            const bool spruce = log == BLOCK_SPRUCE_LOG;
+            const int th = spruce ? 7 + int((hash >> 16) % 4) : (log == BLOCK_BIRCH_LOG ? 5 : 4) + int((hash >> 16) % 3);
+            if (spruce) {
+                for (int dy = 2; dy <= th + 1; ++dy) {
+                    int radius = std::min(4, (th + 2 - dy) / 2);
+                    if ((dy & 1) && radius > 1) --radius;
+                    for (int dx = -radius; dx <= radius; ++dx) {
+                        for (int dz = -radius; dz <= radius; ++dz) {
+                            if (dx * dx + dz * dz > radius * radius + 1) continue;
+                            place(wx + dx, base + dy, wz + dz, leaves, false);
+                        }
+                    }
+                }
+            } else {
+                for (int dy = th - 2; dy <= th + 1; ++dy) {
+                    const int radius = dy < th ? 2 : 1;
+                    for (int dx = -radius; dx <= radius; ++dx) {
+                        for (int dz = -radius; dz <= radius; ++dz) {
+                            if (abs(dx) + abs(dz) > radius + 1 || (dy == th + 1 && abs(dx) + abs(dz) > 1)) continue;
+                            place(wx + dx, base + dy, wz + dz, leaves, false);
+                        }
+                    }
+                }
+            }
+            for (int dy = 0; dy < th; ++dy) place(wx, base + dy, wz, log, true);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Greedy meshing (all three axes)
 // ---------------------------------------------------------------------------
@@ -333,8 +557,8 @@ bool RaycastDDA(const std::function<uint8_t(int, int, int)>& getBlock,
 // World
 // ---------------------------------------------------------------------------
 
-World::World(uint32_t seed, int renderDistance)
-    : mSeed(seed), mRd(renderDistance), mNoise(seed) {
+World::World(uint32_t seed, int renderDistance, WorldGenerator generator)
+    : mSeed(seed), mGenerator(generator), mRd(renderDistance), mNoise(seed) {
     mWorkers.emplace_back([this] { WorkerLoop(); });
     mWorkers.emplace_back([this] { WorkerLoop(); });
 }
@@ -416,6 +640,18 @@ void World::Update(float camX, float camZ) {
 }
 
 void World::GenerateChunk(Chunk& c, int cx, int cz) const {
+    if (mGenerator == WorldGenerator::Climate) {
+        GenerateClimateChunk(c.blocks, mNoise, mSeed, cx, cz);
+        return;
+    }
+    if (mGenerator == WorldGenerator::Flat) {
+        memset(c.blocks, BLOCK_AIR, sizeof(c.blocks));
+        constexpr int layer = CHUNK_X * CHUNK_Z;
+        std::fill_n(c.blocks, layer, BLOCK_BEDROCK);
+        std::fill_n(c.blocks + layer, layer * 2, BLOCK_DIRT);
+        std::fill_n(c.blocks + layer * 3, layer, BLOCK_GRASS);
+        return;
+    }
     constexpr int SEA = 60;
     int heights[CHUNK_X][CHUNK_Z];
     for (int x = 0; x < CHUNK_X; ++x) {

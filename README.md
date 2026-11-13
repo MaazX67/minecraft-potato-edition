@@ -12,8 +12,8 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 
 ## What works so far
 
-- Infinite world with Perlin terrain, beaches, caves, ores, oak trees and water
-- Create New World: Game / World / More tabs, name, seed, draft difficulty and Survival/Creative modes; unavailable features stay disabled
+- Versioned climate terrain with nine biome categories, rivers, mountains, layered surfaces, coherent ore deposits, underground caves and oak/birch/spruce trees; legacy terrain and Superflat remain available
+- Create New World: Game / World / More tabs, functional world type, name, seed, draft difficulty and Survival/Creative modes; unavailable features stay disabled
 - Seeds currently use a 32-bit generator; terrain and seed results do not match Java Edition
 - Select World list with paging, new-world creation, and Save and Quit; player state and changed blocks survive restarting or chunk eviction
 - Day/night at 20 ticks per second: reads the installed Java 26.3 timeline for eased celestial motion, sky/light/fog colours, twilight and star brightness; installed sun and eight moon textures
@@ -21,7 +21,10 @@ Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contai
 - Chunk streaming with a render-distance setting, two worker threads, greedy meshing and frustum culling
 - Survival: health, hunger, fall damage, sprinting and swimming — no flying
 - Creative: double-tap-space flight, no hearts/hunger on the HUD
-- Tested attack-cooldown math; there are not yet mobs or entity combat
+- Basic textured zombies: night spawning capped at eight, collision-aware pursuit, contact damage, three-block attack reach and terrain occlusion
+- Tool-based attack cooldowns, falling critical hits, hurt immunity, knockback and durability; this is local combat, not multiplayer PvP
+- Timed tool-aware survival mining, ten installed crack stages, material mining/break sounds, harvest tiers and basic ore drops
+- 24 tools with installed item textures and durability bars; wood/stone/iron/diamond/gold crafting-table recipes and sticks (Netherite tools are creative-only)
 - Break and place blocks, selection outline, positioned 3D sound
 - Footsteps per material, water splash, fall-damage hurt and UI click sounds
 - Menus: title screen with rotating splash text and the panorama background, pause menu, death screen
@@ -59,8 +62,9 @@ cmake --build build --config Release --parallel
 ```
 
 Every push to `main` runs the same thing on GitHub Actions: configure, release build, run the
-headless tests, upload the exe as a build artifact, and publish it to the `v1.0.0-Alpha`
-release. The release executable is the last successful cloud build; hardware testing runs separately.
+headless tests and upload the exe as a build artifact. Releases are published separately after
+native verification, using distinct version tags and feature/limitation notes; previous releases are not overwritten.
+The executable includes an original procedural icon, not a copied Minecraft icon.
 
 Run the native checks on Windows with the downloaded executable and an existing output directory:
 
@@ -68,15 +72,16 @@ Run the native checks on Windows with the downloaded executable and an existing 
 .\native-smoke.ps1 -Exe C:\Games\PotatoEdition.exe -OutputRoot C:\Temp
 ```
 
-The script launches isolated test instances, checks crafting and save/reload after a process restart, and exercises save failures and damaged edit streams. It also captures noon, sunset, midnight, sunrise and all eight moon phases, checks clock/pause behaviour and tests world-time persistence and old-save loading. Test profiles and worlds stay in the output directory; regular preferences live under `%APPDATA%\MinecraftPotatoEdition\preferences.json`.
+The script launches isolated test instances, checks crafting and save/reload after a process restart, and exercises save failures and damaged edit streams. It also captures noon, sunset, midnight, sunrise and all eight moon phases, checks clock/pause behaviour and tests world-time persistence and old-save loading. New fixtures exercise timed mining, crack stages, item textures, durability, terrain occlusion, zombie/player damage, knockback, critical hits and climate terrain. Test profiles and worlds stay in the output directory; regular preferences live under `%APPDATA%\MinecraftPotatoEdition\preferences.json`.
 
-Worlds live under `%APPDATA%\MinecraftPotatoEdition\saves\world-*\world.potato`. Each file contains the name, generator version, seed, game mode, difficulty, world time, position, rotation, health/hunger, inventory and block edits in a versioned MessagePack container. Format-two saves include time; previous format-one worlds load at day zero and upgrade on their next save. Save and Quit and normal window close write a temporary file before atomically replacing the previous save. There is no periodic autosave yet. This is a Potato-only format, not Java's Anvil/NBT format; do not open Java worlds with it.
+Worlds live under `%APPDATA%\MinecraftPotatoEdition\saves\world-*\world.potato`. Each file contains the name, generator version, seed, game mode, difficulty, world time, position, rotation, health/hunger, inventory, optional tool wear and block edits in a versioned MessagePack container. Existing saves retain their legacy generator; newly created worlds default to climate terrain. Zombies are session-only and are not saved yet. Terrain remains 0–255 blocks high rather than Java's -64–319. Format-two saves include time; previous format-one worlds load at day zero and upgrade on their next save. Save and Quit and normal window close write a temporary file before atomically replacing the previous save. There is no periodic autosave yet. This is a Potato-only format, not Java's Anvil/NBT format; do not open Java worlds with it.
 
 ## Still to do
 
 - Java-compatible world format/import, autosaving, world thumbnails and world-management actions
 - Java terrain/biomes, structures, 64-bit seed parity and flowing liquids
-- Mobs, entities, tool-aware mining, loot, equipment, furnaces and the full item/recipe registry
+- Full mob AI/spawning/persistence, entity drops, randomized block loot, enchantments, equipment, furnace processing and the full item/recipe registry
+- Held-tool models/animations, shield blocking, sweeping attacks and complete Java combat rules
 - Armor/offhand mechanics, third-person player rendering, custom skin import and account integration
 - Clouds, weather, biome sky/fog colours, exact Java lightmap/block lighting, music, subtitles, multiplayer, game rules, data packs and experiments
 

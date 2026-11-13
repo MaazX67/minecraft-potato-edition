@@ -44,6 +44,9 @@ bool SoundEngine::Init(AssetStore& store) {
         else if (name.find("dirt") != std::string::npos) cat = SND_DIRT;
         else if (name.find("wood") != std::string::npos) cat = SND_WOOD;
         else if (name.find("sand") != std::string::npos) cat = SND_SAND;
+        else if (name.find("glass") != std::string::npos) cat = SND_GLASS;
+        else if (name.find("cloth") != std::string::npos) cat = SND_WOOL;
+        else if (name.find("snow") != std::string::npos) cat = SND_SNOW;
         if (cat == SND_COUNT) continue;
         if (mNext[cat] >= 4) continue; // vanilla has 4 variants per material
         ++mNext[cat];
@@ -77,6 +80,10 @@ bool SoundEngine::Init(AssetStore& store) {
         candidates.push_back({name, SND_HURT});
     }
     candidates.push_back({"minecraft/sounds/random/click.ogg", SND_CLICK});
+    candidates.push_back({"minecraft/sounds/random/glass1.ogg", SND_GLASS});
+    candidates.push_back({"minecraft/sounds/random/glass2.ogg", SND_GLASS});
+    candidates.push_back({"minecraft/sounds/random/glass3.ogg", SND_GLASS});
+    candidates.push_back({"minecraft/sounds/random/break.ogg", SND_TOOL_BREAK});
     candidates.push_back({"minecraft/sounds/liquid/splash.ogg", SND_SPLASH});
     memset(mNext, 0, sizeof(mNext)); // reuse as round-robin playback cursors
 
@@ -158,11 +165,13 @@ void SoundEngine::Play(SoundCat cat) {
     Submit(req);
 }
 
-void SoundEngine::PlayAt(SoundCat cat, float x, float y, float z) {
+void SoundEngine::PlayAt(SoundCat cat, float x, float y, float z, float volume, float pitch) {
     PlayRequest req;
     req.cat = cat;
     req.x = x; req.y = y; req.z = z;
     req.positional = true;
+    req.volume = volume;
+    req.pitch = pitch;
     Submit(req);
 }
 
@@ -227,6 +236,8 @@ void SoundEngine::Dispatch(const PlayRequest& req) {
         }
     }
 
+    volume *= req.volume;
+    voice->SetFrequencyRatio(req.pitch);
     // Equal-power pan into the mastering voice's stereo field.
     const float theta = (pan + 1.0f) * 0.7853982f; // (pan+1) * pi/4
     const float left = volume * cosf(theta);
@@ -246,8 +257,8 @@ void SoundEngine::Dispatch(const PlayRequest& req) {
     // Stop+Flush+Submit gives instant retrigger with zero decode latency.
     voice->Stop(0);
     voice->FlushSourceBuffers();
-    voice->SubmitSourceBuffer(&s.buffer);
-    voice->Start(0);
+    if (SUCCEEDED(voice->SubmitSourceBuffer(&s.buffer)) && SUCCEEDED(voice->Start(0)))
+        mPlayed.fetch_add(1, std::memory_order_relaxed);
 }
 
 void SoundEngine::SetEnabled(bool on) {
@@ -265,9 +276,15 @@ SoundCat SoundEngine::BlockSound(uint8_t block) {
         case BLOCK_GRASS: return SND_GRASS;
         case BLOCK_DIRT: return SND_DIRT;
         case BLOCK_PLANKS:
-        case BLOCK_LOG: return SND_WOOD;
+        case BLOCK_LOG: case BLOCK_SPRUCE_PLANKS: case BLOCK_BIRCH_PLANKS:
+        case BLOCK_SPRUCE_LOG: case BLOCK_BIRCH_LOG: case BLOCK_CRAFTING_TABLE: case BLOCK_BOOKSHELF: return SND_WOOD;
         case BLOCK_SAND: return SND_SAND;
         case BLOCK_GRAVEL: return SND_GRAVEL;
+        case BLOCK_GLASS: case BLOCK_ICE: return SND_GLASS;
+        case BLOCK_SNOW: return SND_SNOW;
+        case BLOCK_WHITE_WOOL: case BLOCK_RED_WOOL: case BLOCK_BLUE_WOOL:
+        case BLOCK_LIME_WOOL: case BLOCK_YELLOW_WOOL: case BLOCK_BLACK_WOOL: return SND_WOOL;
+        case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES: return SND_GRASS;
         default: return SND_STONE;
     }
 }
@@ -277,9 +294,14 @@ SoundCat SoundEngine::StepSound(uint8_t block) {
         case BLOCK_GRASS:
         case BLOCK_DIRT: return SND_STEP_GRASS;
         case BLOCK_PLANKS:
-        case BLOCK_LOG: return SND_STEP_WOOD;
+        case BLOCK_LOG: case BLOCK_SPRUCE_PLANKS: case BLOCK_BIRCH_PLANKS:
+        case BLOCK_SPRUCE_LOG: case BLOCK_BIRCH_LOG: case BLOCK_CRAFTING_TABLE: case BLOCK_BOOKSHELF: return SND_STEP_WOOD;
         case BLOCK_SAND: return SND_STEP_SAND;
         case BLOCK_GRAVEL: return SND_STEP_GRAVEL;
+        case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES: return SND_STEP_GRASS;
+        case BLOCK_SNOW: return SND_SNOW;
+        case BLOCK_WHITE_WOOL: case BLOCK_RED_WOOL: case BLOCK_BLUE_WOOL:
+        case BLOCK_LIME_WOOL: case BLOCK_YELLOW_WOOL: case BLOCK_BLACK_WOOL: return SND_WOOL;
         default: return SND_STEP_STONE;
     }
 }

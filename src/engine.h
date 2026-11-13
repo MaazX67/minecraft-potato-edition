@@ -1,6 +1,7 @@
 #pragma once
 #include <windows.h>
 #include <DirectXMath.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -187,6 +188,7 @@ public:
 struct PlayerBody {
     float x = 8.5f, y = 90.0f, z = 8.5f; // feet position
     float vx = 0, vy = 0, vz = 0;
+    float walkSpeed = 4.317f, impulseX = 0, impulseZ = 0;
     bool onGround = false, flying = true, sprinting = false, sneaking = false;
     bool inWater = false;
     static constexpr float HALF = 0.3f, HEIGHT = 1.8f, EYE = 1.62f;
@@ -198,6 +200,7 @@ struct PlayerBody {
 struct ItemSlot {
     uint8_t id = 0;
     int count = 0;
+    uint16_t damage = 0;
     bool Empty() const { return id == 0 || count <= 0; }
 };
 
@@ -207,11 +210,17 @@ struct InventoryState {
     ItemSlot cursor;
 
     int Capacity(uint8_t id) const;
-    int Add(uint8_t id, int count);
+    int Add(uint8_t id, int count, uint16_t damage = 0);
     ItemSlot Result(bool table) const;
     bool Click(int index, bool right, bool table, bool shift = false);
     bool Close();
 };
+
+float BlockHardness(uint8_t block);
+float MiningSeconds(uint8_t block, uint8_t item, bool onGround = true, bool underwater = false);
+bool CanHarvest(uint8_t block, uint8_t item);
+ItemSlot BlockDrops(uint8_t block, uint8_t item);
+bool WearTool(ItemSlot& slot, int amount);
 
 struct SurvivalState {
     int health = 20, hunger = 20;
@@ -257,6 +266,23 @@ struct SurvivalState {
     }
 };
 
+struct HurtResistance {
+    float remaining = 0, lastDamage = 0;
+    void Advance(float dt) { remaining = std::max(0.0f, remaining - dt); }
+    float Apply(float damage);
+};
+
+struct Zombie {
+    PlayerBody body;
+    HurtResistance resistance;
+    float health = 20, yaw = 0, attackDelay = 0;
+    bool passive = false;
+    Zombie() { body.walkSpeed = 1.3f; body.flying = false; }
+    void Update(float dt, const PlayerBody& player, const std::function<uint8_t(int, int, int)>& getBlock);
+    float Hit(float damage, float knockX, float knockZ);
+};
+bool RayHitsBody(const FlyCamera& camera, const PlayerBody& body, float reach, float& distance);
+
 // Minecraft 1.9+ attack cooldown: swing recharge gates damage.
 // Strength follows vanilla getAttackStrengthScale(0.5f); damage scales by
 // 0.2 + 0.8 * strength^2, so spam clicking deals heavily reduced damage.
@@ -268,6 +294,7 @@ public:
 
     float Strength(float nowMs) const;
     float Swing(float nowMs);
+    void Reset(float nowMs) { mLastSwingMs = nowMs; }
 
 private:
     float mLastSwingMs = -1000000.0f;

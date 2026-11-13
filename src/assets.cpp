@@ -387,6 +387,60 @@ const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
     BF_SOLID | BF_OPAQUE,                           // snow
 };
 
+static const ToolDef TOOLS[] = {
+    {"wooden_pickaxe", ToolKind::Pickaxe, 0, 59, 2, 2, 1.2f},
+    {"wooden_axe", ToolKind::Axe, 0, 59, 2, 7, 0.8f},
+    {"wooden_shovel", ToolKind::Shovel, 0, 59, 2, 2.5f, 1},
+    {"wooden_sword", ToolKind::Sword, 0, 59, 1, 4, 1.6f},
+    {"stone_pickaxe", ToolKind::Pickaxe, 1, 131, 4, 3, 1.2f},
+    {"stone_axe", ToolKind::Axe, 1, 131, 4, 9, 0.8f},
+    {"stone_shovel", ToolKind::Shovel, 1, 131, 4, 3.5f, 1},
+    {"stone_sword", ToolKind::Sword, 1, 131, 1, 5, 1.6f},
+    {"iron_pickaxe", ToolKind::Pickaxe, 2, 250, 6, 4, 1.2f},
+    {"iron_axe", ToolKind::Axe, 2, 250, 6, 9, 0.9f},
+    {"iron_shovel", ToolKind::Shovel, 2, 250, 6, 4.5f, 1},
+    {"iron_sword", ToolKind::Sword, 2, 250, 1, 6, 1.6f},
+    {"diamond_pickaxe", ToolKind::Pickaxe, 3, 1561, 8, 5, 1.2f},
+    {"diamond_axe", ToolKind::Axe, 3, 1561, 8, 9, 1},
+    {"diamond_shovel", ToolKind::Shovel, 3, 1561, 8, 5.5f, 1},
+    {"diamond_sword", ToolKind::Sword, 3, 1561, 1, 7, 1.6f},
+    {"golden_pickaxe", ToolKind::Pickaxe, 0, 32, 12, 2, 1.2f},
+    {"golden_axe", ToolKind::Axe, 0, 32, 12, 7, 1},
+    {"golden_shovel", ToolKind::Shovel, 0, 32, 12, 2.5f, 1},
+    {"golden_sword", ToolKind::Sword, 0, 32, 1, 4, 1.6f},
+    {"netherite_pickaxe", ToolKind::Pickaxe, 4, 2031, 9, 6, 1.2f},
+    {"netherite_axe", ToolKind::Axe, 4, 2031, 9, 10, 1},
+    {"netherite_shovel", ToolKind::Shovel, 4, 2031, 9, 6.5f, 1},
+    {"netherite_sword", ToolKind::Sword, 4, 2031, 1, 8, 1.6f}
+};
+
+const ToolDef* FindTool(uint8_t id) {
+    return id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD ? &TOOLS[id - ITEM_WOOD_PICKAXE] : nullptr;
+}
+
+bool IsValidItem(int id) {
+    return (id >= 0 && id < BLOCK_COUNT) || id == ITEM_STICK ||
+        (id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD) ||
+        (id >= ITEM_COAL && id <= ITEM_NETHERITE_INGOT);
+}
+
+const char* ItemName(uint8_t id) {
+    if (id < BLOCK_COUNT) return BLOCK_DEFS[id].name;
+    if (id == ITEM_STICK) return "stick";
+    if (const ToolDef* tool = FindTool(id)) return tool->name;
+    static const char* materials[] = {"coal", "raw_iron", "raw_gold", "diamond", "redstone", "lapis_lazuli",
+                                      "iron_ingot", "gold_ingot", "netherite_ingot"};
+    if (id >= ITEM_COAL && id <= ITEM_NETHERITE_INGOT) return materials[id - ITEM_COAL];
+    return "unknown";
+}
+
+std::string ItemTexture(uint8_t id) {
+    return std::string("minecraft/textures/") + (id < BLOCK_COUNT ? "block/" : "item/") +
+        (id < BLOCK_COUNT ? BLOCK_DEFS[id].side : ItemName(id)) + ".png";
+}
+
+int ItemStackLimit(uint8_t id) { return FindTool(id) ? 1 : 64; }
+
 // Vanilla grass/foliage/water textures are grayscale and biome-tinted by
 // Java at runtime. Bake the exact plains colors sampled from the 26.3
 // colormaps (grass #8EB971, foliage #71A74D, water #3F76E4) so no shader

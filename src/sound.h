@@ -16,6 +16,7 @@ enum SoundCat {
     SND_STONE, SND_GRASS, SND_DIRT, SND_WOOD, SND_SAND, SND_GRAVEL,
     SND_HIT, SND_CRIT, SND_CLICK, SND_HURT, SND_SPLASH,
     SND_STEP_GRASS, SND_STEP_STONE, SND_STEP_WOOD, SND_STEP_GRAVEL, SND_STEP_SAND,
+    SND_GLASS, SND_WOOL, SND_SNOW, SND_TOOL_BREAK,
     SND_COUNT
 };
 
@@ -29,19 +30,22 @@ public:
     bool Init(AssetStore& store); // caller must CoInitializeEx first
     void Shutdown();
     void Play(SoundCat cat);                    // non-positional (at listener)
-    void PlayAt(SoundCat cat, float x, float y, float z); // 3D positional
+    void PlayAt(SoundCat cat, float x, float y, float z, float volume = 1, float pitch = 1); // 3D positional
     void SetListener(float px, float py, float pz,
                      float fwdX, float fwdY, float fwdZ, float rightX, float rightZ);
     void SetEnabled(bool on);
     void SetVolume(float v);
     static SoundCat BlockSound(uint8_t block);
     static SoundCat StepSound(uint8_t block);
+    uint64_t Played() const { return mPlayed.load(std::memory_order_relaxed); }
+    size_t Variants(SoundCat cat) const { return mSounds[cat].size(); }
 
 private:
     struct PlayRequest {
         SoundCat cat = SND_STONE;
         float x = 0, y = 0, z = 0;
         bool positional = false;
+        float volume = 1, pitch = 1;
     };
     struct Sound {
         std::vector<IXAudio2SourceVoice*> voices; // pool: overlapping plays
@@ -72,6 +76,7 @@ private:
     bool mStop = false;
     std::thread mWorker;
     std::atomic<bool> mEnabled{true};
+    std::atomic<uint64_t> mPlayed{0};
     float mVolume = 1.0f;
     std::mutex mListenerMutex;
     Listener mListener;

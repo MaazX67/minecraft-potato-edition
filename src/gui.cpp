@@ -160,10 +160,15 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texBlack.w = texBlack.h = 1;
     texBlack.srv = CreateTextureSRV(rc, black, 1, 1);
 
-    for (int b = 1; b < BLOCK_COUNT; ++b) {
-        const std::string name = std::string("minecraft/textures/block/") + BLOCK_DEFS[b].side + ".png";
-        texBlockIcon[b] = LoadGui(rc, store, name.c_str());
+    for (int id = 1; id < 256; ++id) {
+        if (IsValidItem(id)) texItemIcon[id] = LoadGui(rc, store, ItemTexture(uint8_t(id)).c_str());
     }
+    for (int i = 0; i < 10; ++i) {
+        const std::string name = "minecraft/textures/block/destroy_stage_" + std::to_string(i) + ".png";
+        texDestroy[i] = LoadGui(rc, store, name.c_str());
+    }
+
+    texZombie = LoadGui(rc, store, "minecraft/textures/entity/zombie/zombie.png");
 
     D3D10_BUFFER_DESC bd = {};
     bd.ByteWidth = VB_VERTS * UINT(sizeof(MeshVertex));
@@ -179,14 +184,17 @@ void GuiRenderer::Shutdown() {
                         &texWhite, &texBlack, &texAttackBg, &texAttackProgress, &texPanoramaOverlay,
                         &texSlider, &texSliderHi, &texSliderHandle, &texSliderHandleHi,
                         &texInvBg, &texCraftBg, &texMenuBg, &texHeaderSeparator, &texFooterSeparator,
-                        &texTab, &texTabHi, &texTabSelected, &texTabSelectedHi, &texSkin,
+                        &texTab, &texTabHi, &texTabSelected, &texTabSelectedHi, &texSkin, &texZombie,
                         &texHeart[0], &texHeart[1], &texHeart[2],
                         &texFood[0], &texFood[1], &texFood[2]};
     for (GuiTexture* t : all) {
         if (t->srv) { t->srv->Release(); t->srv = nullptr; }
     }
-    for (int b = 0; b < BLOCK_COUNT; ++b) {
-        if (texBlockIcon[b].srv) { texBlockIcon[b].srv->Release(); texBlockIcon[b].srv = nullptr; }
+    for (GuiTexture& t : texItemIcon) {
+        if (t.srv) { t.srv->Release(); t.srv = nullptr; }
+    }
+    for (GuiTexture& t : texDestroy) {
+        if (t.srv) { t.srv->Release(); t.srv = nullptr; }
     }
     if (mVB) { mVB->Release(); mVB = nullptr; }
 }
@@ -624,7 +632,11 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
             ui.DrawText("Seed for the world generator", fx, 104, 2, 15, true, 0.627f, 0.627f, 0.627f);
             DrawTextField(ui, create.seed, fx, 126, fw, fh, create.focus == 2, timeSec);
             ui.DrawText("Leave blank for a random seed", fx, 172, 2, 15, true, 0.627f, 0.627f, 0.627f);
-            ui.DrawTextCentered("Uses the built-in terrain generator", cx, 224, 2, 15, true,
+            const char* type = create.generator == WorldGenerator::Flat ? "Superflat" :
+                (create.generator == WorldGenerator::Climate ? "Default (Climate)" : "Legacy");
+            snprintf(label, sizeof(label), "World Type: %s", type);
+            mButtons.push_back({fx, 208, fw, fh, label, ACT_CYCLE_WORLD_TYPE, true});
+            ui.DrawTextCentered("Potato terrain; not Java seed-compatible", cx, 266, 2, 15, true,
                                 0.627f, 0.627f, 0.627f);
         } else {
             mButtons.push_back({fx, 126, fw, fh, "Game Rules: Unavailable", ACT_NONE, false});
@@ -789,15 +801,22 @@ int MenuSystem::HitTest(int mouseX, int mouseY) const {
 // ---------------------------------------------------------------------------
 
 static void DrawItemIcon(GuiRenderer& ui, int id, float x, float y) {
-    if (id <= BLOCK_AIR || id >= BLOCK_COUNT) return;
-    const GuiTexture& icon = ui.texBlockIcon[id];
+    if (id <= BLOCK_AIR || !IsValidItem(id)) return;
+    const GuiTexture& icon = ui.texItemIcon[id];
     if (!icon.srv || icon.w <= 0 || icon.h <= 0) return;
     const float frame = float(std::min(icon.w, icon.h));
     ui.DrawQuad(&icon, x, y, 32, 32, 0, 0, frame / icon.w, frame / icon.h, 15);
 }
 
 static void DrawStackCount(GuiRenderer& ui, float x, float y, const ItemSlot& s) {
-    if (s.Empty() || s.id >= BLOCK_COUNT || s.count <= 1) return;
+    if (s.Empty()) return;
+    if (const ToolDef* tool = FindTool(s.id); tool && s.damage > 0) {
+        const float remaining = 1.0f - float(s.damage) / tool->durability;
+        ui.DrawQuad(&ui.texWhite, x + 2, y + 26, 26, 4, 0, 0, 1, 1, 15, 0, 0, 0);
+        ui.DrawQuad(&ui.texWhite, x + 2, y + 26, 26 * remaining, 2, 0, 0, 1, 1, 15,
+                    1 - remaining, remaining, 0);
+    }
+    if (s.count <= 1) return;
     char n[12];
     snprintf(n, sizeof(n), "%d", s.count);
     ui.DrawText(n, x + 32 - ui.TextWidth(n, 2), y + 18, 2, 15, true);
@@ -848,7 +867,7 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
             DrawStackCount(ui, hotbarX + i * 40 + 4, hotbarY + 6, stacks[i]);
     }
     if (!actionBar.empty()) {
-        ui.DrawTextCentered(actionBar, cx, SCREEN_H - 70.0f, 2, 15, true);
+        ui.DrawTextCentered(actionBar, cx, SCREEN_H - 112.0f, 2, 15, true);
     }
 }
 
@@ -859,7 +878,7 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
 namespace {
 constexpr int INV_COLS = 9;
 constexpr int INV_CELL = 40;
-constexpr int INV_ROWS = (BLOCK_COUNT - 1 + INV_COLS - 1) / INV_COLS;
+constexpr int INV_ROWS = (BLOCK_COUNT - 1 + 34 + INV_COLS - 1) / INV_COLS;
 constexpr float INV_PAD = 12;
 constexpr float INV_W = INV_COLS * INV_CELL + INV_PAD * 2;
 constexpr float INV_TITLE_H = 40;
@@ -870,17 +889,26 @@ constexpr float INV_Y = (SCREEN_H - INV_H) * 0.5f - 20;
 constexpr float INV_GX = INV_X + INV_PAD;
 constexpr float INV_GY = INV_Y + INV_TITLE_H;
 
-void CellRect(int block, float& x, float& y) {
-    const int i = block - 1;
+const std::vector<uint8_t>& CreativeItems() {
+    static const std::vector<uint8_t> items = [] {
+        std::vector<uint8_t> result;
+        for (int i = 1; i < 256; ++i) if (IsValidItem(i)) result.push_back(uint8_t(i));
+        return result;
+    }();
+    return items;
+}
+
+void CellRect(int i, float& x, float& y) {
     x = INV_GX + (i % INV_COLS) * INV_CELL;
     y = INV_GY + (i / INV_COLS) * INV_CELL;
 }
 } // namespace
 
 int InventoryHitTest(int mouseX, int mouseY) {
-    for (int b = 1; b < BLOCK_COUNT; ++b) {
+    for (int i = 0; i < int(CreativeItems().size()); ++i) {
+        const uint8_t b = CreativeItems()[i];
         float x, y;
-        CellRect(b, x, y);
+        CellRect(i, x, y);
         if (mouseX >= x && mouseX < x + INV_CELL && mouseY >= y && mouseY < y + INV_CELL)
             return b;
     }
@@ -899,9 +927,10 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, co
     ui.DrawText("Creative Inventory", INV_X + INV_PAD, INV_Y + 12, 2, 15, false, 0.25f, 0.25f, 0.25f);
 
     const int hovered = InventoryHitTest(mouseX, mouseY);
-    for (int b = 1; b < BLOCK_COUNT; ++b) {
+    for (int i = 0; i < int(CreativeItems().size()); ++i) {
+        const uint8_t b = CreativeItems()[i];
         float x, y;
-        CellRect(b, x, y);
+        CellRect(i, x, y);
         ui.DrawQuad(&ui.texWhite, x + 2, y + 2, INV_CELL - 4, INV_CELL - 4, 0, 0, 1, 1, 15, 0.55f, 0.55f, 0.55f);
         ui.DrawQuad(&ui.texWhite, x + 2, y + 2, INV_CELL - 4, 1, 0, 0, 1, 1, 15, 0.35f, 0.35f, 0.35f);
         ui.DrawQuad(&ui.texWhite, x + 2, y + 2, 1, INV_CELL - 4, 0, 0, 1, 1, 15, 0.35f, 0.35f, 0.35f);
@@ -910,10 +939,10 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, co
         DrawItemIcon(ui, b, x + 4, y + 4);
     }
 
-    ui.DrawText("Click a block to select it", INV_X + INV_PAD, INV_Y + INV_H - 26, 2, 15, false, 0.3f, 0.3f, 0.3f);
+    ui.DrawText("Click an item to select it", INV_X + INV_PAD, INV_Y + INV_H - 26, 2, 15, false, 0.3f, 0.3f, 0.3f);
 
     if (hovered > 0) {
-        std::string name = BLOCK_DEFS[hovered].name;
+        std::string name = ItemName(uint8_t(hovered));
         for (char& c : name) if (c == '_') c = ' ';
         const float tw = ui.TextWidth(name, 2);
         float tx = mouseX + 16, ty = mouseY - 12;
@@ -1008,8 +1037,8 @@ void DrawSurvivalInventory(GuiRenderer& ui, const InventoryState& model, bool ta
     if (model.cursor.Empty() && hovered >= 0) {
         const ItemSlot& s = hovered == 45 ? result :
                             (hovered >= 36 ? model.craft[hovered - 36] : model.slots[hovered]);
-        if (!s.Empty() && s.id < BLOCK_COUNT) {
-            std::string name = BLOCK_DEFS[s.id].name;
+        if (!s.Empty() && IsValidItem(s.id)) {
+            std::string name = ItemName(s.id);
             for (char& c : name) if (c == '_') c = ' ';
             const float tw = ui.TextWidth(name, INV_S);
             float tx = mouseX + 16, ty = mouseY - 12;

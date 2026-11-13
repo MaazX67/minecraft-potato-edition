@@ -306,9 +306,11 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
     if (len > 0.0f) { mx /= len; mz /= len; }
     sneaking = !flying && in.keys[VK_SHIFT];
     sprinting = !flying && !sneaking && in.keys[VK_CONTROL] && in.keys['W'];
-    const float speed = flying ? 12.0f : (sneaking ? 1.31f : (sprinting ? 5.612f : 4.317f));
-    vx = mx * speed;
-    vz = mz * speed;
+    const float speed = flying ? 12.0f : (sneaking ? 1.31f : (sprinting ? 5.612f : walkSpeed));
+    vx = mx * speed + impulseX;
+    vz = mz * speed + impulseZ;
+    const float drag = expf(-8.0f * dt);
+    impulseX *= drag; impulseZ *= drag;
 
     const uint8_t feet = getBlock(int(floorf(x)), int(floorf(y + 0.2f)), int(floorf(z)));
     inWater = (BLOCK_FLAGS[feet] & BF_LIQUID) != 0;
@@ -372,7 +374,116 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
     cam.vy = vy;
 }
 
+static ToolKind EffectiveTool(uint8_t b) {
+    if (b == BLOCK_STONE || b == BLOCK_COBBLE || (b >= BLOCK_COAL_ORE && b <= BLOCK_POLISHED_ANDESITE) ||
+        b == BLOCK_SANDSTONE || b == BLOCK_SMOOTH_STONE || b == BLOCK_STONE_BRICKS ||
+        b == BLOCK_MOSSY_COBBLE || b == BLOCK_OBSIDIAN || b == BLOCK_FURNACE || b == BLOCK_BRICK || b == BLOCK_ICE)
+        return ToolKind::Pickaxe;
+    if (b == BLOCK_PLANKS || b == BLOCK_LOG || (b >= BLOCK_SPRUCE_PLANKS && b <= BLOCK_BIRCH_LOG) ||
+        b == BLOCK_CRAFTING_TABLE || b == BLOCK_BOOKSHELF) return ToolKind::Axe;
+    if (b == BLOCK_DIRT || b == BLOCK_GRASS || b == BLOCK_SAND || b == BLOCK_GRAVEL ||
+        b == BLOCK_CLAY || b == BLOCK_SNOW) return ToolKind::Shovel;
+    return ToolKind::None;
+}
+
+float BlockHardness(uint8_t b) {
+    if (b == BLOCK_BEDROCK || b == BLOCK_WATER) return -1;
+    if (b == BLOCK_AIR || b == BLOCK_TNT) return 0;
+    if (b == BLOCK_OBSIDIAN) return 50;
+    if (b >= BLOCK_COAL_ORE && b <= BLOCK_LAPIS_ORE) return 3;
+    if (b == BLOCK_FURNACE) return 3.5f;
+    if (b == BLOCK_CRAFTING_TABLE) return 2.5f;
+    if (b == BLOCK_LOG || b == BLOCK_SPRUCE_LOG || b == BLOCK_BIRCH_LOG || b == BLOCK_COBBLE ||
+        b == BLOCK_MOSSY_COBBLE || b == BLOCK_PLANKS || b == BLOCK_SPRUCE_PLANKS || b == BLOCK_BIRCH_PLANKS) return 2;
+    if (b == BLOCK_STONE || (b >= BLOCK_GRANITE && b <= BLOCK_POLISHED_ANDESITE) ||
+        b == BLOCK_BRICK || b == BLOCK_STONE_BRICKS || b == BLOCK_SMOOTH_STONE || b == BLOCK_BOOKSHELF) return 1.5f;
+    if (b == BLOCK_SANDSTONE || (b >= BLOCK_WHITE_WOOL && b <= BLOCK_BLACK_WOOL)) return 0.8f;
+    if (b == BLOCK_GRASS || b == BLOCK_GRAVEL || b == BLOCK_CLAY) return 0.6f;
+    if (b == BLOCK_GLASS) return 0.3f;
+    if (b >= BLOCK_OAK_LEAVES && b <= BLOCK_BIRCH_LEAVES) return 0.2f;
+    if (b == BLOCK_SNOW) return 0.2f;
+    return 0.5f;
+}
+
+bool CanHarvest(uint8_t b, uint8_t item) {
+    if (BlockHardness(b) < 0) return false;
+    if (EffectiveTool(b) != ToolKind::Pickaxe || b == BLOCK_ICE) return true;
+    const ToolDef* tool = FindTool(item);
+    const int required = b == BLOCK_OBSIDIAN ? 3 :
+        (b == BLOCK_DIAMOND_ORE || b == BLOCK_GOLD_ORE || b == BLOCK_REDSTONE_ORE ? 2 :
+         (b == BLOCK_IRON_ORE || b == BLOCK_LAPIS_ORE ? 1 : 0));
+    return tool && tool->kind == ToolKind::Pickaxe && tool->tier >= required;
+}
+
+float MiningSeconds(uint8_t b, uint8_t item, bool onGround, bool underwater) {
+    const float hardness = BlockHardness(b);
+    if (hardness < 0) return std::numeric_limits<float>::infinity();
+    if (hardness == 0) return 0;
+    float speed = 1;
+    if (const ToolDef* tool = FindTool(item)) {
+        if (tool->kind == EffectiveTool(b)) speed = tool->speed;
+        else if (tool->kind == ToolKind::Sword) speed = 1.5f;
+    }
+    if (!onGround) speed /= 5;
+    if (underwater) speed /= 5;
+    const float ticks = std::ceil(hardness * (CanHarvest(b, item) ? 30.0f : 100.0f) / speed);
+    return ticks / 20.0f;
+}
+
+ItemSlot BlockDrops(uint8_t b, uint8_t item) {
+    if (!CanHarvest(b, item)) return {};
+    switch (b) {
+        case BLOCK_STONE: return {BLOCK_COBBLE, 1};
+        case BLOCK_GRASS: return {BLOCK_DIRT, 1};
+        case BLOCK_COAL_ORE: return {ITEM_COAL, 1};
+        case BLOCK_IRON_ORE: return {ITEM_RAW_IRON, 1};
+        case BLOCK_GOLD_ORE: return {ITEM_RAW_GOLD, 1};
+        case BLOCK_DIAMOND_ORE: return {ITEM_DIAMOND, 1};
+        case BLOCK_REDSTONE_ORE: return {ITEM_REDSTONE, 4};
+        case BLOCK_LAPIS_ORE: return {ITEM_LAPIS, 4};
+        case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES:
+        case BLOCK_GLASS: case BLOCK_ICE: case BLOCK_AIR: return {};
+        default: return {b, 1};
+    }
+}
+
+bool WearTool(ItemSlot& slot, int amount) {
+    const ToolDef* tool = FindTool(slot.id);
+    if (!tool || slot.Empty() || amount <= 0) return false;
+    if (int(slot.damage) + amount >= tool->durability) { slot = {}; return true; }
+    slot.damage = uint16_t(int(slot.damage) + amount);
+    return false;
+}
+
 namespace {
+bool IsPlank(uint8_t id) {
+    return id == BLOCK_PLANKS || id == BLOCK_SPRUCE_PLANKS || id == BLOCK_BIRCH_PLANKS;
+}
+
+ItemSlot ToolRecipe(const ItemSlot* craft, int row, int col, int width, int height) {
+    struct Shape { int width; const char* pattern; int kind; };
+    const Shape shapes[] = {{3, "MMM S  S ", 0}, {2, "MMMS S", 1}, {1, "MSS", 2}, {1, "MMS", 3}};
+    const uint8_t materials[] = {BLOCK_PLANKS, BLOCK_COBBLE, ITEM_IRON_INGOT, ITEM_DIAMOND, ITEM_GOLD_INGOT};
+    if (height != 3) return {};
+    for (const Shape& shape : shapes) {
+        if (width != shape.width) continue;
+        for (int material = 0; material < 5; ++material) {
+            for (int mirrored = 0; mirrored < 2; ++mirrored) {
+                bool matches = true;
+                for (int r = 0; r < 3; ++r) for (int c = 0; c < width; ++c) {
+                    const ItemSlot& slot = craft[(row + r) * 3 + col + c];
+                    const uint8_t id = slot.Empty() ? uint8_t(0) : slot.id;
+                    const char symbol = shape.pattern[r * width + (mirrored ? width - 1 - c : c)];
+                    if (symbol == 'M' ? (material == 0 ? !IsPlank(id) : id != materials[material]) :
+                        symbol == 'S' ? id != ITEM_STICK : id != 0) matches = false;
+                }
+                if (matches) return {uint8_t(ITEM_WOOD_PICKAXE + material * 4 + shape.kind), 1};
+            }
+        }
+    }
+    return {};
+}
+
 struct Recipe {
     int width, height;
     uint8_t cells[9];
@@ -383,6 +494,7 @@ const Recipe RECIPES[] = {
     {1, 1, {BLOCK_LOG}, {BLOCK_PLANKS, 4}},
     {1, 1, {BLOCK_SPRUCE_LOG}, {BLOCK_SPRUCE_PLANKS, 4}},
     {1, 1, {BLOCK_BIRCH_LOG}, {BLOCK_BIRCH_PLANKS, 4}},
+    {1, 2, {BLOCK_PLANKS, BLOCK_PLANKS}, {ITEM_STICK, 4}},
     {2, 2, {BLOCK_PLANKS, BLOCK_PLANKS, BLOCK_PLANKS, BLOCK_PLANKS}, {BLOCK_CRAFTING_TABLE, 1}},
     {2, 2, {BLOCK_STONE, BLOCK_STONE, BLOCK_STONE, BLOCK_STONE}, {BLOCK_STONE_BRICKS, 4}},
     {2, 2, {BLOCK_SAND, BLOCK_SAND, BLOCK_SAND, BLOCK_SAND}, {BLOCK_SANDSTONE, 1}},
@@ -394,13 +506,14 @@ bool IsCraftCell(int index, bool table) {
     return table || (index % 3 < 2 && index / 3 < 2);
 }
 
-int InsertStack(ItemSlot* slots, int begin, int end, uint8_t id, int count) {
+int InsertStack(ItemSlot* slots, int begin, int end, uint8_t id, int count, uint16_t damage) {
+    const int limit = ItemStackLimit(id);
     for (int pass = 0; pass < 2 && count > 0; ++pass) {
         for (int i = begin; i < end && count > 0; ++i) {
             ItemSlot& slot = slots[i];
-            if (pass == 0 ? (!slot.Empty() && slot.id == id) : slot.Empty()) {
-                const int moved = std::min(64 - (slot.Empty() ? 0 : slot.count), count);
-                slot = {id, (slot.Empty() ? 0 : slot.count) + moved};
+            if (pass == 0 ? (!slot.Empty() && slot.id == id && slot.damage == damage) : slot.Empty()) {
+                const int moved = std::min(limit - (slot.Empty() ? 0 : slot.count), count);
+                slot = {id, (slot.Empty() ? 0 : slot.count) + moved, damage};
                 count -= moved;
             }
         }
@@ -411,26 +524,27 @@ int InsertStack(ItemSlot* slots, int begin, int end, uint8_t id, int count) {
 
 int InventoryState::Capacity(uint8_t id) const {
     if (id == BLOCK_AIR) return 0;
+    const int limit = ItemStackLimit(id);
     int available = 0;
     for (const ItemSlot& slot : slots) {
-        if (slot.Empty()) available += 64;
-        else if (slot.id == id) available += 64 - slot.count;
+        if (slot.Empty()) available += limit;
+        else if (slot.id == id) available += limit - slot.count;
     }
     return available;
 }
 
-int InventoryState::Add(uint8_t id, int count) {
+int InventoryState::Add(uint8_t id, int count, uint16_t damage) {
     if (id == BLOCK_AIR || count <= 0) return count;
-    // Merge throughout the inventory before filling empty hotbar slots.
+    const int limit = ItemStackLimit(id);
     for (ItemSlot& slot : slots) {
-        if (!slot.Empty() && slot.id == id) {
-            const int moved = std::min(64 - slot.count, count);
+        if (!slot.Empty() && slot.id == id && slot.damage == damage) {
+            const int moved = std::min(limit - slot.count, count);
             slot.count += moved;
             count -= moved;
         }
     }
-    count = InsertStack(slots, 27, 36, id, count);
-    return InsertStack(slots, 0, 27, id, count);
+    count = InsertStack(slots, 27, 36, id, count, damage);
+    return InsertStack(slots, 0, 27, id, count, damage);
 }
 
 ItemSlot InventoryState::Result(bool table) const {
@@ -443,6 +557,10 @@ ItemSlot InventoryState::Result(bool table) const {
     }
     if (maxRow < 0) return {};
     const int width = maxCol - minCol + 1, height = maxRow - minRow + 1;
+    if (table) {
+        const ItemSlot tool = ToolRecipe(craft, minRow, minCol, width, height);
+        if (!tool.Empty()) return tool;
+    }
     for (const Recipe& recipe : RECIPES) {
         if (width != recipe.width || height != recipe.height) continue;
         bool matches = true;
@@ -451,8 +569,7 @@ ItemSlot InventoryState::Result(bool table) const {
                 const ItemSlot& slot = craft[(minRow + r) * 3 + minCol + c];
                 const uint8_t actual = slot.Empty() ? uint8_t(BLOCK_AIR) : slot.id;
                 const uint8_t expected = recipe.cells[r * width + c];
-                const bool plankTag = recipe.result.id == BLOCK_CRAFTING_TABLE &&
-                    (actual == BLOCK_PLANKS || actual == BLOCK_SPRUCE_PLANKS || actual == BLOCK_BIRCH_PLANKS);
+                const bool plankTag = (recipe.result.id == BLOCK_CRAFTING_TABLE || recipe.result.id == ITEM_STICK) && IsPlank(actual);
                 if (actual != expected && !plankTag) matches = false;
             }
         }
@@ -474,7 +591,8 @@ bool InventoryState::Click(int index, bool right, bool table, bool shift) {
                 if (Capacity(result.id) < result.count) break;
                 Add(result.id, result.count);
             } else {
-                if (!cursor.Empty() && (cursor.id != result.id || cursor.count + result.count > 64)) break;
+                if (!cursor.Empty() && (cursor.id != result.id || cursor.damage != 0 ||
+                    cursor.count + result.count > ItemStackLimit(result.id))) break;
                 cursor = {result.id, (cursor.Empty() ? 0 : cursor.count) + result.count};
             }
             for (ItemSlot& slot : craft) {
@@ -489,8 +607,9 @@ bool InventoryState::Click(int index, bool right, bool table, bool shift) {
     if (shift) {
         if (slot.Empty()) return false;
         const int before = slot.count;
-        if (index >= 36) slot.count = Add(slot.id, slot.count);
-        else slot.count = InsertStack(slots, index < 27 ? 27 : 0, index < 27 ? 36 : 27, slot.id, slot.count);
+        if (index >= 36) slot.count = Add(slot.id, slot.count, slot.damage);
+        else slot.count = InsertStack(slots, index < 27 ? 27 : 0, index < 27 ? 36 : 27,
+                                      slot.id, slot.count, slot.damage);
         const bool changed = slot.count != before;
         if (slot.count == 0) slot = {};
         return changed;
@@ -498,13 +617,13 @@ bool InventoryState::Click(int index, bool right, bool table, bool shift) {
     if (cursor.Empty()) {
         if (slot.Empty()) return false;
         const int moved = right ? (slot.count + 1) / 2 : slot.count;
-        cursor = {slot.id, moved};
+        cursor = {slot.id, moved, slot.damage};
         slot.count -= moved;
         if (slot.count == 0) slot = {};
-    } else if (slot.Empty() || slot.id == cursor.id) {
-        const int moved = std::min(right ? 1 : cursor.count, 64 - (slot.Empty() ? 0 : slot.count));
+    } else if (slot.Empty() || (slot.id == cursor.id && slot.damage == cursor.damage)) {
+        const int moved = std::min(right ? 1 : cursor.count, ItemStackLimit(cursor.id) - (slot.Empty() ? 0 : slot.count));
         if (moved == 0) return false;
-        slot = {cursor.id, (slot.Empty() ? 0 : slot.count) + moved};
+        slot = {cursor.id, (slot.Empty() ? 0 : slot.count) + moved, cursor.damage};
         cursor.count -= moved;
         if (cursor.count == 0) cursor = {};
     } else {
@@ -515,13 +634,74 @@ bool InventoryState::Click(int index, bool right, bool table, bool shift) {
 
 bool InventoryState::Close() {
     InventoryState returned = *this;
-    if (!returned.cursor.Empty() && returned.Add(returned.cursor.id, returned.cursor.count) != 0) return false;
+    if (!returned.cursor.Empty() && returned.Add(returned.cursor.id, returned.cursor.count, returned.cursor.damage) != 0) return false;
     for (const ItemSlot& slot : returned.craft) {
-        if (!slot.Empty() && returned.Add(slot.id, slot.count) != 0) return false;
+        if (!slot.Empty() && returned.Add(slot.id, slot.count, slot.damage) != 0) return false;
     }
     returned.cursor = {};
     for (ItemSlot& slot : returned.craft) slot = {};
     *this = returned;
+    return true;
+}
+
+float HurtResistance::Apply(float damage) {
+    if (remaining > 0.5f) {
+        if (damage <= lastDamage) return 0;
+        const float extra = damage - lastDamage;
+        lastDamage = damage;
+        return extra;
+    }
+    lastDamage = damage;
+    remaining = 1;
+    return damage;
+}
+
+void Zombie::Update(float dt, const PlayerBody& player, const std::function<uint8_t(int, int, int)>& getBlock) {
+    resistance.Advance(dt);
+    attackDelay = std::max(0.0f, attackDelay - dt);
+    if (health <= 0) return;
+    InputState input;
+    FlyCamera camera;
+    const float dx = player.x - body.x, dz = player.z - body.z;
+    if (!passive) {
+        yaw = atan2f(dx, -dz);
+        const float distance2 = dx * dx + dz * dz;
+        input.keys['W'] = distance2 > 1.5f * 1.5f && distance2 < 32 * 32;
+        if (input.keys['W'] && body.onGround && BodyHits(getBlock, body.x + sinf(yaw) * 0.5f, body.y,
+                                                       body.z - cosf(yaw) * 0.5f)) input.keys[VK_SPACE] = true;
+    }
+    camera.yaw = yaw;
+    body.Update(input, dt, camera, getBlock);
+}
+
+float Zombie::Hit(float damage, float knockX, float knockZ) {
+    if (health <= 0) return 0;
+    const float applied = resistance.Apply(damage);
+    if (applied <= 0) return 0;
+    health = std::max(0.0f, health - applied);
+    body.impulseX = knockX; body.impulseZ = knockZ;
+    body.vy = 4;
+    body.onGround = false;
+    return applied;
+}
+
+bool RayHitsBody(const FlyCamera& camera, const PlayerBody& body, float reach, float& distance) {
+    const float origin[3] = {camera.x, camera.y, camera.z};
+    const float direction[3] = {camera.fwdX, camera.fwdY, camera.fwdZ};
+    const float lo[3] = {body.x - PlayerBody::HALF, body.y, body.z - PlayerBody::HALF};
+    const float hi[3] = {body.x + PlayerBody::HALF, body.y + 1.95f, body.z + PlayerBody::HALF};
+    float nearHit = 0, farHit = reach;
+    for (int i = 0; i < 3; ++i) {
+        if (fabsf(direction[i]) < 1e-6f) {
+            if (origin[i] < lo[i] || origin[i] > hi[i]) return false;
+        } else {
+            float a = (lo[i] - origin[i]) / direction[i], b = (hi[i] - origin[i]) / direction[i];
+            if (a > b) std::swap(a, b);
+            nearHit = std::max(nearHit, a); farHit = std::min(farHit, b);
+            if (nearHit > farHit) return false;
+        }
+    }
+    distance = nearHit;
     return true;
 }
 

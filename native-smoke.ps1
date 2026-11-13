@@ -1,7 +1,8 @@
 param(
   [Parameter(Mandatory=$true)][string]$Exe,
   [Parameter(Mandatory=$true)][string]$OutputRoot,
-  [string]$Tag = 'native-validation'
+  [string]$Tag = 'native-validation',
+  [switch]$MilestoneOnly
 )
 $ErrorActionPreference = 'Stop'
 $Exe = (Resolve-Path $Exe).Path
@@ -45,7 +46,7 @@ function Check([bool]$condition, [string]$message) {
 }
 function Capture($name, $screen) {
   $known = @(Get-ChildItem (Join-Path $out 'screenshots') -Filter '*.bmp' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-  Key 0x71 350
+  Post 0x8004
   $deadline = [DateTime]::UtcNow.AddSeconds(10)
   do {
     $bmp = Get-ChildItem (Join-Path $out 'screenshots') -Filter '*.bmp' -ErrorAction SilentlyContinue |
@@ -83,6 +84,15 @@ function CloseGame {
   Check ($script:p.ExitCode -eq 0) 'game closes without crashing'
 }
 try {
+  $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($Exe)
+  Check ($version.FileVersion -eq '1.1.0-Alpha') 'executable embeds the milestone version metadata'
+  $icon = [Drawing.Icon]::ExtractAssociatedIcon($Exe)
+  Check ($null -ne $icon) 'executable contains an extractable application icon'
+  try {
+    $iconBitmap = $icon.ToBitmap()
+    try { $iconBitmap.Save((Join-Path $out 'executable-icon.png'), [Drawing.Imaging.ImageFormat]::Png) } finally { $iconBitmap.Dispose() }
+  } finally { $icon.Dispose() }
+  if (!$MilestoneOnly) {
   Launch '--show-worlds'
   Capture 'empty-world-list' 11
   Check ($state.worldCount -eq 0 -and $state.selectedWorld -eq -1) 'empty Select World list has no playable selection'
@@ -352,6 +362,73 @@ try {
     Check ($state.actionBar -like '*Could not load world*') 'negative saved world time is rejected without replacing the live world'
     CloseGame
   } finally { [IO.File]::WriteAllBytes($skySave.FullName, $skyBytes) }
+  }
+  Launch '--autostart --tools-test --save-test --freeze-time --debug'
+  Capture 'tools-ready' 4
+  Check ($state.generator -eq 'potato-flat-v1' -and $state.slots[27].item -eq 'wooden_pickaxe') 'tool fixture uses flat terrain and a wooden pickaxe'
+  Check ($state.cracksLoaded -and $state.toolTexturesLoaded -and $state.stoneSounds -gt 0) 'installed mining textures and material sounds load'
+  Post 0x201 1
+  Start-Sleep -Milliseconds 300
+  Capture 'tools-cracking' 4
+  Check ($state.miningProgress -gt 0 -and $state.miningProgress -lt 1 -and $state.brokenBlocks -eq 0) 'survival mining is timed and shows an intermediate crack stage'
+  Start-Sleep -Seconds 2
+  Post 0x202
+  Capture 'tools-broken' 4
+  Check ($state.brokenBlocks -eq 1 -and $state.slots[27].damage -eq 1) 'breaking stone consumes one tool durability'
+  Check (@($state.slots | Where-Object { $_.item -eq 'cobblestone' -and $_.count -eq 1 }).Count -eq 1) 'proper pickaxe mining yields one cobblestone'
+  Check ($state.soundsPlayed -gt 0) 'mining audio is submitted successfully to XAudio2'
+  Key 0x45
+  Capture 'tools-inventory' 5
+  Key 0x1B
+  Key 0x1B
+  Click 683 296
+  Capture 'tools-saved-title' 0
+  CloseGame
+  Launch '--show-worlds --freeze-time'
+  Click 413 736
+  Start-Sleep -Seconds 5
+  Capture 'tools-reloaded' 4
+  Check ($state.generator -eq 'potato-flat-v1' -and $state.slots[27].item -eq 'wooden_pickaxe' -and $state.slots[27].damage -eq 1) 'generator choice and tool durability survive process restart'
+  CloseGame
+  Launch '--autostart --combat-test --freeze-time --debug'
+  Capture 'combat-ready' 4
+  Check ($state.zombieTextureLoaded -and $state.zombieBufferLoaded -and $state.zombies.Count -eq 1) 'textured zombie fixture and GPU buffer load'
+  Post 0x8005 1
+  Start-Sleep -Milliseconds 250
+  Click 683 384
+  Capture 'combat-wall' 4
+  Check ($state.combatHits -eq 0 -and $state.zombies[0].health -eq 20) 'a terrain wall prevents hitting the zombie through blocks'
+  Post 0x8005 0
+  Start-Sleep -Seconds 1
+  Click 683 384
+  Capture 'combat-hit' 4
+  Check ($state.combatHits -eq 1 -and [Math]::Abs($state.zombies[0].health - 13) -lt 0.01) 'charged diamond sword deals seven health damage'
+  Check ($state.slots[27].damage -eq 1 -and $state.zombies[0].position[2] -lt 6) 'successful combat wears the sword and knocks the zombie back'
+  Post 0x8005 2
+  Start-Sleep -Milliseconds 600
+  Capture 'combat-player-hurt' 4
+  Check ($state.health -lt 20) 'a pursuing zombie can damage the survival player'
+  CloseGame
+  Launch '--autostart --combat-test --freeze-time --debug'
+  Post 0x8001 0 140
+  Post 0x100 0x20
+  Start-Sleep -Milliseconds 80
+  Post 0x101 0x20
+  Start-Sleep -Milliseconds 320
+  Post 0x201 1
+  Start-Sleep -Milliseconds 50
+  Post 0x202
+  Capture 'combat-critical' 4
+  Check ($state.criticalHits -eq 1 -and [Math]::Abs($state.zombies[0].health - 9.5) -lt 0.01) 'falling charged sword strike applies the critical damage multiplier'
+  CloseGame
+  Launch '--autostart --climate --fly --freeze-time --debug'
+  Capture 'climate-world' 4
+  Check ($state.generator -eq 'potato-climate-v2') 'climate terrain is playable with the new versioned generator'
+  Post 0x8006
+  Start-Sleep -Seconds 2
+  Capture 'climate-cave' 4
+  Check ($state.position[1] -lt ($state.surfaceHeight - 6)) 'an unmodified generated underground cave is reachable for visual inspection'
+  CloseGame
   Write-Host "CAPTURES=$out"
 } finally {
   if ($script:p -and !$script:p.HasExited) {

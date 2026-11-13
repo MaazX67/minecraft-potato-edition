@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <map>
 #include <thread>
 #include <vector>
 
@@ -26,7 +27,7 @@ static void TestShaders() {
     const Shader shaders[] = {
         {"VSMain", "vs_4_0"}, {"PSMain", "ps_4_0"},
         {"PSMainUI", "ps_4_0"}, {"PSMainSky", "ps_4_0"},
-        {"PSMainWorldSky", "ps_4_0"}, {"PSMainCelestial", "ps_4_0"}
+        {"PSMainWorldSky", "ps_4_0"}, {"PSMainCelestial", "ps_4_0"}, {"PSMainEntity", "ps_4_0"}
     };
     for (const Shader& shader : shaders) {
         ID3DBlob* code = nullptr;
@@ -402,10 +403,513 @@ static void CheckBoxMesh(const MeshData& mesh, float minX, float minY, float min
     CHECK(extents, "merged quad UV extents preserve one tile per block on both axes");
 }
 
+static bool Near(float a, float b) {
+    return std::isfinite(a) && std::isfinite(b) && fabsf(a - b) < 1e-4f;
+}
+
+static void TestToolDefinitions() {
+    const ToolKind kinds[] = {ToolKind::Pickaxe, ToolKind::Axe, ToolKind::Shovel, ToolKind::Sword};
+    const char* materials[] = {"wooden", "stone", "iron", "diamond", "golden", "netherite"};
+    const char* suffixes[] = {"pickaxe", "axe", "shovel", "sword"};
+    const int tiers[] = {0, 1, 2, 3, 0, 4};
+    const int durability[] = {59, 131, 250, 1561, 32, 2031};
+    const float speeds[] = {2, 4, 6, 8, 12, 9};
+    const float damage[][4] = {{2, 7, 2.5f, 4}, {3, 9, 3.5f, 5}, {4, 9, 4.5f, 6},
+                               {5, 9, 5.5f, 7}, {2, 7, 2.5f, 4}, {6, 10, 6.5f, 8}};
+    const float axeRates[] = {0.8f, 0.8f, 0.9f, 1, 1, 1};
+    for (int material = 0; material < 6; ++material) {
+        for (int kind = 0; kind < 4; ++kind) {
+            const uint8_t id = uint8_t(ITEM_WOOD_PICKAXE + material * 4 + kind);
+            const ToolDef* tool = FindTool(id);
+            const std::string name = std::string(materials[material]) + "_" + suffixes[kind];
+            const float rate = kind == 0 ? 1.2f : (kind == 1 ? axeRates[material] : (kind == 3 ? 1.6f : 1));
+            const bool valid = tool && tool->name && name == tool->name && tool->kind == kinds[kind] &&
+                tool->tier == tiers[material] && tool->durability == durability[material] &&
+                Near(tool->speed, kind == 3 ? 1 : speeds[material]) && Near(tool->damage, damage[material][kind]) &&
+                Near(tool->attackSpeed, rate) && IsValidItem(id) && ItemStackLimit(id) == 1 &&
+                name == ItemName(id) && ItemTexture(id) == "minecraft/textures/item/" + name + ".png";
+            const std::string label = name + " has correct stats, item texture and single-item stack limit";
+            CHECK(valid, label.c_str());
+        }
+    }
+    bool itemRanges = !IsValidItem(-1) && !IsValidItem(256);
+    for (int id = 0; id < 256; ++id) {
+        const bool tool = id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD;
+        const bool expected = id < BLOCK_COUNT || id == ITEM_STICK || tool ||
+                              (id >= ITEM_COAL && id <= ITEM_NETHERITE_INGOT);
+        if (IsValidItem(id) != expected || (FindTool(uint8_t(id)) != nullptr) != tool) itemRanges = false;
+        if (expected && ItemStackLimit(uint8_t(id)) != (tool ? 1 : 64)) itemRanges = false;
+        if (expected && std::string(ItemName(uint8_t(id))) == "unknown") itemRanges = false;
+    }
+    CHECK(itemRanges, "block, stick, tool and material ID ranges reject gaps and keep their stack limits");
+    CHECK(ItemTexture(BLOCK_LOG) == "minecraft/textures/block/oak_log.png" &&
+          ItemTexture(ITEM_STICK) == "minecraft/textures/item/stick.png" &&
+          ItemTexture(ITEM_LAPIS) == "minecraft/textures/item/lapis_lazuli.png",
+          "block textures and non-block item textures use separate asset namespaces");
+}
+
+static void TestToolRecipes() {
+    const uint8_t materials[] = {BLOCK_PLANKS, BLOCK_COBBLE, ITEM_IRON_INGOT, ITEM_DIAMOND, ITEM_GOLD_INGOT};
+    const uint8_t planks[] = {BLOCK_PLANKS, BLOCK_SPRUCE_PLANKS, BLOCK_BIRCH_PLANKS};
+    const char* patterns[] = {"MMM S  S ", "MMMS S", "MSS", "MMS"};
+    const int widths[] = {3, 2, 1, 1};
+    for (int material = 0; material < 5; ++material) {
+        for (int kind = 0; kind < 4; ++kind) {
+            bool valid = true;
+            const uint8_t output = uint8_t(ITEM_WOOD_PICKAXE + material * 4 + kind);
+            for (int mirror = 0; mirror < 2; ++mirror) {
+                for (int offset = 0; offset <= 3 - widths[kind]; ++offset) {
+                    InventoryState inv;
+                    for (int r = 0; r < 3; ++r) {
+                        for (int c = 0; c < widths[kind]; ++c) {
+                            const char symbol = patterns[kind][r * widths[kind] + (mirror ? widths[kind] - 1 - c : c)];
+                            if (symbol == ' ') continue;
+                            const uint8_t id = symbol == 'S' ? uint8_t(ITEM_STICK) :
+                                (material == 0 ? planks[(r + c) % 3] : materials[material]);
+                            inv.craft[r * 3 + offset + c] = {id, 2};
+                        }
+                    }
+                    const InventoryState ingredients = inv;
+                    const ItemSlot preview = inv.Result(true);
+                    if (preview.id != output || preview.count != 1 || preview.damage != 0 || !inv.Result(false).Empty()) valid = false;
+                    inv.cursor = {output, 1, 1};
+                    if (inv.Click(45, false, true)) valid = false;
+                    inv.cursor = {};
+                    if (!inv.Click(45, mirror != 0, true) || inv.cursor.id != output || inv.cursor.count != 1 || inv.cursor.damage != 0) valid = false;
+                    for (int i = 0; i < 9; ++i) {
+                        if (ingredients.craft[i].Empty()) {
+                            if (!inv.craft[i].Empty()) valid = false;
+                        } else if (inv.craft[i].id != ingredients.craft[i].id || inv.craft[i].count != 1) valid = false;
+                    }
+                    if (inv.Click(45, false, true)) valid = false; // A second tool cannot stack on the cursor.
+                    if (!inv.Click(27, false, true) || !inv.Click(45, false, true) || inv.cursor.id != output) valid = false;
+                    for (const ItemSlot& slot : inv.craft) if (slot.id != 0 || slot.count != 0 || slot.damage != 0) valid = false;
+                    if (!inv.Result(true).Empty() || inv.Click(45, false, true)) valid = false;
+
+                    inv = ingredients;
+                    inv.craft[0] = {ITEM_COAL, 1};
+                    if (!inv.Result(true).Empty()) valid = false;
+                    inv = ingredients;
+                    if (!inv.Click(45, false, true, true) || inv.slots[27].id != output || inv.slots[28].id != output ||
+                        inv.slots[27].count != 1 || inv.slots[28].count != 1 || inv.slots[27].damage != 0 ||
+                        inv.slots[28].damage != 0 || !inv.Result(true).Empty() || !inv.cursor.Empty()) valid = false;
+                }
+            }
+            const std::string label = std::string(ItemName(output)) + " recipes mirror/translate, consume exactly once and shift-craft unstacked";
+            CHECK(valid, label.c_str());
+        }
+    }
+    InventoryState sticks;
+    sticks.craft[1] = {BLOCK_SPRUCE_PLANKS, 2};
+    sticks.craft[4] = {BLOCK_BIRCH_PLANKS, 2};
+    CHECK(sticks.Result(false).id == ITEM_STICK && sticks.Result(false).count == 4 &&
+          sticks.Click(45, false, false, true) && sticks.slots[27].id == ITEM_STICK &&
+          sticks.slots[27].count == 8 && sticks.craft[1].Empty() && sticks.craft[4].Empty(),
+          "translated mixed-plank stick recipe consumes both ingredients for every batch");
+    InventoryState bounded;
+    bounded.craft[0] = {ITEM_DIAMOND, 3};
+    bounded.craft[3] = bounded.craft[6] = {ITEM_STICK, 3};
+    for (ItemSlot& slot : bounded.slots) slot = {BLOCK_STONE, 64};
+    bounded.slots[0] = bounded.slots[1] = {};
+    CHECK(bounded.Click(45, false, true, true) && bounded.slots[0].id == ITEM_DIAMOND_SHOVEL &&
+          bounded.slots[1].id == ITEM_DIAMOND_SHOVEL && bounded.craft[0].count == 1 &&
+          bounded.craft[3].count == 1 && bounded.craft[6].count == 1 && !bounded.Click(45, false, true, true),
+          "shift-crafting tools stops at inventory capacity without consuming the remaining recipe");
+    bounded.slots[2] = {};
+    CHECK(bounded.Click(45, false, true, true) && bounded.slots[2].id == ITEM_DIAMOND_SHOVEL && bounded.Result(true).Empty(),
+          "remaining tool recipe crafts after exactly one inventory cell is freed");
+    InventoryState netherite;
+    netherite.craft[0] = {ITEM_NETHERITE_INGOT, 1};
+    netherite.craft[3] = netherite.craft[6] = {ITEM_STICK, 1};
+    CHECK(netherite.Result(true).Empty(), "netherite ingots do not accidentally match ordinary shovel recipes");
+}
+
+using ItemTotals = std::map<std::pair<int, int>, int>;
+static ItemTotals InventoryItems(const InventoryState& inv, bool* canonical = nullptr) {
+    ItemTotals totals;
+    bool valid = true;
+    auto count = [&](const ItemSlot& slot) {
+        if (slot.Empty()) {
+            if (slot.id != 0 || slot.count != 0 || slot.damage != 0) valid = false;
+            return;
+        }
+        if (!IsValidItem(slot.id) || slot.count > ItemStackLimit(slot.id)) valid = false;
+        const ToolDef* tool = FindTool(slot.id);
+        if (tool ? slot.damage >= tool->durability : slot.damage != 0) valid = false;
+        totals[{slot.id, slot.damage}] += slot.count;
+    };
+    for (const ItemSlot& slot : inv.slots) count(slot);
+    for (const ItemSlot& slot : inv.craft) count(slot);
+    count(inv.cursor);
+    if (canonical) *canonical = valid;
+    return totals;
+}
+
+static void TestDamagedInventory() {
+    bool allTools = true;
+    for (int id = ITEM_WOOD_PICKAXE; id <= ITEM_NETHERITE_SWORD; ++id) {
+        InventoryState inv;
+        if (inv.Add(uint8_t(id), 2, 7) != 0 || inv.slots[27].id != id || inv.slots[28].id != id ||
+            inv.slots[27].count != 1 || inv.slots[28].count != 1 || inv.slots[27].damage != 7 || inv.slots[28].damage != 7) allTools = false;
+        const ItemTotals before = InventoryItems(inv);
+        if (!inv.Click(27, true, true) || inv.cursor.damage != 7 || inv.slots[27].damage != 0 ||
+            !inv.Click(36, false, true) || !inv.Click(36, false, true, true) ||
+            !inv.Click(28, false, true, true) || !inv.Click(0, false, true) || !inv.Close()) allTools = false;
+        bool canonical;
+        if (InventoryItems(inv, &canonical) != before || !canonical) allTools = false;
+    }
+    CHECK(allTools, "all 24 damaged tools retain wear through pickup, right-click, grid/storage shift and close");
+
+    InventoryState inv;
+    CHECK(inv.Capacity(ITEM_WOOD_PICKAXE) == 36 && inv.Capacity(ITEM_STICK) == 36 * 64 &&
+          inv.Add(ITEM_WOOD_PICKAXE, 2, 7) == 0 && inv.Add(ITEM_WOOD_PICKAXE, 1, 19) == 0 &&
+          inv.Capacity(ITEM_WOOD_PICKAXE) == 33, "tool pickup uses separate cells even for identical IDs and damage");
+    const ItemTotals before = InventoryItems(inv);
+    CHECK(inv.Click(27, true, true) && inv.Click(29, false, true) && inv.cursor.damage == 19 &&
+          inv.slots[29].damage == 7 && inv.Click(36, true, true) && inv.craft[0].damage == 19 && inv.Close() &&
+          InventoryItems(inv) == before, "swapping differently damaged tools never merges or repairs them");
+
+    InventoryState full;
+    for (ItemSlot& slot : full.slots) slot = {BLOCK_STONE, 64};
+    full.slots[0] = {};
+    full.cursor = {ITEM_WOOD_PICKAXE, 1, 11};
+    full.craft[0] = {ITEM_STONE_AXE, 1, 23};
+    const ItemTotals blocked = InventoryItems(full);
+    CHECK(!full.Close() && full.slots[0].Empty() && full.cursor.damage == 11 && full.craft[0].damage == 23 &&
+          InventoryItems(full) == blocked, "failed damaged-tool close is atomic when only one of two tools fits");
+    CHECK(full.Add(ITEM_DIAMOND_SWORD, 2, 31) == 1 && full.slots[0].count == 1 && full.slots[0].damage == 31,
+          "partial tool pickup reports the exact uninserted count and preserves damage");
+    CHECK(!full.Click(0, false, true, true) && full.slots[0].damage == 31,
+          "shift-click into a full destination preserves the damaged source tool");
+    full.slots[1] = full.slots[2] = {};
+    const ItemTotals returned = InventoryItems(full);
+    CHECK(full.Close() && InventoryItems(full) == returned && full.cursor.Empty() && full.craft[0].Empty(),
+          "successful close returns differently damaged tools without changing their identities");
+
+    inv = InventoryState{};
+    inv.Add(ITEM_WOOD_PICKAXE, 2, 7);
+    inv.Add(ITEM_WOOD_PICKAXE, 1, 19);
+    inv.Add(ITEM_IRON_AXE, 1, 71);
+    inv.Add(ITEM_DIAMOND_SHOVEL, 1, 103);
+    inv.Add(ITEM_GOLD_SWORD, 1, 5);
+    inv.Add(ITEM_NETHERITE_SWORD, 1, 1001);
+    inv.Add(ITEM_STICK, 37);
+    const ItemTotals initial = InventoryItems(inv);
+    std::mt19937 rng(70423);
+    bool conserved = true;
+    for (int n = 0; n < 600; ++n) {
+        inv.Click(int(rng() % 45), (rng() & 1) != 0, (rng() & 1) != 0, (rng() & 1) != 0);
+        if (n % 13 == 0) inv.Close();
+        bool canonical;
+        if (InventoryItems(inv, &canonical) != initial || !canonical) conserved = false;
+    }
+    CHECK(conserved, "600 bounded randomized inventory operations conserve each (item, damage) pair and stack bounds");
+}
+
+static void TestMiningAndDurability() {
+    CHECK(BlockHardness(BLOCK_STONE) == 1.5f && BlockHardness(BLOCK_DIRT) == 0.5f &&
+          BlockHardness(BLOCK_OBSIDIAN) == 50 && BlockHardness(BLOCK_BEDROCK) < 0 && BlockHardness(BLOCK_WATER) < 0,
+          "representative mining hardness distinguishes soft, hard and unbreakable blocks");
+    CHECK(MiningSeconds(BLOCK_AIR, ITEM_WOOD_PICKAXE, false, true) == 0 && MiningSeconds(BLOCK_TNT, 0) == 0 &&
+          std::isinf(MiningSeconds(BLOCK_BEDROCK, ITEM_NETHERITE_PICKAXE)) &&
+          std::isinf(MiningSeconds(BLOCK_WATER, ITEM_NETHERITE_PICKAXE)),
+          "instant blocks stay instant and bedrock/water cannot be mined");
+    CHECK(Near(MiningSeconds(BLOCK_STONE, 0), 7.5f) && Near(MiningSeconds(BLOCK_STONE, ITEM_WOOD_PICKAXE), 1.15f) &&
+          Near(MiningSeconds(BLOCK_IRON_ORE, ITEM_WOOD_PICKAXE), 7.5f) &&
+          Near(MiningSeconds(BLOCK_IRON_ORE, ITEM_STONE_PICKAXE), 1.15f) &&
+          Near(MiningSeconds(BLOCK_DIAMOND_ORE, ITEM_GOLD_PICKAXE), 1.25f),
+          "mining rounds up to whole ticks and wrong-tier picks use the no-harvest hardness multiplier");
+    CHECK(Near(MiningSeconds(BLOCK_LOG, ITEM_IRON_AXE), 0.5f) && Near(MiningSeconds(BLOCK_LOG, ITEM_IRON_PICKAXE), 3) &&
+          Near(MiningSeconds(BLOCK_DIRT, ITEM_IRON_SHOVEL), 0.15f) && Near(MiningSeconds(BLOCK_DIRT, ITEM_IRON_PICKAXE), 0.75f),
+          "axes and shovels accelerate their blocks while wrong tool kinds do not");
+    const float grounded = MiningSeconds(BLOCK_COAL_ORE, ITEM_WOOD_PICKAXE);
+    CHECK(Near(grounded, 2.25f) && Near(MiningSeconds(BLOCK_COAL_ORE, ITEM_WOOD_PICKAXE, false), grounded * 5) &&
+          Near(MiningSeconds(BLOCK_COAL_ORE, ITEM_WOOD_PICKAXE, true, true), grounded * 5) &&
+          Near(MiningSeconds(BLOCK_COAL_ORE, ITEM_WOOD_PICKAXE, false, true), grounded * 25),
+          "airborne and underwater mining penalties are independent and compound 25-fold");
+    CHECK(!CanHarvest(BLOCK_STONE, 0) && !CanHarvest(BLOCK_STONE, ITEM_DIAMOND_AXE) &&
+          CanHarvest(BLOCK_STONE, ITEM_WOOD_PICKAXE) && CanHarvest(BLOCK_COAL_ORE, ITEM_GOLD_PICKAXE) &&
+          !CanHarvest(BLOCK_IRON_ORE, ITEM_GOLD_PICKAXE) && CanHarvest(BLOCK_IRON_ORE, ITEM_STONE_PICKAXE) &&
+          !CanHarvest(BLOCK_DIAMOND_ORE, ITEM_STONE_PICKAXE) && CanHarvest(BLOCK_DIAMOND_ORE, ITEM_IRON_PICKAXE) &&
+          !CanHarvest(BLOCK_OBSIDIAN, ITEM_IRON_PICKAXE) && CanHarvest(BLOCK_OBSIDIAN, ITEM_DIAMOND_PICKAXE) &&
+          CanHarvest(BLOCK_OBSIDIAN, ITEM_NETHERITE_PICKAXE) && CanHarvest(BLOCK_DIRT, 0),
+          "harvest tiers distinguish fast low-tier gold from stone, iron, diamond and netherite picks");
+    const uint8_t ores[] = {BLOCK_COAL_ORE, BLOCK_IRON_ORE, BLOCK_GOLD_ORE, BLOCK_DIAMOND_ORE, BLOCK_REDSTONE_ORE, BLOCK_LAPIS_ORE};
+    const uint8_t drops[] = {ITEM_COAL, ITEM_RAW_IRON, ITEM_RAW_GOLD, ITEM_DIAMOND, ITEM_REDSTONE, ITEM_LAPIS};
+    const int requiredTiers[] = {0, 1, 2, 2, 2, 1};
+    bool oreDrops = true;
+    for (int i = 0; i < 6; ++i) {
+        const ItemSlot drop = BlockDrops(ores[i], ITEM_NETHERITE_PICKAXE);
+        if (drop.id != drops[i] || drop.count != (i >= 4 ? 4 : 1) || drop.damage != 0 ||
+            !BlockDrops(ores[i], ITEM_NETHERITE_SWORD).Empty()) oreDrops = false;
+        for (int id = ITEM_WOOD_PICKAXE; id <= ITEM_NETHERITE_SWORD; ++id) {
+            const ToolDef* tool = FindTool(uint8_t(id));
+            const bool harvest = tool && tool->kind == ToolKind::Pickaxe && tool->tier >= requiredTiers[i];
+            if (CanHarvest(ores[i], uint8_t(id)) != harvest || BlockDrops(ores[i], uint8_t(id)).Empty() == harvest) oreDrops = false;
+        }
+    }
+    CHECK(oreDrops, "all six ores enforce harvest tiers across all tools and yield the correct material/count");
+    CHECK(BlockDrops(BLOCK_STONE, ITEM_WOOD_PICKAXE).id == BLOCK_COBBLE && BlockDrops(BLOCK_GRASS, 0).id == BLOCK_DIRT &&
+          BlockDrops(BLOCK_LOG, 0).id == BLOCK_LOG && BlockDrops(BLOCK_OBSIDIAN, ITEM_DIAMOND_PICKAXE).id == BLOCK_OBSIDIAN &&
+          BlockDrops(BLOCK_STONE, 0).Empty() && BlockDrops(BLOCK_OBSIDIAN, ITEM_GOLD_PICKAXE).Empty() &&
+          BlockDrops(BLOCK_AIR, 0).Empty() && BlockDrops(BLOCK_WATER, 0).Empty() && BlockDrops(BLOCK_BEDROCK, 0).Empty() &&
+          BlockDrops(BLOCK_GLASS, 0).Empty() && BlockDrops(BLOCK_ICE, 0).Empty() &&
+          BlockDrops(BLOCK_OAK_LEAVES, 0).Empty() && BlockDrops(BLOCK_SPRUCE_LEAVES, 0).Empty() && BlockDrops(BLOCK_BIRCH_LEAVES, 0).Empty(),
+          "stone/grass drops transform, ordinary blocks survive and non-dropping blocks stay empty");
+    bool finite = true;
+    for (int block = 0; block < BLOCK_COUNT; ++block) {
+        const float seconds = MiningSeconds(uint8_t(block), ITEM_NETHERITE_PICKAXE);
+        if (block == BLOCK_WATER || block == BLOCK_BEDROCK) {
+            if (!std::isinf(seconds) || CanHarvest(uint8_t(block), ITEM_NETHERITE_PICKAXE)) finite = false;
+        } else if (!std::isfinite(seconds) || seconds < 0) finite = false;
+    }
+    CHECK(finite, "every registered block has a nonnegative finite mining time or is explicitly unbreakable");
+    bool durability = true;
+    for (int id = ITEM_WOOD_PICKAXE; id <= ITEM_NETHERITE_SWORD; ++id) {
+        const ToolDef* tool = FindTool(uint8_t(id));
+        if (!tool) { durability = false; continue; }
+        ItemSlot slot = {uint8_t(id), 1};
+        if (WearTool(slot, 0) || WearTool(slot, -1) || slot.damage != 0 ||
+            WearTool(slot, tool->durability - 1) || slot.id != id || slot.count != 1 || slot.damage != tool->durability - 1 ||
+            !WearTool(slot, 1) || slot.id != 0 || slot.count != 0 || slot.damage != 0 || WearTool(slot, 1)) durability = false;
+        slot = {uint8_t(id), 1, uint16_t(tool->durability - 2)};
+        if (!WearTool(slot, 3) || slot.id != 0 || slot.damage != 0 || slot.count != 0) durability = false;
+    }
+    ItemSlot material = {ITEM_STICK, 12};
+    CHECK(durability && !WearTool(material, 100) && material.id == ITEM_STICK && material.count == 12 && material.damage == 0,
+          "all 24 tools retain the last use, break exactly at/above durability and ignore nonpositive wear/non-tools");
+}
+
+static void TestHurtAndZombies() {
+    HurtResistance resistance;
+    CHECK(resistance.Apply(4) == 4 && resistance.remaining == 1 && resistance.lastDamage == 4 &&
+          resistance.Apply(4) == 0 && resistance.Apply(2) == 0,
+          "first hit starts hurt immunity and repeated equal/weaker hits deal no damage");
+    resistance.Advance(0.25f);
+    CHECK(resistance.Apply(7) == 3 && resistance.remaining == 0.75f && resistance.lastDamage == 7 && resistance.Apply(6) == 0,
+          "stronger hits during immunity apply only excess damage without extending the timer");
+    resistance.Advance(0.25f);
+    CHECK(resistance.Apply(3) == 3 && resistance.remaining == 1 && resistance.lastDamage == 3,
+          "a hit at the exact half-second immunity boundary applies full damage");
+    resistance.Advance(2);
+    CHECK(resistance.remaining == 0 && resistance.Apply(1) == 1, "hurt timers saturate at zero and expired immunity accepts a weaker hit");
+
+    Zombie zombie;
+    zombie.body.x = 0; zombie.body.y = 64; zombie.body.z = 0; zombie.body.onGround = true;
+    CHECK(!zombie.body.flying && Near(zombie.body.walkSpeed, 1.3f) && zombie.health == 20 &&
+          zombie.Hit(4, 2, -1) == 4 && zombie.health == 16 && zombie.body.impulseX == 2 &&
+          zombie.body.impulseZ == -1 && zombie.body.vy == 4 && !zombie.body.onGround,
+          "zombies start in walk mode and accepted hits apply health loss and horizontal/upward impulses");
+    CHECK(zombie.Hit(4, 99, 99) == 0 && zombie.health == 16 && zombie.body.impulseX == 2 &&
+          zombie.body.impulseZ == -1 && zombie.body.vy == 4,
+          "immune zombie hits cannot refresh knockback or remove health");
+    CHECK(zombie.Hit(7, -3, 2) == 3 && zombie.health == 13 && zombie.body.impulseX == -3 && zombie.body.impulseZ == 2,
+          "an excess-damage zombie hit updates impulses and removes only the damage difference");
+    zombie.resistance.Advance(0.5f);
+    CHECK(zombie.Hit(3, 1, 1) == 3 && zombie.health == 10 && zombie.Hit(100, 4, -4) > 0 && zombie.health == 0 &&
+          zombie.Hit(100, 99, 99) == 0 && zombie.body.impulseX == 4 && zombie.body.impulseZ == -4,
+          "lethal hits clamp zombie health to zero and dead zombies reject subsequent damage/impulses");
+
+    auto ground = [](int, int y, int) -> uint8_t { return y >= 0 && y < 64 ? BLOCK_STONE : BLOCK_AIR; };
+    PlayerBody player;
+    player.x = 10; player.y = 64; player.z = 0;
+    Zombie passive;
+    passive.passive = true;
+    passive.body.x = 0; passive.body.y = 64; passive.body.z = 0; passive.body.onGround = true;
+    passive.Hit(2, 2, -1);
+    passive.Update(1.0f / 60.0f, player, ground);
+    CHECK(passive.body.x > 0 && passive.body.z < 0 && passive.body.y > 64 &&
+          passive.body.impulseX > 0 && passive.body.impulseX < 2 && passive.body.impulseZ > -1,
+          "passive zombie physics still integrates and damps accepted hit impulses");
+    for (int i = 0; i < 119; ++i) passive.Update(1.0f / 60.0f, player, ground);
+    CHECK(passive.body.onGround && Near(passive.body.y, 64) && fabsf(passive.body.impulseX) < 0.001f &&
+          fabsf(passive.body.impulseZ) < 0.001f && passive.resistance.remaining == 0,
+          "bounded zombie simulation lands on voxels and expires impulse/hurt timers");
+    Zombie chasing;
+    chasing.body.x = 0; chasing.body.y = 64; chasing.body.z = 0; chasing.body.onGround = true;
+    chasing.Update(1.0f / 60.0f, player, ground);
+    CHECK(chasing.body.x > 0 && fabsf(chasing.body.z) < 0.001f && Near(chasing.yaw, DirectX::XM_PIDIV2),
+          "active zombie faces and walks toward a nearby player");
+    Zombie distant;
+    distant.body.x = 0; distant.body.y = 64; distant.body.z = 0; distant.body.onGround = true;
+    player.x = 40;
+    distant.Update(1.0f / 60.0f, player, ground);
+    CHECK(distant.body.x == 0 && distant.body.z == 0, "zombie pursuit stops outside its bounded detection range");
+
+    FlyCamera ray;
+    ray.x = -8; ray.y = 65; ray.z = 4;
+    ray.fwdX = 0; ray.fwdY = 0; ray.fwdZ = -1;
+    PlayerBody target;
+    target.x = -8; target.y = 64; target.z = 0;
+    float distance = -1;
+    CHECK(RayHitsBody(ray, target, 4, distance) && Near(distance, 3.7f),
+          "body ray reports the nearest AABB face distance at negative world coordinates");
+    CHECK(!RayHitsBody(ray, target, 3.69f, distance) && RayHitsBody(ray, target, 3.7f, distance),
+          "body ray respects reach and includes a face exactly at the reach boundary");
+    ray.x = target.x + PlayerBody::HALF;
+    CHECK(RayHitsBody(ray, target, 4, distance), "parallel body ray includes a grazing side face");
+    ray.x += 0.01f;
+    CHECK(!RayHitsBody(ray, target, 4, distance), "parallel body ray outside a side slab misses");
+    ray.x = target.x; ray.y = 66.1f;
+    CHECK(!RayHitsBody(ray, target, 4, distance), "body ray above the entire zombie hitbox misses");
+    ray.y = 63.99f;
+    CHECK(!RayHitsBody(ray, target, 4, distance), "body ray below the feet misses");
+    ray.y = 65; ray.fwdZ = 1;
+    CHECK(!RayHitsBody(ray, target, 8, distance), "body ray pointing away rejects a target behind the camera");
+    ray.z = 0; ray.fwdZ = -1;
+    CHECK(RayHitsBody(ray, target, 0, distance) && distance == 0, "body ray originating inside the hitbox has zero entry distance");
+    ray.x = -12; ray.z = 0; ray.fwdX = 1; ray.fwdZ = 0;
+    CHECK(RayHitsBody(ray, target, 4, distance) && Near(distance, 3.7f), "body ray handles the positive-X slab direction");
+    ray.x = -8; ray.y = 68; ray.fwdX = 0; ray.fwdY = -1;
+    CHECK(RayHitsBody(ray, target, 4, distance) && distance > 2 && distance < 3,
+          "vertical body ray hits the top slab without dividing by zero on parallel axes");
+}
+
+static uint8_t ChunkBlock(const std::vector<uint8_t>& blocks, int x, int y, int z) {
+    return blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
+}
+
+static bool TreeBlock(uint8_t id) {
+    return id == BLOCK_LOG || id == BLOCK_SPRUCE_LOG || id == BLOCK_BIRCH_LOG ||
+           id == BLOCK_OAK_LEAVES || id == BLOCK_SPRUCE_LEAVES || id == BLOCK_BIRCH_LEAVES;
+}
+
+static bool ClimateColumnsValid(const std::vector<uint8_t>& blocks, const PerlinNoise& noise,
+                                int cx, int cz, int* oreCounts, int& caveAir, bool edgesOnly = false) {
+    const int oreMaxY[] = {144, 80, 40, 16, 24, 32};
+    bool valid = true;
+    for (int z = 0; z < CHUNK_Z; ++z) {
+        for (int x = 0; x < CHUNK_X; ++x) {
+            if (edgesOnly && x != 0 && x != CHUNK_X - 1 && z != 0 && z != CHUNK_Z - 1) continue;
+            const int wx = cx * CHUNK_X + x, wz = cz * CHUNK_Z + z;
+            const TerrainColumn column = SampleTerrain(noise, wx, wz);
+            if (column.height < 5 || column.height > 210) { valid = false; continue; }
+            const int h = column.height;
+            const bool river = column.biome == Biome::River;
+            const bool sandy = column.biome == Biome::Desert || (!river && h <= 65);
+            const bool rocky = column.biome == Biome::Mountains && h > 104;
+            const bool snowy = !sandy && !river && (column.temperature < 0.24f || h >= 155);
+            const uint8_t surface = river ? uint8_t(BLOCK_GRAVEL) : (sandy ? uint8_t(BLOCK_SAND) :
+                (snowy ? uint8_t(BLOCK_SNOW) : (rocky ? uint8_t(BLOCK_STONE) : uint8_t(BLOCK_GRASS))));
+            if (ChunkBlock(blocks, x, 0, z) != BLOCK_BEDROCK || ChunkBlock(blocks, x, h, z) != surface) valid = false;
+            // Sample all four WORLD neighbors, including those beyond this chunk's edges.
+            int waterFloor = 63;
+            waterFloor = std::min(waterFloor, SampleTerrain(noise, wx - 1, wz).height);
+            waterFloor = std::min(waterFloor, SampleTerrain(noise, wx + 1, wz).height);
+            waterFloor = std::min(waterFloor, SampleTerrain(noise, wx, wz - 1).height);
+            waterFloor = std::min(waterFloor, SampleTerrain(noise, wx, wz + 1).height);
+            for (int y = 1; y < CHUNK_Y; ++y) {
+                const uint8_t block = ChunkBlock(blocks, x, y, z);
+                if (block >= BLOCK_COUNT) { valid = false; continue; }
+                if (y <= h) {
+                    if (block == BLOCK_AIR) {
+                        ++caveAir;
+                        if (y <= 6 || y >= h - 5 || h <= 64 || river || column.biome == Biome::Ocean ||
+                            (y <= 63 && y > waterFloor)) valid = false;
+                    } else if (!(BLOCK_FLAGS[block] & BF_SOLID)) valid = false;
+                    if (y >= h - 5 && !(BLOCK_FLAGS[block] & BF_SOLID)) valid = false;
+                } else if (y <= 63) {
+                    const uint8_t liquid = y == 63 && column.temperature < 0.27f ? uint8_t(BLOCK_ICE) : uint8_t(BLOCK_WATER);
+                    if (block != liquid) valid = false;
+                } else if (block != BLOCK_AIR && !TreeBlock(block)) valid = false;
+                if (y >= 224 && block != BLOCK_AIR) valid = false;
+                if (block >= BLOCK_COAL_ORE && block <= BLOCK_LAPIS_ORE) {
+                    const int ore = block - BLOCK_COAL_ORE;
+                    if (y >= oreMaxY[ore] || y >= h - 3) valid = false;
+                    if (oreCounts) ++oreCounts[ore];
+                }
+            }
+        }
+    }
+    return valid;
+}
+
+static void TestClimateGeneration() {
+    const WorldGenerator generators[] = {WorldGenerator::Legacy, WorldGenerator::Climate, WorldGenerator::Flat};
+    const char* names[] = {"potato-perlin-v1", "potato-climate-v2", "potato-flat-v1"};
+    const char* aliases[] = {"legacy", "climate", "flat"};
+    bool generatorIds = true;
+    for (int i = 0; i < 3; ++i) {
+        WorldGenerator parsed = generators[(i + 1) % 3];
+        if (std::string(GeneratorName(generators[i])) != names[i] || !ParseGenerator(names[i], parsed) || parsed != generators[i] ||
+            !ParseGenerator(aliases[i], parsed) || parsed != generators[i]) generatorIds = false;
+    }
+    WorldGenerator preserved = WorldGenerator::Climate;
+    if (ParseGenerator("", preserved) || ParseGenerator("potato-climate-v999", preserved) ||
+        ParseGenerator("unknown", preserved) || preserved != WorldGenerator::Climate) generatorIds = false;
+    CHECK(generatorIds, "versioned generator IDs and aliases round-trip and unknown IDs preserve the selection");
+    bool coordinates = true;
+    for (int v = -33; v <= 33; ++v) {
+        const int chunk = FloorDiv16(v), local = v - chunk * 16;
+        if (local < 0 || local >= 16 || KeyCX(ChunkKey(chunk, -chunk)) != chunk || KeyCZ(ChunkKey(chunk, -chunk)) != -chunk) coordinates = false;
+    }
+    CHECK(coordinates, "negative and positive world coordinates decompose without seams at -16, 0 and 16");
+
+    const uint32_t seed = 1337;
+    PerlinNoise noise(seed), sameNoise(seed), otherNoise(7);
+    bool bounded = true, deterministic = true, differs = false, noise3Valid = true, noise3Differs = false;
+    int dryX = 0, dryZ = 0, bestHeight = -1;
+    // Only 81 column samples, not a generated huge-world biome census.
+    for (int z = -1024; z <= 1024; z += 256) {
+        for (int x = -1024; x <= 1024; x += 256) {
+            const TerrainColumn a = SampleTerrain(noise, x, z), b = SampleTerrain(sameNoise, x, z), c = SampleTerrain(otherNoise, x, z);
+            if (a.height < 5 || a.height > 210 || !std::isfinite(a.temperature) || !std::isfinite(a.humidity) ||
+                a.temperature < 0 || a.temperature > 1 || a.humidity < 0 || a.humidity > 1 ||
+                int(a.biome) < int(Biome::Plains) || int(a.biome) > int(Biome::Ocean) ||
+                std::string(BiomeName(a.biome)) == "Unknown") bounded = false;
+            if (a.height != b.height || a.biome != b.biome || a.temperature != b.temperature || a.humidity != b.humidity) deterministic = false;
+            if (a.height != c.height || a.biome != c.biome || a.temperature != c.temperature || a.humidity != c.humidity) differs = true;
+            if (a.height > bestHeight) { bestHeight = a.height; dryX = x; dryZ = z; }
+            const float nx = float(x) * 0.013f + 0.37f, nz = float(z) * 0.019f - 0.21f;
+            const float n3 = noise.Fbm3(nx, 2.73f, nz, 3), raw = noise.Noise3(nx, -5.31f, nz);
+            if (!std::isfinite(n3) || !std::isfinite(raw) || fabsf(n3) > 1.01f || fabsf(raw) > 1.01f ||
+                n3 != sameNoise.Fbm3(nx, 2.73f, nz, 3) || raw != sameNoise.Noise3(nx, -5.31f, nz)) noise3Valid = false;
+            if (n3 != otherNoise.Fbm3(nx, 2.73f, nz, 3)) noise3Differs = true;
+        }
+    }
+    CHECK(bounded && deterministic && differs, "climate column heights/biomes/climate stay bounded and deterministic but seed-sensitive");
+    CHECK(noise3Valid && noise3Differs, "3D cave noise is finite, bounded, repeatable and seed-sensitive at fractional negative coordinates");
+    CHECK(bestHeight > 70, "bounded column sampling finds an above-sea cave/ore fixture without biome quotas");
+
+    const int dryCX = FloorDiv16(dryX), dryCZ = FloorDiv16(dryZ);
+    const int chunks[][2] = {{-1, -1}, {0, -1}, {-1, 0}, {0, 0}, {dryCX, dryCZ}, {dryCX + 1, dryCZ}};
+    std::vector<uint8_t> blocks(CHUNK_VOL), repeated(CHUNK_VOL), changed(CHUNK_VOL);
+    int oreCounts[6] = {}, caveAir = 0;
+    bool columns = true, seams = true, chunkDeterminism = true, chunkDiffers = false;
+    // Six generated chunks total for coverage; two repeat/different-seed calls below.
+    for (const auto& chunk : chunks) {
+        GenerateClimateChunk(blocks.data(), noise, seed, chunk[0], chunk[1]);
+        if (!ClimateColumnsValid(blocks, noise, chunk[0], chunk[1], oreCounts, caveAir)) columns = false;
+        int ignoredCaves = 0;
+        if (!ClimateColumnsValid(blocks, noise, chunk[0], chunk[1], nullptr, ignoredCaves, true)) seams = false;
+        if (chunk[0] == 0 && chunk[1] == 0) repeated = blocks;
+    }
+    // Regenerate the origin after other chunks: no generation-order or hidden RNG dependence.
+    GenerateClimateChunk(blocks.data(), sameNoise, seed, 0, 0);
+    chunkDeterminism = blocks == repeated;
+    GenerateClimateChunk(changed.data(), otherNoise, 7, 0, 0);
+    chunkDiffers = blocks != changed;
+    CHECK(chunkDeterminism && chunkDiffers, "complete climate chunks repeat byte-for-byte after other generation and differ across seeds");
+    CHECK(columns, "six climate chunks keep valid block IDs, bedrock, sampled surfaces, water levels, solid roofs and ore depth bounds");
+    CHECK(seams, "chunk edge/corner columns agree with world-space terrain and seal caves against cross-chunk water neighbors");
+    CHECK(caveAir > 0, "bounded climate fixtures contain underground cave air below intact solid roofs");
+    const int rareOres = oreCounts[2] + oreCounts[3] + oreCounts[4] + oreCounts[5];
+    CHECK(oreCounts[0] > 0 && oreCounts[1] > 0 && rareOres > 0,
+          "a few climate chunks contain coal, iron and deep ores without brittle per-biome/per-ore quotas");
+    printf("climate fixtures: caves=%d, coal=%d iron=%d gold=%d diamond=%d redstone=%d lapis=%d\n",
+           caveAir, oreCounts[0], oreCounts[1], oreCounts[2], oreCounts[3], oreCounts[4], oreCounts[5]);
+}
+
 int main() {
     TestShaders();
     TestSkyTimeline();
     TestFrusta();
+    TestToolDefinitions();
+    TestToolRecipes();
+    TestDamagedInventory();
+    TestMiningAndDurability();
+    TestHurtAndZombies();
+    TestClimateGeneration();
 
     // --- Perlin determinism and bounds ---
     PerlinNoise a(1337), b(1337), c(7);

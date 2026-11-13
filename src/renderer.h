@@ -34,6 +34,7 @@ struct RenderContext {
     ID3D10Buffer* skyVB = nullptr;
     ID3D10PixelShader* psWorldSky = nullptr;
     ID3D10PixelShader* psCelestial = nullptr;
+    ID3D10PixelShader* psEntity = nullptr;
     ID3D10BlendState* additiveBlend = nullptr;
     ID3D10Buffer* starsVB = nullptr;
     UINT starVertexCount = 0;

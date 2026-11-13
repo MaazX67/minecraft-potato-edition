@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -62,6 +63,13 @@ static ID3D10ShaderResourceView* gParticleSRV = nullptr;
 static ID3D10Buffer* gParticleVB = nullptr;
 static ID3D10ShaderResourceView* gWhiteSRV = nullptr;
 static ID3D10Buffer* gOutlineVB = nullptr;
+static ID3D10Buffer* gZombieVB = nullptr;
+static std::vector<Zombie> gZombies;
+static HurtResistance gPlayerResistance;
+static float gMobSpawnTimer = 0;
+static uint64_t gCombatHits = 0, gCriticalHits = 0, gZombieKills = 0;
+static uint8_t gAttackItem = 0;
+static bool gToolsTest = false, gCombatTest = false;
 static int gHotbarSlot = 0;
 static uint8_t gHotbar[9];
 static std::string gActionBar;
@@ -76,6 +84,10 @@ static bool gSpawned = false;
 static float gFallStartY = 0;
 static float gLastSpaceMs = -1000;
 static bool gHaveTarget = false;
+static float gMiningProgress = 0, gMiningElapsed = 0, gMiningSound = 0, gMiningDelay = 0;
+static int gMiningX = 0, gMiningY = -1, gMiningZ = 0;
+static uint8_t gMiningItem = 0, gMiningBlock = 0;
+static uint64_t gBrokenBlocks = 0;
 static int gTargetX = 0, gTargetY = 0, gTargetZ = 0;
 static float gStepTimer = 0.3f;
 static bool gWasInWater = false;
@@ -97,6 +109,7 @@ static Screen gResumeScreen = Screen::Game;
 static WorldClock gWorldClock;
 static SkyTimeline gSkyTimeline;
 static bool gFreezeTime = false;
+static bool gScreenshotRequested = false;
 
 static void SetScreen(HWND hwnd, Screen s);
 static void UpdateCursorCapture(HWND hwnd);
@@ -119,6 +132,45 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (msg == WM_APP + 3) {
             gFreezeTime = wp != 0;
+            return 0;
+        }
+        if (msg == WM_APP + 6 && gWorld && gSpawned && gWorld->Generator() == WorldGenerator::Climate) {
+            const int centerX = int(floorf(gBody.x)), centerZ = int(floorf(gBody.z));
+            for (int dz = -48; dz <= 48; dz += 2) for (int dx = -48; dx <= 48; dx += 2) {
+                const int x = centerX + dx, z = centerZ + dz;
+                const int surface = gWorld->SurfaceY(x, z);
+                if (surface < 0) continue;
+                for (int y = 8; y < std::min(surface - 8, 60); ++y) {
+                    if (!(BLOCK_FLAGS[gWorld->GetBlock(x, y - 1, z)] & BF_SOLID)) continue;
+                    bool open = true;
+                    for (int forward = 0; forward <= 2; ++forward)
+                        for (int height = 0; height < 2; ++height)
+                            if (gWorld->GetBlock(x, y + height, z - forward) != BLOCK_AIR) open = false;
+                    if (!open) continue;
+                    gBody.x = float(x) + 0.5f; gBody.y = float(y); gBody.z = float(z) + 0.5f;
+                    gBody.vx = gBody.vy = gBody.vz = 0;
+                    gBody.flying = false;
+                    gCamera.yaw = 0; gCamera.pitch = -0.1f;
+                    gFallStartY = gBody.y;
+                    return 0;
+                }
+            }
+            return 0;
+        }
+        if (msg == WM_APP + 5 && gCombatTest && gWorld && gSpawned) {
+            if (wp <= 1) {
+                gWorld->SetBlock(8, 4, 7, wp ? BLOCK_STONE : BLOCK_AIR);
+                gWorld->SetBlock(8, 5, 7, wp ? BLOCK_STONE : BLOCK_AIR);
+            } else if (wp == 2 && !gZombies.empty()) {
+                gZombies[0].passive = false;
+                gZombies[0].body.x = gBody.x;
+                gZombies[0].body.y = gBody.y;
+                gZombies[0].body.z = gBody.z - 1.6f;
+            }
+            return 0;
+        }
+        if (msg == WM_APP + 4) {
+            gScreenshotRequested = true;
             return 0;
         }
         if (msg >= WM_APP + WM_KEYFIRST && msg <= WM_APP + WM_MOUSELAST) {
@@ -210,6 +262,8 @@ static void UpdateCursorCapture(HWND hwnd) {
 
 static void SetScreen(HWND hwnd, Screen s) {
     gScreen = s;
+    gMiningProgress = gMiningElapsed = 0;
+    gMiningY = -1;
     gInput.mouseDX = gInput.mouseDY = 0;
     gInput.leftClick = gInput.rightClick = false;
     gInput.wheel = 0;
@@ -218,6 +272,9 @@ static void SetScreen(HWND hwnd, Screen s) {
 
 static void StartGame() {
     gSurvival = SurvivalState{};
+    gCooldown = AttackCooldown{};
+    gAttackItem = 255;
+    gPlayerResistance = HurtResistance{};
     gBody = PlayerBody{};
     gBody.flying = false;
     gCamera.yaw = 0;
@@ -385,8 +442,9 @@ static void RefreshWorldList() {
         try {
             if (!save.is_object()) continue;
             const int format = save.at("format").get<int>();
+            WorldGenerator generator;
             if ((format != 1 && format != 2) ||
-                save.at("generator").get<std::string>() != "potato-perlin-v1") continue;
+                !ParseGenerator(save.at("generator").get<std::string>(), generator)) continue;
             const int mode = save.at("mode").get<int>();
             const std::string details = std::string(mode == 1 ? "Creative" : "Survival") +
                 " | Seed: " + std::to_string(save.at("seed").get<uint32_t>()) + " | Potato save";
@@ -403,8 +461,10 @@ static void RefreshWorldList() {
     if (!gMenu.worlds.empty()) gMenu.selectedWorld = 0;
 }
 
-static void ResetWorld(uint32_t seed, EditMap edits = {}) {
+static void ResetWorld(uint32_t seed, EditMap edits = {}, WorldGenerator generator = WorldGenerator::Climate) {
     gWorldClock.Set(0);
+    gZombies.clear();
+    gMobSpawnTimer = 0;
     for (auto& kv : gGpu) {
         SafeRelease(kv.second.vb);
         SafeRelease(kv.second.ib);
@@ -413,7 +473,7 @@ static void ResetWorld(uint32_t seed, EditMap edits = {}) {
     gSweepCursor = 0;
     delete gWorld;
     gWorldSeed = seed;
-    gWorld = new World(seed, gSettings.renderDistance);
+    gWorld = new World(seed, gSettings.renderDistance, generator);
     gWorld->SetBlockTiles(gTiles);
     gWorld->SetEdits(std::move(edits));
     gCraftTable = false;
@@ -426,13 +486,15 @@ static bool SaveCurrentWorld() {
     if (!gSpawned) return false;
     auto slot = [](const ItemSlot& s) { return nlohmann::json::array({s.id, s.count}); };
     nlohmann::json inventory = nlohmann::json::array(), craft = nlohmann::json::array();
-    for (const auto& s : gInventory.slots) inventory.push_back(slot(s));
-    for (const auto& s : gInventory.craft) craft.push_back(slot(s));
+    nlohmann::json toolDamage = {{"slots", nlohmann::json::array()}, {"craft", nlohmann::json::array()},
+                                  {"cursor", gInventory.cursor.damage}};
+    for (const auto& s : gInventory.slots) { inventory.push_back(slot(s)); toolDamage["slots"].push_back(s.damage); }
+    for (const auto& s : gInventory.craft) { craft.push_back(slot(s)); toolDamage["craft"].push_back(s.damage); }
     FILETIME now;
     GetSystemTimeAsFileTime(&now);
     const uint64_t timestamp = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
     const nlohmann::json data = {
-        {"format", 2}, {"generator", "potato-perlin-v1"}, {"name", gWorldName},
+        {"format", 2}, {"generator", GeneratorName(gWorld->Generator())}, {"name", gWorldName},
         {"worldTime", gWorldClock.Ticks()},
         {"savedAt", timestamp}, {"seed", gWorldSeed}, {"mode", gGameMode},
         {"difficulty", gSettings.difficulty}, {"position", {gBody.x, gBody.y, gBody.z}},
@@ -440,7 +502,7 @@ static bool SaveCurrentWorld() {
         {"health", gSurvival.health}, {"hunger", gSurvival.hunger},
         {"saturation", gSurvival.saturation}, {"exhaustion", gSurvival.exhaustion},
         {"selected", gHotbarSlot}, {"hotbar", std::vector<uint8_t>(gHotbar, gHotbar + 9)},
-        {"inventory", inventory}, {"craft", craft}, {"cursor", slot(gInventory.cursor)},
+        {"inventory", inventory}, {"craft", craft}, {"cursor", slot(gInventory.cursor)}, {"toolDamage", toolDamage},
         {"inventoryOpen", gScreen == Screen::Inventory}, {"craftTable", gCraftTable},
         {"edits", nlohmann::json::binary(EncodeEdits(gWorld->SnapshotEdits()))}
     };
@@ -459,8 +521,9 @@ static bool LoadWorldSave(const std::string& path) {
     try {
         if (!data.is_object()) return false;
         const int format = data.at("format").get<int>();
+        WorldGenerator generator;
         if ((format != 1 && format != 2) ||
-            data.at("generator").get<std::string>() != "potato-perlin-v1") return false;
+            !ParseGenerator(data.at("generator").get<std::string>(), generator)) return false;
         uint64_t worldTime = 0;
         if (format == 2) {
             if (!data.at("worldTime").is_number_unsigned()) return false;
@@ -480,7 +543,7 @@ static bool LoadWorldSave(const std::string& path) {
         auto readSlot = [](const nlohmann::json& value, ItemSlot& s) {
             if (!value.is_array() || value.size() != 2) return false;
             const int id = value.at(0).get<int>(), count = value.at(1).get<int>();
-            if (id < 0 || id >= BLOCK_COUNT || count < 0 || count > 64 || (id == 0) != (count == 0)) return false;
+            if (!IsValidItem(id) || count < 0 || count > ItemStackLimit(uint8_t(id)) || (id == 0) != (count == 0)) return false;
             s = {uint8_t(id), count};
             return true;
         };
@@ -490,11 +553,27 @@ static bool LoadWorldSave(const std::string& path) {
         for (int i = 0; i < 36; ++i) if (!readSlot(slots.at(i), inventory.slots[i])) return false;
         for (int i = 0; i < 9; ++i) if (!readSlot(craft.at(i), inventory.craft[i])) return false;
         if (!readSlot(data.at("cursor"), inventory.cursor)) return false;
+        if (data.contains("toolDamage")) {
+            const auto& damage = data.at("toolDamage");
+            auto readDamage = [](const nlohmann::json& value, ItemSlot& slot) {
+                if (!value.is_number_integer()) return false;
+                const int d = value.get<int>();
+                const ToolDef* tool = FindTool(slot.id);
+                if (d < 0 || (tool ? d >= tool->durability : d != 0)) return false;
+                slot.damage = uint16_t(d);
+                return true;
+            };
+            if (!damage.at("slots").is_array() || damage.at("slots").size() != 36 ||
+                !damage.at("craft").is_array() || damage.at("craft").size() != 9) return false;
+            for (int i = 0; i < 36; ++i) if (!readDamage(damage.at("slots").at(i), inventory.slots[i])) return false;
+            for (int i = 0; i < 9; ++i) if (!readDamage(damage.at("craft").at(i), inventory.craft[i])) return false;
+            if (!readDamage(damage.at("cursor"), inventory.cursor)) return false;
+        }
         const auto hotbar = data.at("hotbar").get<std::vector<uint8_t>>();
         if (hotbar.size() != 9) return false;
         for (const auto& value : data.at("hotbar")) {
             const int id = value.get<int>();
-            if (id < 0 || id >= BLOCK_COUNT) return false;
+            if (!IsValidItem(id)) return false;
         }
         const int selected = data.at("selected").get<int>();
         const int health = data.at("health").get<int>(), hunger = data.at("hunger").get<int>();
@@ -508,7 +587,7 @@ static bool LoadWorldSave(const std::string& path) {
         const auto& bytes = data.at("edits").get_binary();
         EditMap edits;
         if (!DecodeEdits(bytes.data(), bytes.size(), edits)) return false;
-        ResetWorld(seed, std::move(edits));
+        ResetWorld(seed, std::move(edits), generator);
         StartGame();
         gWorldClock.Set(worldTime);
         gWorldName = name;
@@ -587,7 +666,7 @@ static void HandleMenuAction(int action) {
                 gActionBarUntil = gNowMs + 5000;
                 break;
             }
-            ResetWorld(ParseSeed(gCreate.seed));
+            ResetWorld(ParseSeed(gCreate.seed), {}, gCreate.generator);
             gSavePath = path;
             gWorldName = gCreate.name;
             gGameMode = gCreate.gameMode & 1;
@@ -606,6 +685,9 @@ static void HandleMenuAction(int action) {
                 RefreshWorldList();
                 SetScreen(gHwnd, Screen::SelectWorld);
             } else SetScreen(gHwnd, Screen::Title);
+            break;
+        case ACT_CYCLE_WORLD_TYPE:
+            gCreate.generator = WorldGenerator((int(gCreate.generator) + 1) % 3);
             break;
         case ACT_CYCLE_GAMEMODE:
             gCreate.gameMode ^= 1;
@@ -815,8 +897,8 @@ static void UploadMeshes() {
 static void SaveTestState(const char* screenshot) {
     if (!gAutomation) return;
     auto slotJson = [](const ItemSlot& slot) {
-        return nlohmann::json{{"item", slot.Empty() ? "air" : BLOCK_DEFS[slot.id].name},
-                              {"count", slot.count}};
+        return nlohmann::json{{"item", slot.Empty() ? "air" : ItemName(slot.id)},
+                              {"count", slot.count}, {"damage", slot.damage}};
     };
     nlohmann::json state = {
         {"screen", int(gScreen)}, {"table", gCraftTable}, {"selected", gHotbarSlot},
@@ -838,8 +920,23 @@ static void SaveTestState(const char* screenshot) {
         {"timelineLoaded", gSkyTimeline.Loaded()}, {"sunLoaded", gRC.sunSRV != nullptr},
         {"moonLoaded", gRC.moonSRV[gSkyTimeline.Sample(gWorldClock.Ticks()).moonPhase] != nullptr},
         {"fixtureBlock", gWorld ? gWorld->GetBlock(8, 64, 6) : 0},
-        {"fixtureAbove", gWorld ? gWorld->GetBlock(8, 65, 6) : 0}, {"actionBar", gActionBar}
+        {"fixtureAbove", gWorld ? gWorld->GetBlock(8, 65, 6) : 0}, {"actionBar", gActionBar},
+        {"generator", gWorld ? GeneratorName(gWorld->Generator()) : "none"},
+        {"surfaceHeight", gWorld ? gWorld->SurfaceY(int(floorf(gBody.x)), int(floorf(gBody.z))) : -1},
+        {"draftGenerator", GeneratorName(gCreate.generator)},
+        {"miningProgress", gMiningProgress}, {"brokenBlocks", gBrokenBlocks},
+        {"targetBlock", gHaveTarget ? int(gWorld->GetBlock(gTargetX, gTargetY, gTargetZ)) : 0},
+        {"soundsPlayed", gSound.Played()}, {"stoneSounds", gSound.Variants(SND_STONE)},
+        {"cracksLoaded", gGui.texDestroy[0].srv != nullptr},
+        {"toolTexturesLoaded", gGui.texItemIcon[ITEM_WOOD_PICKAXE].srv != nullptr},
+        {"zombieTextureLoaded", gGui.texZombie.srv != nullptr}, {"zombieBufferLoaded", gZombieVB != nullptr},
+        {"combatHits", gCombatHits}, {"criticalHits", gCriticalHits}, {"zombieKills", gZombieKills},
+        {"attackStrength", gCooldown.Strength(gNowMs)}, {"onGround", gBody.onGround}, {"verticalSpeed", gBody.vy}
     };
+    state["zombies"] = nlohmann::json::array();
+    for (const Zombie& zombie : gZombies)
+        state["zombies"].push_back({{"health", zombie.health},
+            {"position", {zombie.body.x, zombie.body.y, zombie.body.z}}, {"hurtTime", zombie.resistance.remaining}});
     state["slots"] = nlohmann::json::array();
     for (const auto& slot : gInventory.slots) state["slots"].push_back(slotJson(slot));
     state["craft"] = nlohmann::json::array();
@@ -950,16 +1047,6 @@ static void SyncHotbar() {
     }
 }
 
-static uint8_t BlockDrop(uint8_t b) {
-    switch (b) {
-        case BLOCK_STONE: return BLOCK_COBBLE;
-        case BLOCK_GRASS: return BLOCK_DIRT;
-        case BLOCK_OAK_LEAVES: case BLOCK_SPRUCE_LEAVES: case BLOCK_BIRCH_LEAVES:
-        case BLOCK_GLASS: case BLOCK_ICE: return 0;
-        default: return b;
-    }
-}
-
 static void CloseInventory() {
     if (!gInventory.Close()) {
         gInventoryMessage = "Make room for the cursor and crafting items before closing.";
@@ -1017,6 +1104,18 @@ static void HandleGameFrame(float dt) {
             gWorld->SetBlock(8, sy + 1, 6, BLOCK_CRAFTING_TABLE);
             gCamera.pitch = -0.3f;
         }
+        if (gToolsTest) {
+            gWorld->SetBlock(8, sy + 1, 6, BLOCK_STONE);
+            gWorld->SetBlock(8, sy + 2, 6, BLOCK_STONE);
+            gCamera.pitch = 0;
+        }
+        if (gCombatTest) {
+            Zombie zombie;
+            zombie.body.x = 8.5f; zombie.body.y = float(sy + 1); zombie.body.z = 6.0f;
+            zombie.passive = true;
+            gZombies.push_back(zombie);
+            gCamera.pitch = 0;
+        }
         gFallStartY = gBody.y;
         gSpawned = true;
     }
@@ -1067,6 +1166,47 @@ static void HandleGameFrame(float dt) {
     if (gSurvival.dead) { SetScreen(gHwnd, Screen::Death); return; }
 
     gWorld->Update(gCamera.x, gCamera.z);
+    gPlayerResistance.Advance(dt);
+    gZombies.erase(std::remove_if(gZombies.begin(), gZombies.end(), [](const Zombie& zombie) {
+        const float dx = zombie.body.x - gBody.x, dz = zombie.body.z - gBody.z;
+        return zombie.health <= 0 || dx * dx + dz * dz > 64 * 64;
+    }), gZombies.end());
+    if (!gAutomation && gSettings.difficulty != 0 && gSkyTimeline.Sample(gWorldClock.Ticks()).stars > 0.1f) {
+        gMobSpawnTimer += dt;
+        if (gMobSpawnTimer >= 10 && gZombies.size() < 8) {
+            gMobSpawnTimer = 0;
+            const float angle = float(gWorldClock.Ticks() % 6283) * 0.001f;
+            const int x = int(floorf(gBody.x + sinf(angle) * 26)), z = int(floorf(gBody.z + cosf(angle) * 26));
+            const int y = gWorld->SurfaceY(x, z);
+            if (y >= 0 && gWorld->GetBlock(x, y, z) != BLOCK_WATER &&
+                gWorld->GetBlock(x, y + 1, z) == BLOCK_AIR && gWorld->GetBlock(x, y + 2, z) == BLOCK_AIR) {
+                Zombie zombie;
+                zombie.body.x = float(x) + 0.5f; zombie.body.y = float(y + 1); zombie.body.z = float(z) + 0.5f;
+                gZombies.push_back(zombie);
+            }
+        }
+    }
+    for (Zombie& zombie : gZombies) {
+        zombie.Update(dt, gBody, getBlock);
+        const float dx = gBody.x - zombie.body.x, dz = gBody.z - zombie.body.z;
+        const float distance2 = dx * dx + dz * dz;
+        if (!zombie.passive && gGameMode == 0 && gSettings.difficulty != 0 && zombie.attackDelay == 0 &&
+            distance2 < 1.8f * 1.8f && fabsf(gBody.y - zombie.body.y) < 1.5f) {
+            int bx, by, bz, normalX, normalY, normalZ;
+            const float distance = sqrtf(distance2);
+            if (distance > 0.001f && RaycastDDA(getBlock, zombie.body.x, zombie.body.y + 1.4f, zombie.body.z,
+                dx / distance, 0, dz / distance, distance, bx, by, bz, normalX, normalY, normalZ)) continue;
+            zombie.attackDelay = 1;
+            const float damage = gPlayerResistance.Apply(gSettings.difficulty == 1 ? 2.0f : (gSettings.difficulty == 3 ? 4.0f : 3.0f));
+            if (damage > 0) {
+                gSurvival.health = std::max(0, gSurvival.health - int(ceilf(damage)));
+                const float scale = distance > 0.001f ? 4.0f / distance : 0;
+                gBody.impulseX = dx * scale; gBody.impulseZ = dz * scale; gBody.vy = 4; gBody.onGround = false;
+                gSound.Play(SND_HURT);
+                if (gSurvival.health == 0) { gSurvival.dead = true; SetScreen(gHwnd, Screen::Death); return; }
+            }
+        }
+    }
     gPlayer.UpdateCombat(gCooldown, gNowMs);
     gParticles.Update(dt);
     gSound.SetListener(gCamera.x, gCamera.y, gCamera.z,
@@ -1093,27 +1233,97 @@ static void HandleGameFrame(float dt) {
                              hx, hy, hz, nx, ny, nz);
     if (gHaveTarget) { gTargetX = hx; gTargetY = hy; gTargetZ = hz; }
 
-    if (gInput.leftClick) {
-        if (gHaveTarget) {
-            const uint8_t old = gWorld->GetBlock(hx, hy, hz);
-            if (gGameMode == 0 && old == BLOCK_BEDROCK) return;
-            const uint8_t drop = BlockDrop(old);
-            if (gGameMode == 0 && drop != BLOCK_AIR && gInventory.Capacity(drop) == 0) {
-                gActionBar = "Inventory full";
-                gActionBarUntil = gNowMs + 1500;
-                return;
+    const uint8_t held = gHotbar[gHotbarSlot];
+    const ToolDef* tool = FindTool(held);
+    gCooldown.attackSpeed = tool ? tool->attackSpeed : 4.0f;
+    gCooldown.baseDamage = tool ? tool->damage : 1.0f;
+    if (held != gAttackItem) { gCooldown.Reset(gNowMs); gAttackItem = held; }
+    gPlayer.UpdateCombat(gCooldown, gNowMs);
+    float nearest = 3.0f;
+    if (gHaveTarget) {
+        if (nx) nearest = std::min(nearest, (float(hx + (nx > 0 ? 1 : 0)) - gCamera.x) / gCamera.fwdX);
+        else if (ny) nearest = std::min(nearest, (float(hy + (ny > 0 ? 1 : 0)) - gCamera.y) / gCamera.fwdY);
+        else if (nz) nearest = std::min(nearest, (float(hz + (nz > 0 ? 1 : 0)) - gCamera.z) / gCamera.fwdZ);
+        else nearest = 0;
+    }
+    Zombie* targetZombie = nullptr;
+    for (Zombie& zombie : gZombies) {
+        float distance = 0;
+        if (zombie.health > 0 && RayHitsBody(gCamera, zombie.body, nearest, distance) && distance < nearest) {
+            nearest = distance;
+            targetZombie = &zombie;
+        }
+    }
+    if (gInput.leftClick && targetZombie) {
+        const float strength = gCooldown.Strength(gNowMs);
+        const bool critical = strength > 0.9f && !gBody.onGround && gBody.vy < 0 &&
+            !gBody.inWater && !gBody.flying && !gBody.sprinting;
+        const float damage = gCooldown.Swing(gNowMs) * (critical ? 1.5f : 1.0f);
+        const float knockback = strength > 0.9f && gBody.sprinting ? 8.0f : 4.0f;
+        if (targetZombie->Hit(damage, sinf(gCamera.yaw) * knockback, -cosf(gCamera.yaw) * knockback) > 0) {
+            ++gCombatHits;
+            if (targetZombie->health == 0) ++gZombieKills;
+            if (critical) {
+                ++gCriticalHits;
+                gParticles.SpawnCrit(targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
             }
-            gWorld->SetBlock(hx, hy, hz, BLOCK_AIR);
-            if (gGameMode == 0 && drop != BLOCK_AIR) {
-                gInventory.Add(drop, 1);
+            gSound.PlayAt(critical ? SND_CRIT : SND_HIT, targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
+            if (gGameMode == 0) {
+                if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 1 : 2))
+                    gSound.Play(SND_TOOL_BREAK);
+                gSurvival.exhaustion = std::min(4.0f, gSurvival.exhaustion + 0.1f);
                 SyncHotbar();
             }
-            gSound.PlayAt(SoundEngine::BlockSound(old),
-                          float(hx) + 0.5f, float(hy) + 0.5f, float(hz) + 0.5f);
-        } else {
-            gCooldown.Swing(gNowMs);
-            gSound.Play(SND_HIT);
         }
+    }
+    gMiningDelay = std::max(0.0f, gMiningDelay - dt);
+    if (gInput.leftDown && gHaveTarget && !targetZombie && gMiningDelay == 0) {
+        const uint8_t old = gWorld->GetBlock(hx, hy, hz);
+        if (hx != gMiningX || hy != gMiningY || hz != gMiningZ || held != gMiningItem || old != gMiningBlock) {
+            gMiningX = hx; gMiningY = hy; gMiningZ = hz;
+            gMiningItem = held; gMiningBlock = old;
+            gMiningElapsed = gMiningProgress = gMiningSound = 0;
+        }
+        const float required = BlockHardness(old) < 0 ? std::numeric_limits<float>::infinity() :
+            (gGameMode == 1 ? 0 : MiningSeconds(old, held, gBody.onGround, gBody.inWater));
+        gMiningElapsed += dt;
+        gMiningProgress = required == 0 ? 1 : std::min(1.0f, gMiningElapsed / required);
+        if (gGameMode == 0 && std::isfinite(required)) {
+            gMiningSound -= dt;
+            if (gMiningSound <= 0) {
+                gSound.PlayAt(SoundEngine::StepSound(old), float(hx) + 0.5f, float(hy) + 0.5f,
+                              float(hz) + 0.5f, 0.25f, 0.5f);
+                gMiningSound = 0.2f;
+            }
+        }
+        if (gMiningProgress >= 1) {
+            const ItemSlot drop = gGameMode == 0 ? BlockDrops(old, held) : ItemSlot{};
+            if (!drop.Empty() && gInventory.Capacity(drop.id) < drop.count) {
+                gActionBar = "Inventory full";
+                gActionBarUntil = gNowMs + 1500;
+            } else {
+                gWorld->SetBlock(hx, hy, hz, BLOCK_AIR);
+                ++gBrokenBlocks;
+                if (gGameMode == 0) {
+                    if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 2 : 1))
+                        gSound.Play(SND_TOOL_BREAK);
+                    if (!drop.Empty()) gInventory.Add(drop.id, drop.count);
+                    gSurvival.exhaustion = std::min(4.0f, gSurvival.exhaustion + 0.005f);
+                    SyncHotbar();
+                }
+                gSound.PlayAt(SoundEngine::BlockSound(old), float(hx) + 0.5f, float(hy) + 0.5f, float(hz) + 0.5f);
+                gMiningDelay = 0.25f;
+                gMiningElapsed = gMiningProgress = 0;
+                gMiningY = -1;
+            }
+        }
+    } else {
+        gMiningElapsed = gMiningProgress = 0;
+        gMiningY = -1;
+    }
+    if (gInput.leftClick && !gHaveTarget && !targetZombie) {
+        gCooldown.Swing(gNowMs);
+        gSound.Play(SND_HIT);
     }
 
     if (gInput.rightClick && gHaveTarget && (nx || ny || nz)) {
@@ -1121,7 +1331,7 @@ static void HandleGameFrame(float dt) {
             gCraftTable = true;
             if (gGameMode == 1) {
                 for (int i = 0; i < 9; ++i)
-                    gInventory.slots[27 + i] = {gHotbar[i], gHotbar[i] == BLOCK_AIR ? 0 : 64};
+                    gInventory.slots[27 + i] = {gHotbar[i], gHotbar[i] == BLOCK_AIR ? 0 : ItemStackLimit(gHotbar[i])};
             }
             gInventoryMessage.clear();
             SetScreen(gHwnd, Screen::Inventory);
@@ -1136,7 +1346,7 @@ static void HandleGameFrame(float dt) {
                 py + 1 > gBody.y && py < gBody.y + PlayerBody::HEIGHT;
             if (!insideBody) {
                 const uint8_t block = gHotbar[gHotbarSlot];
-                if (block == BLOCK_AIR || (gGameMode == 0 && gInventory.slots[27 + gHotbarSlot].Empty())) return;
+                if (block == BLOCK_AIR || block >= BLOCK_COUNT || (gGameMode == 0 && gInventory.slots[27 + gHotbarSlot].Empty())) return;
                 gWorld->SetBlock(px, py, pz, block);
                 if (gGameMode == 0) {
                     ItemSlot& s = gInventory.slots[27 + gHotbarSlot];
@@ -1199,6 +1409,43 @@ static void DrawBlockOutline() {
     gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
 }
 
+static void DrawBreakOverlay() {
+    if (gMiningProgress <= 0 || !gHaveTarget || gMiningY < 0) return;
+    const int stage = std::min(9, int(gMiningProgress * 10));
+    ID3D10ShaderResourceView* texture = gGui.texDestroy[stage].srv;
+    if (!texture) return;
+    const float lo[3] = {float(gTargetX) - 0.002f, float(gTargetY) - 0.002f, float(gTargetZ) - 0.002f};
+    const float hi[3] = {float(gTargetX + 1) + 0.002f, float(gTargetY + 1) + 0.002f, float(gTargetZ + 1) + 0.002f};
+    gRC.device->PSSetShader(gRC.psUI);
+    gRC.device->PSSetShaderResources(0, 1, &texture);
+    gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+    gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gRC.celestialVB, &stride, &offset);
+    gRC.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    const int order[6] = {0, 1, 2, 0, 2, 3};
+    const float uv[4][2] = {{0, 0}, {0.999f, 0}, {0.999f, 0.999f}, {0, 0.999f}};
+    for (int axis = 0; axis < 3; ++axis) for (int sign = 0; sign < 2; ++sign) {
+        const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+        MeshVertex vertices[6] = {};
+        for (int i = 0; i < 6; ++i) {
+            const int c = order[i];
+            float p[3];
+            p[axis] = sign ? hi[axis] : lo[axis];
+            p[u] = (c == 1 || c == 2) ? hi[u] : lo[u];
+            p[v] = (c >= 2) ? hi[v] : lo[v];
+            vertices[i] = {p[0], p[1], p[2], 0, 0, uv[c][0], uv[c][1], 15, 1, 1, 1};
+        }
+        void* data = nullptr;
+        if (FAILED(gRC.celestialVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) break;
+        memcpy(data, vertices, sizeof(vertices));
+        gRC.celestialVB->Unmap();
+        gRC.device->Draw(6, 0);
+    }
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+}
+
 static void DrawWorldSky(const XMMATRIX& view, const XMMATRIX& proj, const SkyState& sky) {
     const XMMATRIX vp = XMMatrixMultiply(view, proj);
     const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
@@ -1247,6 +1494,56 @@ static void DrawWorldSky(const XMMATRIX& view, const XMMATRIX& proj, const SkySt
     gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
 }
 
+static void DrawZombies() {
+    if (gZombies.empty() || !gZombieVB || !gGui.texZombie.srv) return;
+    std::vector<MeshVertex> vertices;
+    vertices.reserve(gZombies.size() * 216);
+    for (const Zombie& zombie : gZombies) {
+        if (zombie.health <= 0) continue;
+        const float cy = cosf(zombie.yaw), sy = sinf(zombie.yaw);
+        const bool hurt = zombie.resistance.remaining > 0.5f;
+        auto box = [&](float x, float y, float z, float w, float h, float d,
+                       float u, float v, float pivotY, float rotation) {
+            const float corners[8][3] = {{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
+                {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
+            const int faces[6][4] = {{0,1,2,3},{5,4,7,6},{4,0,3,7},{1,5,6,2},{3,2,6,7},{4,5,1,0}};
+            const float uv[6][4] = {{u+d,v+d,w,h},{u+2*d+w,v+d,w,h},{u,v+d,d,h},
+                {u+d+w,v+d,d,h},{u+d,v,w,d},{u+d+w,v,w,d}};
+            const int triangles[6] = {0,1,2,0,2,3};
+            const float cr = cosf(rotation), sr = sinf(rotation);
+            for (int face = 0; face < 6; ++face) {
+                for (int index : triangles) {
+                    const float* p = corners[faces[face][index]];
+                    const float localY = pivotY + (p[1] - pivotY) * cr - p[2] * sr;
+                    const float localZ = (p[1] - pivotY) * sr + p[2] * cr;
+                    const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
+                    const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
+                    vertices.push_back({zombie.body.x + (cy * p[0] - sy * localZ) / 16,
+                        zombie.body.y + localY / 16, zombie.body.z + (sy * p[0] + cy * localZ) / 16,
+                        0, 0, tu / 64, tv / 64, face == 4 ? 15.0f : 12.0f, 1, hurt ? 0.35f : 1.0f, hurt ? 0.35f : 1.0f});
+                }
+            }
+        };
+        const float moving = fabsf(zombie.body.vx) + fabsf(zombie.body.vz) > 0.1f ? sinf(gTimeSec * 5) * 0.5f : 0;
+        box(-4,24,-4,8,8,8,0,0,24,0);
+        box(-4,12,-2,8,12,4,16,16,12,0);
+        box(-8,12,-2,4,12,4,40,16,23,XM_PIDIV2);
+        box(4,12,-2,4,12,4,40,16,23,XM_PIDIV2);
+        box(-4,0,-2,4,12,4,0,16,12,moving);
+        box(0,0,-2,4,12,4,0,16,12,-moving);
+    }
+    if (vertices.empty()) return;
+    void* data = nullptr;
+    if (FAILED(gZombieVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+    memcpy(data, vertices.data(), vertices.size() * sizeof(MeshVertex));
+    gZombieVB->Unmap();
+    gRC.device->PSSetShader(gRC.psEntity);
+    gRC.device->PSSetShaderResources(0, 1, &gGui.texZombie.srv);
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gZombieVB, &stride, &offset);
+    gRC.device->Draw(UINT(vertices.size()), 0);
+}
+
 static void DrawWorld() {
     const XMVECTOR eye = XMVectorSet(gCamera.x, gCamera.y, gCamera.z, 1);
     const XMVECTOR at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
@@ -1279,6 +1576,9 @@ static void DrawWorld() {
         gRC.device->IASetIndexBuffer(gc.ib, DXGI_FORMAT_R32_UINT, 0);
         gRC.device->DrawIndexed(gc.opaqueIndexCount, 0, 0);
     }
+    DrawZombies();
+    gRC.device->PSSetShader(gRC.psWorld);
+    gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
     // Liquid pass: alpha blended, depth-tested but never writing depth.
     gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
     gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
@@ -1334,7 +1634,7 @@ static void DrawWorld() {
         gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
     }
 
-    if (gScreen == Screen::Game) DrawBlockOutline();
+    if (gScreen == Screen::Game) { DrawBreakOverlay(); DrawBlockOutline(); }
 }
 
 static void DrawDebug() {
@@ -1355,7 +1655,7 @@ static void DrawDebug() {
              double(gCamera.pitch * 57.2958f), gBody.flying ? "flying" : (gBody.inWater ? "swimming" : "walking"));
     row(line);
     snprintf(line, sizeof(line), "HP: %d  Hunger: %d  Slot: %s", gSurvival.health, gSurvival.hunger,
-             BLOCK_DEFS[gHotbar[gHotbarSlot]].name);
+             ItemName(gHotbar[gHotbarSlot]));
     row(line);
     snprintf(line, sizeof(line), "Mode: %s  Seed: %u", gGameMode ? "Creative" : "Survival", gWorldSeed);
     row(line);
@@ -1416,6 +1716,10 @@ static void RenderFrame() {
         }
     }
     gGui.Flush(gRC);
+    if (gScreenshotRequested) {
+        gScreenshotRequested = false;
+        SaveScreenshot();
+    }
     gRC.swapChain->Present(gSettings.vsync ? 1 : 0, 0);
 }
 
@@ -1443,6 +1747,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
+    wc.hIcon = LoadIconA(hInst, MAKEINTRESOURCEA(101));
+    wc.hIconSm = static_cast<HICON>(LoadImageA(hInst, MAKEINTRESOURCEA(101), IMAGE_ICON,
+                                             GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
     wc.hCursor = LoadCursorA(nullptr, IDC_ARROW);
     wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     wc.lpszClassName = "PotatoEdition";
@@ -1555,9 +1862,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         obd.BindFlags = D3D10_BIND_VERTEX_BUFFER;
         obd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
         gRC.device->CreateBuffer(&obd, nullptr, &gOutlineVB);
+        obd.ByteWidth = 8 * 6 * 36 * UINT(sizeof(MeshVertex));
+        gRC.device->CreateBuffer(&obd, nullptr, &gZombieVB);
     }
 
-    gWorld = new World(1337, gSettings.renderDistance);
+    gToolsTest = gAutomation && strstr(GetCommandLineA(), "--tools-test");
+    gCombatTest = gAutomation && strstr(GetCommandLineA(), "--combat-test");
+    WorldGenerator generator = gAutomation ? WorldGenerator::Legacy : WorldGenerator::Climate;
+    if (strstr(GetCommandLineA(), "--climate")) generator = WorldGenerator::Climate;
+    if (strstr(GetCommandLineA(), "--flat") || gToolsTest || gCombatTest) generator = WorldGenerator::Flat;
+    gWorld = new World(1337, gSettings.renderDistance, generator);
     gWorld->SetBlockTiles(gTiles);
     ApplySettings();
     if (gSettings.fullscreen && !gAutomation) ApplyFullscreen();
@@ -1565,6 +1879,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     if (gInventoryTest) {
         gInventory.slots[27] = {BLOCK_LOG, 1};
         gInventory.slots[28] = {BLOCK_COBBLE, 8};
+        SyncHotbar();
+    }
+    if (gToolsTest || gCombatTest) {
+        gInventory.slots[27] = {gToolsTest ? uint8_t(ITEM_WOOD_PICKAXE) : uint8_t(ITEM_DIAMOND_SWORD), 1};
         SyncHotbar();
     }
     if (gAutomation && strstr(GetCommandLineA(), "--save-test")) {
@@ -1614,7 +1932,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             else if (gScreen == Screen::CreateWorld || gScreen == Screen::SelectWorld)
                 HandleMenuAction(ACT_CANCEL_CREATE);
         }
-        if (gInput.KeyPressed(VK_F2)) SaveScreenshot();
+        if (gInput.KeyPressed(VK_F2)) gScreenshotRequested = true;
 
         if (gScreen == Screen::Profile) {
             if (gInput.keys[VK_CONTROL] && gInput.KeyPressed('A')) gProfileNameSelected = true;
@@ -1703,6 +2021,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     SafeRelease(gParticleVB);
     SafeRelease(gWhiteSRV);
     SafeRelease(gOutlineVB);
+    SafeRelease(gZombieVB);
     ShutdownRenderer(gRC);
     DestroyWindow(hwnd);
     CoUninitialize();

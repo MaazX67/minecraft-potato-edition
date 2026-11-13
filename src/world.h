@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -66,6 +67,23 @@ private:
     uint8_t mP[512];
 };
 
+enum class WorldGenerator { Legacy, Climate, Flat };
+const char* GeneratorName(WorldGenerator generator);
+bool ParseGenerator(const std::string& name, WorldGenerator& generator);
+
+enum class Biome { Plains, Forest, BirchForest, Taiga, Desert, Snowy, Mountains, River, Ocean };
+const char* BiomeName(Biome biome);
+
+struct TerrainColumn {
+    int height;
+    Biome biome;
+    float temperature;
+    float humidity;
+};
+
+TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z);
+void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz);
+
 // Full 3-axis greedy mesher. Free function so the headless selftest can run it
 // without a World. Neighbor pointers may be null (treated as air). y<0 and
 // y>=256 are air. Merge key = (tile, light, face sign).
@@ -98,7 +116,7 @@ bool DecodeEdits(const uint8_t* data, size_t size, EditMap& out);
 // in reverse. Chunks are shared_ptr so in-flight jobs survive map eviction.
 class World {
 public:
-    World(uint32_t seed, int renderDistance);
+    World(uint32_t seed, int renderDistance, WorldGenerator generator = WorldGenerator::Legacy);
     ~World();
     World(const World&) = delete;
     World& operator=(const World&) = delete;
@@ -119,6 +137,7 @@ public:
     // here, under the render thread's hard per-frame ceiling.
     void EvictStep(int maxCount);
     uint32_t Seed() const { return mSeed; }
+    WorldGenerator Generator() const { return mGenerator; }
     EditMap SnapshotEdits() const;
     // Call before the first Update(); edits apply as chunks generate.
     void SetEdits(EditMap edits);
@@ -146,6 +165,7 @@ private:
     std::shared_ptr<Chunk> FindLocked(int cx, int cz) const;
 
     const uint32_t mSeed;
+    const WorldGenerator mGenerator;
     int mRd;
     PerlinNoise mNoise;
     BlockTiles mTiles;
