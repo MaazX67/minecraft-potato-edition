@@ -568,16 +568,38 @@ const ToolDef* FindTool(uint8_t id) {
     return id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD ? &TOOLS[id - ITEM_WOOD_PICKAXE] : nullptr;
 }
 
+// Java armor values: defense points, toughness and durability per piece.
+static const ArmorDef ARMOR[] = {
+    {"leather_helmet", 0, 1, 0, 55}, {"leather_chestplate", 1, 3, 0, 80},
+    {"leather_leggings", 2, 2, 0, 75}, {"leather_boots", 3, 1, 0, 65},
+    {"chainmail_helmet", 0, 2, 0, 165}, {"chainmail_chestplate", 1, 5, 0, 240},
+    {"chainmail_leggings", 2, 4, 0, 225}, {"chainmail_boots", 3, 1, 0, 195},
+    {"iron_helmet", 0, 2, 0, 165}, {"iron_chestplate", 1, 6, 0, 240},
+    {"iron_leggings", 2, 5, 0, 225}, {"iron_boots", 3, 2, 0, 195},
+    {"golden_helmet", 0, 2, 0, 77}, {"golden_chestplate", 1, 5, 0, 112},
+    {"golden_leggings", 2, 3, 0, 105}, {"golden_boots", 3, 1, 0, 91},
+    {"diamond_helmet", 0, 3, 2, 363}, {"diamond_chestplate", 1, 8, 2, 528},
+    {"diamond_leggings", 2, 6, 2, 495}, {"diamond_boots", 3, 3, 2, 429},
+    {"netherite_helmet", 0, 3, 3, 407}, {"netherite_chestplate", 1, 8, 3, 592},
+    {"netherite_leggings", 2, 6, 3, 555}, {"netherite_boots", 3, 3, 3, 481}
+};
+
+const ArmorDef* FindArmor(uint8_t id) {
+    return id >= ITEM_LEATHER_HELMET && id <= ITEM_NETHERITE_BOOTS ? &ARMOR[id - ITEM_LEATHER_HELMET] : nullptr;
+}
+
 bool IsValidItem(int id) {
     return (id >= 0 && id < BLOCK_COUNT) || id == ITEM_STICK ||
         (id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD) ||
-        (id >= ITEM_COAL && id <= ITEM_RAW_COPPER);
+        (id >= ITEM_COAL && id <= ITEM_RAW_COPPER) ||
+        (id >= ITEM_LEATHER_HELMET && id <= ITEM_NETHERITE_BOOTS);
 }
 
 const char* ItemName(uint8_t id) {
     if (id < BLOCK_COUNT) return BLOCK_DEFS[id].name;
     if (id == ITEM_STICK) return "stick";
     if (const ToolDef* tool = FindTool(id)) return tool->name;
+    if (const ArmorDef* armor = FindArmor(id)) return armor->name;
     static const char* materials[] = {"coal", "raw_iron", "raw_gold", "diamond", "redstone", "lapis_lazuli",
                                       "iron_ingot", "gold_ingot", "netherite_ingot", "emerald", "raw_copper"};
     if (id >= ITEM_COAL && id <= ITEM_RAW_COPPER) return materials[id - ITEM_COAL];
@@ -589,7 +611,7 @@ std::string ItemTexture(uint8_t id) {
         (id < BLOCK_COUNT ? BLOCK_DEFS[id].side : ItemName(id)) + ".png";
 }
 
-int ItemStackLimit(uint8_t id) { return FindTool(id) ? 1 : 64; }
+int ItemStackLimit(uint8_t id) { return FindTool(id) || FindArmor(id) ? 1 : 64; }
 
 // Vanilla grass/foliage/water textures are grayscale and biome-tinted by
 // Java at runtime. Bake the exact plains colors sampled from the 26.3

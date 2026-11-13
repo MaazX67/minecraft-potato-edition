@@ -83,6 +83,7 @@ public:
     GuiTexture texInvBg, texCraftBg;
     GuiTexture texHeart[3];   // container, full, half
     GuiTexture texFood[3];    // empty, full, half
+    GuiTexture texArmor[3];   // empty, full, half
     GuiTexture texAttackBg, texAttackProgress;
     GuiTexture texPanoramaOverlay;
     GuiTexture texSlider, texSliderHi, texSliderHandle, texSliderHandleHi;
@@ -178,7 +179,7 @@ extern const uint8_t HOTBAR_BLOCKS[9];
 
 void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar);
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
-             const uint8_t* hotbar, int health, int hunger,
+             const uint8_t* hotbar, int health, int hunger, int armorPoints,
              const std::string& actionBar, bool creative, const ItemSlot* stacks);
 
 // Creative block picker (E). Returns the block id under the cursor, or -1.

@@ -492,6 +492,8 @@ static bool SaveCurrentWorld() {
                                   {"cursor", gInventory.cursor.damage}};
     for (const auto& s : gInventory.slots) { inventory.push_back(slot(s)); toolDamage["slots"].push_back(s.damage); }
     for (const auto& s : gInventory.craft) { craft.push_back(slot(s)); toolDamage["craft"].push_back(s.damage); }
+    nlohmann::json armor = nlohmann::json::array(), armorDamage = nlohmann::json::array();
+    for (const auto& s : gInventory.armor) { armor.push_back(slot(s)); armorDamage.push_back(s.damage); }
     FILETIME now;
     GetSystemTimeAsFileTime(&now);
     const uint64_t timestamp = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
@@ -505,6 +507,8 @@ static bool SaveCurrentWorld() {
         {"saturation", gSurvival.saturation}, {"exhaustion", gSurvival.exhaustion},
         {"selected", gHotbarSlot}, {"hotbar", std::vector<uint8_t>(gHotbar, gHotbar + 9)},
         {"inventory", inventory}, {"craft", craft}, {"cursor", slot(gInventory.cursor)}, {"toolDamage", toolDamage},
+        {"armor", armor}, {"armorDamage", armorDamage},
+        {"offhand", slot(gInventory.offhand)}, {"offhandDamage", gInventory.offhand.damage},
         {"inventoryOpen", gScreen == Screen::Inventory}, {"craftTable", gCraftTable},
         {"edits", nlohmann::json::binary(EncodeEdits(gWorld->SnapshotEdits()))}
     };
@@ -573,6 +577,32 @@ static bool LoadWorldSave(const std::string& path) {
             for (int i = 0; i < 36; ++i) if (!readDamage(damage.at("slots").at(i), inventory.slots[i])) return false;
             for (int i = 0; i < 9; ++i) if (!readDamage(damage.at("craft").at(i), inventory.craft[i])) return false;
             if (!readDamage(damage.at("cursor"), inventory.cursor)) return false;
+        }
+        if (data.contains("armor")) {
+            const auto& armor = data.at("armor");
+            if (!armor.is_array() || armor.size() != 4) return false;
+            for (int i = 0; i < 4; ++i) if (!readSlot(armor.at(i), inventory.armor[i])) return false;
+            if (data.contains("armorDamage")) {
+                const auto& ad = data.at("armorDamage");
+                if (!ad.is_array() || ad.size() != 4) return false;
+                for (int i = 0; i < 4; ++i) {
+                    const int d = ad.at(i).get<int>();
+                    const ArmorDef* a = FindArmor(inventory.armor[i].id);
+                    if (d < 0 || (a ? d >= a->durability : d != 0)) return false;
+                    inventory.armor[i].damage = uint16_t(d);
+                }
+            }
+        }
+        if (data.contains("offhand")) {
+            if (!readSlot(data.at("offhand"), inventory.offhand)) return false;
+            if (data.contains("offhandDamage")) {
+                const int d = data.at("offhandDamage").get<int>();
+                const ToolDef* tool = FindTool(inventory.offhand.id);
+                const ArmorDef* a = FindArmor(inventory.offhand.id);
+                const int max = tool ? tool->durability : (a ? a->durability : 0);
+                if (d < 0 || (max ? d >= max : d != 0)) return false;
+                inventory.offhand.damage = uint16_t(d);
+            }
         }
         auto hotbar = data.at("hotbar").get<std::vector<uint8_t>>();
         if (hotbar.size() != 9) return false;
@@ -1132,6 +1162,12 @@ static void HandleGameFrame(float dt) {
         if (gNowMs - gLastSpaceMs < 300.0f) { gBody.flying = !gBody.flying; gBody.vy = 0; }
         gLastSpaceMs = gNowMs;
     }
+    static float sLastWMs = 0;
+    if (gInput.KeyPressed('W')) {
+        if (gNowMs - sLastWMs < 300.0f) gBody.sprintLatch = true;
+        sLastWMs = gNowMs;
+    }
+    if (!gInput.keys['W'] || gBody.sneaking) gBody.sprintLatch = false;
 
     const bool wasGround = gBody.onGround;
     gBody.Update(gInput, dt, gCamera, getBlock);
@@ -1176,11 +1212,20 @@ static void HandleGameFrame(float dt) {
     gPlayerResistance.Advance(dt);
     gZombies.erase(std::remove_if(gZombies.begin(), gZombies.end(), [](const Zombie& zombie) {
         const float dx = zombie.body.x - gBody.x, dz = zombie.body.z - gBody.z;
+        if (zombie.health <= 0)
+            gSound.PlayAt(SND_ZOMBIE_DEATH, zombie.body.x, zombie.body.y, zombie.body.z);
         return zombie.health <= 0 || dx * dx + dz * dz > 64 * 64;
     }), gZombies.end());
+    static float sSayTimer = 0;
+    sSayTimer += dt;
+    if (sSayTimer >= 6 && !gZombies.empty()) {
+        sSayTimer = 0;
+        const Zombie& z = gZombies[gWorldClock.Ticks() % gZombies.size()];
+        gSound.PlayAt(SND_ZOMBIE_SAY, z.body.x, z.body.y, z.body.z);
+    }
     if (!gAutomation && gSettings.difficulty != 0 && gSkyTimeline.Sample(gWorldClock.Ticks()).stars > 0.1f) {
         gMobSpawnTimer += dt;
-        if (gMobSpawnTimer >= 10 && gZombies.size() < 8) {
+        if (gMobSpawnTimer >= 4 && gZombies.size() < 12) {
             gMobSpawnTimer = 0;
             const float angle = float(gWorldClock.Ticks() % 6283) * 0.001f;
             const int x = int(floorf(gBody.x + sinf(angle) * 26)), z = int(floorf(gBody.z + cosf(angle) * 26));
@@ -1204,9 +1249,24 @@ static void HandleGameFrame(float dt) {
             if (distance > 0.001f && RaycastDDA(getBlock, zombie.body.x, zombie.body.y + 1.4f, zombie.body.z,
                 dx / distance, 0, dz / distance, distance, bx, by, bz, normalX, normalY, normalZ)) continue;
             zombie.attackDelay = 1;
-            const float damage = gPlayerResistance.Apply(gSettings.difficulty == 1 ? 2.0f : (gSettings.difficulty == 3 ? 4.0f : 3.0f));
+            const float raw = gSettings.difficulty == 1 ? 2.0f : (gSettings.difficulty == 3 ? 4.0f : 3.0f);
+            const int defense = gInventory.Defense();
+            const float toughness = gInventory.Toughness();
+            float armored = raw;
+            if (defense > 0) {
+                const float reduction = std::min(20.0f, std::max(defense / 5.0f, defense - raw / (2.0f + toughness / 4.0f)));
+                armored = raw * (1.0f - reduction / 25.0f);
+            }
+            const float damage = gPlayerResistance.Apply(armored);
             if (damage > 0) {
                 gSurvival.health = std::max(0, gSurvival.health - int(ceilf(damage)));
+                const int wear = std::max(1, int(raw / 4));
+                for (ItemSlot& s : gInventory.armor) {
+                    const ArmorDef* a = FindArmor(s.id);
+                    if (!a) continue;
+                    s.damage = uint16_t(std::min(a->durability, int(s.damage) + wear));
+                    if (s.damage >= a->durability) s = {};
+                }
                 const float scale = distance > 0.001f ? 4.0f / distance : 0;
                 gBody.impulseX = dx * scale; gBody.impulseZ = dz * scale; gBody.vy = 4; gBody.onGround = false;
                 gSound.Play(SND_HURT);
@@ -1220,6 +1280,10 @@ static void HandleGameFrame(float dt) {
                        gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ,
                        gCamera.rightX, gCamera.rightZ);
 
+    if (gInput.KeyPressed('F') && gGameMode == 0) {
+        std::swap(gInventory.slots[27 + gHotbarSlot], gInventory.offhand);
+        SyncHotbar();
+    }
     for (int i = 0; i < 9; ++i) {
         if (gInput.KeyPressed('1' + i)) gHotbarSlot = i;
     }
@@ -1278,6 +1342,7 @@ static void HandleGameFrame(float dt) {
                 gParticles.SpawnCrit(targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
             }
             gSound.PlayAt(critical ? SND_CRIT : SND_HIT, targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
+            gSound.PlayAt(SND_ZOMBIE_HURT, targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
             if (gGameMode == 0) {
                 if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 1 : 2))
                     gSound.Play(SND_TOOL_BREAK);
@@ -1600,6 +1665,46 @@ static void DrawPlayer() {
     gRC.device->Draw(UINT(vertices.size()), 0);
 }
 
+static void DrawHand() {
+    if (gPerspective != 0 || !gZombieVB || !gGui.texSkin.srv) return;
+    std::vector<MeshVertex> vertices;
+    vertices.reserve(36);
+    const float swing = gPlayer.attackCooldownProgress > 0 ? sinf(gPlayer.attackCooldownProgress * 3.14159265f) : 0.0f;
+    const float bob = (fabsf(gBody.vx) + fabsf(gBody.vz) > 0.1f && gBody.onGround) ? sinf(gTimeSec * 5.0f) * 0.4f : 0.0f;
+    const float rot = 0.45f + swing * 0.9f;
+    const float cr = cosf(rot), sr = sinf(rot);
+    const float x = 0, y = -12, z = -2, w = 4, h = 12, d = 4, u = 40, v = 16;
+    const float corners[8][3] = {{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
+        {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
+    const int faces[6][4] = {{0,1,2,3},{5,4,7,6},{4,0,3,7},{1,5,6,2},{3,2,6,7},{4,5,1,0}};
+    const float uv[6][4] = {{u+d,v+d,w,h},{u+2*d+w,v+d,w,h},{u,v+d,d,h},
+        {u+d+w,v+d,d,h},{u+d,v,w,d},{u+d+w,v,w,d}};
+    const int triangles[6] = {0,1,2,0,2,3};
+    for (int face = 0; face < 6; ++face) {
+        for (int index : triangles) {
+            const float* p = corners[faces[face][index]];
+            const float ly = p[1] * cr - p[2] * sr;
+            const float lz = p[1] * sr + p[2] * cr;
+            const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
+            const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
+            vertices.push_back({(p[0] + 5.5f) / 16, (ly - 5 + bob) / 16, (lz - 9) / 16,
+                0, 0, tu / 64, tv / 64, 15, 1, 1, 1});
+        }
+    }
+    void* data = nullptr;
+    if (FAILED(gZombieVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+    memcpy(data, vertices.data(), vertices.size() * sizeof(MeshVertex));
+    gZombieVB->Unmap();
+    const XMMATRIX proj = XMMatrixPerspectiveFovRH(
+        gSettings.fov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.05f, 10.0f);
+    SetViewProj(gRC, proj);
+    gRC.device->PSSetShader(gRC.psEntity);
+    gRC.device->PSSetShaderResources(0, 1, &gGui.texSkin.srv);
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gZombieVB, &stride, &offset);
+    gRC.device->Draw(UINT(vertices.size()), 0);
+}
+
 static void DrawWorld() {
     float eyeX = gCamera.x, eyeY = gCamera.y, eyeZ = gCamera.z;
     if (gPerspective != 0) {
@@ -1622,8 +1727,11 @@ static void DrawWorld() {
     const XMVECTOR eye = XMVectorSet(eyeX, eyeY, eyeZ, 1);
     const XMVECTOR at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
     const XMMATRIX view = XMMatrixLookAtRH(eye, at, XMVectorSet(0, 1, 0, 0));
+    static float sFov = 70.0f;
+    const float targetFov = gSettings.fov * (gBody.sprinting ? 1.12f : 1.0f);
+    sFov += (targetFov - sFov) * 0.15f;
     const XMMATRIX proj = XMMatrixPerspectiveFovRH(
-        gSettings.fov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 1000.0f);
+        sFov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 1000.0f);
     const XMMATRIX vp = XMMatrixMultiply(view, proj);
     const SkyState sky = gSkyTimeline.Sample(gWorldClock.Ticks(), gWorldClock.Fraction());
     const XMMATRIX skyView = XMMatrixLookAtRH(XMVectorZero(),
@@ -1652,6 +1760,7 @@ static void DrawWorld() {
     }
     DrawZombies();
     DrawPlayer();
+    DrawHand();
     gRC.device->PSSetShader(gRC.psWorld);
     gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
     // Liquid pass: alpha blended, depth-tested but never writing depth.
@@ -1768,7 +1877,7 @@ static void RenderFrame() {
     if (gScreen == Screen::Game) {
         if (!gHideHud)
             DrawHUD(gGui, gPlayer.attackCooldownProgress, gHotbarSlot, gHotbar,
-                    gSurvival.health, gSurvival.hunger,
+                    gSurvival.health, gSurvival.hunger, gInventory.Defense(),
                     gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1,
                     gGameMode == 0 ? gInventory.slots + 27 : nullptr);
         if (gDebug) DrawDebug();

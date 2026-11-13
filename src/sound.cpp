@@ -79,6 +79,17 @@ bool SoundEngine::Init(AssetStore& store) {
         ++mNext[SND_HURT];
         candidates.push_back({name, SND_HURT});
     }
+    const std::vector<std::string> zomb = store.ListPrefix("minecraft/sounds/mob/zombie/");
+    for (const std::string& name : zomb) {
+        if (!EndsWith(name, ".ogg")) continue;
+        SoundCat cat = SND_COUNT;
+        if (name.find("say") != std::string::npos) cat = SND_ZOMBIE_SAY;
+        else if (name.find("hurt") != std::string::npos) cat = SND_ZOMBIE_HURT;
+        else if (name.find("death") != std::string::npos) cat = SND_ZOMBIE_DEATH;
+        if (cat == SND_COUNT || mNext[cat] >= 4) continue;
+        ++mNext[cat];
+        candidates.push_back({name, cat});
+    }
     candidates.push_back({"minecraft/sounds/random/click.ogg", SND_CLICK});
     candidates.push_back({"minecraft/sounds/random/glass1.ogg", SND_GLASS});
     candidates.push_back({"minecraft/sounds/random/glass2.ogg", SND_GLASS});
@@ -237,7 +248,27 @@ void SoundEngine::Dispatch(const PlayRequest& req) {
     }
 
     volume *= req.volume;
-    voice->SetFrequencyRatio(req.pitch);
+    // Java randomizes pitch/volume per play; fixed values sound robotic.
+    static uint32_t sSeed = 987654321u;
+    sSeed = sSeed * 1664525u + 1013904223u;
+    const float r = float(sSeed >> 8) / 16777216.0f;
+    float pitch = req.pitch;
+    if (pitch == 1.0f) {
+        switch (cat) {
+            case SND_STEP_GRASS: case SND_STEP_STONE: case SND_STEP_WOOD:
+            case SND_STEP_GRAVEL: case SND_STEP_SAND:
+                volume *= 0.3f; pitch = 0.9f + r * 0.2f; break;
+            case SND_STONE: case SND_GRASS: case SND_DIRT: case SND_WOOD:
+            case SND_SAND: case SND_GRAVEL: case SND_GLASS: case SND_WOOL: case SND_SNOW:
+                pitch = 0.8f + r * 0.4f; break;
+            case SND_HURT: case SND_ZOMBIE_HURT: case SND_HIT: case SND_CRIT:
+                pitch = 0.9f + r * 0.2f; break;
+            case SND_ZOMBIE_SAY:
+                volume *= 0.8f; pitch = 0.9f + r * 0.2f; break;
+            default: break;
+        }
+    }
+    voice->SetFrequencyRatio(pitch);
     // Equal-power pan into the mastering voice's stereo field.
     const float theta = (pan + 1.0f) * 0.7853982f; // (pan+1) * pi/4
     const float left = volume * cosf(theta);

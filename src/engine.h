@@ -189,6 +189,7 @@ struct PlayerBody {
     float x = 8.5f, y = 90.0f, z = 8.5f; // feet position
     float vx = 0, vy = 0, vz = 0;
     float walkSpeed = 4.317f, impulseX = 0, impulseZ = 0;
+    bool sprintLatch = false;
     bool onGround = false, flying = true, sprinting = false, sneaking = false;
     bool inWater = false;
     static constexpr float HALF = 0.3f, HEIGHT = 1.8f, EYE = 1.62f;
@@ -207,6 +208,8 @@ struct ItemSlot {
 struct InventoryState {
     ItemSlot slots[36];
     ItemSlot craft[9];
+    ItemSlot armor[4]; // helmet, chestplate, leggings, boots
+    ItemSlot offhand;
     ItemSlot cursor;
 
     int Capacity(uint8_t id) const;
@@ -214,6 +217,8 @@ struct InventoryState {
     ItemSlot Result(bool table) const;
     bool Click(int index, bool right, bool table, bool shift = false);
     bool Close();
+    int Defense() const;
+    float Toughness() const;
 };
 
 float BlockHardness(uint8_t block);

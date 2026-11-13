@@ -136,6 +136,9 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texFood[0]        = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_empty.png");
     texFood[1]        = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_full.png");
     texFood[2]        = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_half.png");
+    texArmor[0]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/armor_empty.png");
+    texArmor[1]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/armor_full.png");
+    texArmor[2]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/armor_half.png");
     texAttackBg       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair_attack_indicator_background.png");
     texAttackProgress = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair_attack_indicator_progress.png");
     texPanoramaOverlay= LoadGui(rc, store, "minecraft/textures/gui/title/background/panorama_overlay.png");
@@ -186,7 +189,8 @@ void GuiRenderer::Shutdown() {
                         &texInvBg, &texCraftBg, &texMenuBg, &texHeaderSeparator, &texFooterSeparator,
                         &texTab, &texTabHi, &texTabSelected, &texTabSelectedHi, &texSkin, &texZombie,
                         &texHeart[0], &texHeart[1], &texHeart[2],
-                        &texFood[0], &texFood[1], &texFood[2]};
+                        &texFood[0], &texFood[1], &texFood[2],
+                        &texArmor[0], &texArmor[1], &texArmor[2]};
     for (GuiTexture* t : all) {
         if (t->srv) { t->srv->Release(); t->srv = nullptr; }
     }
@@ -833,8 +837,8 @@ void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar) {
 }
 
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
-             const uint8_t* hotbar, int health, int hunger, const std::string& actionBar,
-             bool creative, const ItemSlot* stacks) {
+             const uint8_t* hotbar, int health, int hunger, int armorPoints,
+             const std::string& actionBar, bool creative, const ItemSlot* stacks) {
     const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
     ui.DrawSprite(&ui.texCrosshair, cx - 15, cy - 15, 2, 15);
 
@@ -848,6 +852,14 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
 
     if (!creative) {
         const float rowY = SCREEN_H - 78.0f;
+        if (armorPoints > 0) {
+            for (int i = 0; i < 10; ++i) {
+                const float ax = cx - 182 + i * 16;
+                ui.DrawSprite(&ui.texArmor[0], ax, rowY - 20, 2, 15);
+                if (armorPoints >= i * 2 + 2) ui.DrawSprite(&ui.texArmor[1], ax, rowY - 20, 2, 15);
+                else if (armorPoints == i * 2 + 1) ui.DrawSprite(&ui.texArmor[2], ax, rowY - 20, 2, 15);
+            }
+        }
         for (int i = 0; i < 10; ++i) {
             const float hx = cx - 182 + i * 16;
             ui.DrawSprite(&ui.texHeart[0], hx, rowY, 2, 15);
@@ -1003,7 +1015,10 @@ constexpr float SURV_INV_W = 176 * INV_S, SURV_INV_H = 166 * INV_S;
 
 // Slot item positions copied from InventoryMenu / CraftingMenu (176x166 GUI).
 void SlotPos(int index, bool table, float& x, float& y) {
-    if (index >= 45) {
+    if (index >= 46) {
+        if (index == 50) { x = 77; y = 62; }
+        else { x = 8; y = 8 + (index - 46) * 18; }
+    } else if (index >= 45) {
         x = table ? 124 : 154; y = table ? 35 : 28;
     } else if (index >= 36) {
         const int g = index - 36;
@@ -1027,7 +1042,8 @@ void DrawStack(GuiRenderer& ui, float x, float y, const ItemSlot& s) {
 int SurvivalInvHitTest(int mouseX, int mouseY, bool table) {
     const float px = (SCREEN_W - SURV_INV_W) * 0.5f;
     const float py = (SCREEN_H - SURV_INV_H) * 0.5f;
-    for (int i = 0; i < 46; ++i) {
+    for (int i = 0; i < 51; ++i) {
+        if (i >= 46 && table) continue;
         if (i >= 36 && i < 45 && !table) {
             const int g = i - 36;
             if (g % 3 == 2 || g / 3 == 2) continue; // 2x2 hides third row/col
@@ -1059,7 +1075,8 @@ void DrawSurvivalInventory(GuiRenderer& ui, const InventoryState& model, bool ta
 
     const ItemSlot result = model.Result(table);
     const int hovered = SurvivalInvHitTest(mouseX, mouseY, table);
-    for (int i = 0; i < 46; ++i) {
+    for (int i = 0; i < 51; ++i) {
+        if (i >= 46 && table) continue;
         if (i >= 36 && i < 45 && !table) {
             const int g = i - 36;
             if (g % 3 == 2 || g / 3 == 2) continue;
@@ -1069,11 +1086,14 @@ void DrawSurvivalInventory(GuiRenderer& ui, const InventoryState& model, bool ta
         if (i == hovered)
             ui.DrawQuad(&ui.texWhite, x, y, 16 * INV_S, 16 * INV_S, 0, 0, 1, 1, 15,
                         0.85f, 0.85f, 0.85f);
-        const ItemSlot& s = i == 45 ? result : (i >= 36 ? model.craft[i - 36] : model.slots[i]);
+        const ItemSlot& s = i == 45 ? result :
+                            i >= 46 ? (i == 50 ? model.offhand : model.armor[i - 46]) :
+                            (i >= 36 ? model.craft[i - 36] : model.slots[i]);
         DrawStack(ui, x, y, s);
     }
     if (model.cursor.Empty() && hovered >= 0) {
         const ItemSlot& s = hovered == 45 ? result :
+                            hovered >= 46 ? (hovered == 50 ? model.offhand : model.armor[hovered - 46]) :
                             (hovered >= 36 ? model.craft[hovered - 36] : model.slots[hovered]);
         if (!s.Empty() && IsValidItem(s.id)) {
             std::string name = ItemName(s.id);

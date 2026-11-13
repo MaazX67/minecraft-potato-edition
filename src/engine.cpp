@@ -305,7 +305,7 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
     const float len = sqrtf(mx * mx + mz * mz);
     if (len > 0.0f) { mx /= len; mz /= len; }
     sneaking = !flying && in.keys[VK_SHIFT];
-    sprinting = !flying && !sneaking && in.keys[VK_CONTROL] && in.keys['W'];
+    sprinting = !flying && !sneaking && (in.keys[VK_CONTROL] || sprintLatch) && in.keys['W'];
     const float speed = flying ? 12.0f : (sneaking ? 1.31f : (sprinting ? 5.612f : walkSpeed));
     vx = mx * speed + impulseX;
     vz = mz * speed + impulseZ;
@@ -636,7 +636,8 @@ ItemSlot InventoryState::Result(bool table) const {
 }
 
 bool InventoryState::Click(int index, bool right, bool table, bool shift) {
-    if (index < 0 || index > 45) return false;
+    if (index < 0 || index > 50) return false;
+    if (index >= 46 && table) return false;
     if (index >= 36 && index < 45 && !IsCraftCell(index - 36, table)) return false;
     if (index == 45) {
         bool crafted = false;
@@ -660,9 +661,47 @@ bool InventoryState::Click(int index, bool right, bool table, bool shift) {
         }
         return crafted;
     }
+    if (index >= 46) {
+        ItemSlot& slot = index == 50 ? offhand : armor[index - 46];
+        if (shift) {
+            if (slot.Empty()) return false;
+            const int before = slot.count;
+            slot.count = Add(slot.id, slot.count, slot.damage);
+            if (slot.count == 0) slot = {};
+            return slot.count != before;
+        }
+        if (cursor.Empty()) {
+            if (slot.Empty()) return false;
+            const int moved = right ? (slot.count + 1) / 2 : slot.count;
+            cursor = {slot.id, moved, slot.damage};
+            slot.count -= moved;
+            if (slot.count == 0) slot = {};
+            return true;
+        }
+        if (index < 50) {
+            const ArmorDef* a = FindArmor(cursor.id);
+            if (!a || a->slot != index - 46) return false;
+        }
+        if (slot.Empty() || (slot.id == cursor.id && slot.damage == cursor.damage)) {
+            const int moved = std::min(right ? 1 : cursor.count, ItemStackLimit(cursor.id) - (slot.Empty() ? 0 : slot.count));
+            if (moved == 0) return false;
+            slot = {cursor.id, (slot.Empty() ? 0 : slot.count) + moved, cursor.damage};
+            cursor.count -= moved;
+            if (cursor.count == 0) cursor = {};
+        } else {
+            std::swap(slot, cursor);
+        }
+        return true;
+    }
     ItemSlot& slot = index < 36 ? slots[index] : craft[index - 36];
     if (shift) {
         if (slot.Empty()) return false;
+        if (index < 36) {
+            if (const ArmorDef* a = FindArmor(slot.id)) {
+                std::swap(armor[a->slot], slot);
+                return true;
+            }
+        }
         const int before = slot.count;
         if (index >= 36) slot.count = Add(slot.id, slot.count, slot.damage);
         else slot.count = InsertStack(slots, index < 27 ? 27 : 0, index < 27 ? 36 : 27,
@@ -699,6 +738,18 @@ bool InventoryState::Close() {
     for (ItemSlot& slot : returned.craft) slot = {};
     *this = returned;
     return true;
+}
+
+int InventoryState::Defense() const {
+    int total = 0;
+    for (const ItemSlot& s : armor) if (const ArmorDef* a = FindArmor(s.id)) total += a->defense;
+    return total;
+}
+
+float InventoryState::Toughness() const {
+    float total = 0;
+    for (const ItemSlot& s : armor) if (const ArmorDef* a = FindArmor(s.id)) total += a->toughness;
+    return total;
 }
 
 float HurtResistance::Apply(float damage) {
