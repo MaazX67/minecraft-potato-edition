@@ -965,6 +965,32 @@ static void TestBlockExpansion() {
     CHECK(deepOre, "climate generation converts deep ores into deepslate ore variants");
 }
 
+static void TestHeldItemMesh() {
+    uint8_t px[16 * 16 * 4];
+    memset(px, 0, sizeof(px));
+    std::vector<MeshVertex> mesh;
+    BuildExtrudedItemMesh(px, mesh);
+    CHECK(mesh.empty(), "transparent item sprite extrudes to nothing");
+
+    px[(8 * 16 + 8) * 4 + 3] = 255;
+    mesh.clear();
+    BuildExtrudedItemMesh(px, mesh);
+    CHECK(mesh.size() == 36, "single opaque texel extrudes to 36 vertices");
+    bool bounded = true, uvOk = true;
+    for (const MeshVertex& v : mesh) {
+        if (v.x > 0.30f || v.x < -0.30f || v.y > 0.30f || v.y < -0.30f ||
+            v.z > 0.02f || v.z < -0.02f) bounded = false;
+        if (v.u < 0.0f || v.u > 1.0f || v.v < 0.0f || v.v > 1.0f) uvOk = false;
+    }
+    CHECK(bounded, "extruded item stays within hand-local bounds");
+    CHECK(uvOk, "extruded item sprite UVs stay in 0..1");
+
+    memset(px, 0xFF, sizeof(px));
+    mesh.clear();
+    BuildExtrudedItemMesh(px, mesh);
+    CHECK(mesh.size() == 3456, "solid 16x16 sprite extrudes to 3456 vertices");
+}
+
 int main() {
     TestShaders();
     TestSkyTimeline();
@@ -976,6 +1002,7 @@ int main() {
     TestHurtAndZombies();
     TestClimateGeneration();
     TestBlockExpansion();
+    TestHeldItemMesh();
 
     // --- Perlin determinism and bounds ---
     PerlinNoise a(1337), b(1337), c(7);

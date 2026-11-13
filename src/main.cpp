@@ -64,6 +64,9 @@ static ID3D10Buffer* gParticleVB = nullptr;
 static ID3D10ShaderResourceView* gWhiteSRV = nullptr;
 static ID3D10Buffer* gOutlineVB = nullptr;
 static ID3D10Buffer* gZombieVB = nullptr;
+static ID3D10Buffer* gHeldVB = nullptr;
+static uint8_t gItemPixels[256][ATLAS_TILE * ATLAS_TILE * 4];
+static bool gItemHasPixels[256] = {};
 static std::vector<Zombie> gZombies;
 static FurnaceState gFurnace;
 static int gDimension = 0; // 0 overworld, 1 nether
@@ -2059,6 +2062,47 @@ static void DrawPlayer() {
     gRC.device->Draw(UINT(vertices.size()), 0);
 }
 
+// Held block: a 3D mini-cube textured from the block atlas (top/side/bottom).
+// Local space, centered at origin; u/v span 0..1 so PSMain maps one full tile.
+static void BuildHeldBlockCube(uint8_t block, std::vector<MeshVertex>& out) {
+    const float h = 0.20f;
+    auto tileUV = [](int tile, float& tu, float& tv) {
+        tu = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+        tv = float((tile / ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+    };
+    // face: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z
+    const float n[6][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+    for (int f = 0; f < 6; ++f) {
+        int tile = gTiles.side[block];
+        float light = 12.0f;
+        if (f == 2) { tile = gTiles.top[block]; light = 15.0f; }
+        else if (f == 3) { tile = gTiles.bottom[block]; light = 8.0f; }
+        else if (f == 0 || f == 1) { light = 10.0f; }
+        float tu, tv; tileUV(tile, tu, tv);
+        // Build two tangent axes perpendicular to the face normal.
+        float ax[3] = {0,0,0}, ay[3] = {0,0,0};
+        if (f == 2 || f == 3) { ax[0] = 1; ay[2] = 1; }
+        else if (f == 0 || f == 1) { ax[2] = 1; ay[1] = 1; }
+        else { ax[0] = 1; ay[1] = 1; }
+        const float cx = n[f][0] * h, cy = n[f][1] * h, cz = n[f][2] * h;
+        const float corner[4][2] = {{-1,-1},{1,-1},{1,1},{-1,1}};
+        const float uv[4][2] = {{0,1},{1,1},{1,0},{0,0}};
+        const int tri[6] = {0,1,2,0,2,3};
+        for (int idx : tri) {
+            const float sx = corner[idx][0] * h, sy = corner[idx][1] * h;
+            MeshVertex v;
+            v.x = cx + ax[0] * sx + ay[0] * sy;
+            v.y = cy + ax[1] * sx + ay[1] * sy;
+            v.z = cz + ax[2] * sx + ay[2] * sy;
+            v.tu = tu; v.tv = tv;
+            v.u = uv[idx][0]; v.v = uv[idx][1];
+            v.light = light; v.cr = v.cg = v.cb = 1.0f;
+            out.push_back(v);
+        }
+    }
+}
+
+// First-person arm + held item (3D block cube or extruded 2D sprite).
 static void DrawHand() {
     if (gPerspective != 0 || !gZombieVB || !gGui.texSkin.srv) return;
     std::vector<MeshVertex> vertices;
@@ -2097,6 +2141,47 @@ static void DrawHand() {
     const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
     gRC.device->IASetVertexBuffers(0, 1, &gZombieVB, &stride, &offset);
     gRC.device->Draw(UINT(vertices.size()), 0);
+
+    // Held item: a 3D block cube or an extruded 2D sprite, swung with the arm.
+    const uint8_t held = gHotbar[gHotbarSlot];
+    if (held != BLOCK_AIR && gHeldVB) {
+        std::vector<MeshVertex> local;
+        const bool isBlock = held < BLOCK_COUNT;
+        if (isBlock) {
+            BuildHeldBlockCube(held, local);
+        } else if (gItemHasPixels[held] && gGui.texItemIcon[held].srv) {
+            BuildExtrudedItemMesh(gItemPixels[held], local);
+        }
+        if (!local.empty() && local.size() <= 20000) {
+            const float a = -0.5f + swing * 1.0f;
+            const float ca = cosf(a), sa = sinf(a);
+            for (MeshVertex& v : local) {
+                const float ry = v.y * ca - v.z * sa;
+                const float rz = v.y * sa + v.z * ca;
+                v.x = v.x + 0.42f;
+                v.y = ry - 0.40f + bob * 0.015f;
+                v.z = rz - 0.62f;
+            }
+            void* hd = nullptr;
+            if (SUCCEEDED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &hd))) {
+                memcpy(hd, local.data(), local.size() * sizeof(MeshVertex));
+                gHeldVB->Unmap();
+                gRC.device->IASetVertexBuffers(0, 1, &gHeldVB, &stride, &offset);
+                gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+                if (isBlock) {
+                    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+                    gRC.device->PSSetShader(gRC.psWorld);
+                    gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
+                } else {
+                    gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+                    gRC.device->PSSetShader(gRC.psUI);
+                    gRC.device->PSSetShaderResources(0, 1, &gGui.texItemIcon[held].srv);
+                }
+                gRC.device->Draw(UINT(local.size()), 0);
+                gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+            }
+        }
+    }
 }
 
 static void DrawWorld() {
@@ -2428,6 +2513,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
 
     if (!gGui.Init(gRC, gStore)) return 1;
+    for (int id = BLOCK_COUNT; id < 256; ++id) {
+        if (IsValidItem(id) && LoadItemRGBA(gStore, uint8_t(id), gItemPixels[id]))
+            gItemHasPixels[id] = true;
+    }
     if (!gGui.LoadPlayerSkin(gRC, gStore, gProfile)) {
         gActionBar = "Player skin missing from the local Java assets.";
         gActionBarUntil = SystemTimeMs() + 4000;
@@ -2465,6 +2554,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         gRC.device->CreateBuffer(&obd, nullptr, &gOutlineVB);
         obd.ByteWidth = 8 * 6 * 36 * UINT(sizeof(MeshVertex));
         gRC.device->CreateBuffer(&obd, nullptr, &gZombieVB);
+        obd.ByteWidth = 20000 * UINT(sizeof(MeshVertex));
+        gRC.device->CreateBuffer(&obd, nullptr, &gHeldVB);
     }
 
     gToolsTest = gAutomation && strstr(GetCommandLineA(), "--tools-test");
@@ -2644,6 +2735,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     SafeRelease(gWhiteSRV);
     SafeRelease(gOutlineVB);
     SafeRelease(gZombieVB);
+    SafeRelease(gHeldVB);
     ShutdownRenderer(gRC);
     DestroyWindow(hwnd);
     CoUninitialize();

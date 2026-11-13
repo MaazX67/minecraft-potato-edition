@@ -92,6 +92,11 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
                        const uint8_t* negZ, const uint8_t* posZ, const BlockTiles& tiles,
                        MeshData& out);
 
+// Extrudes a 16x16 RGBA item sprite into a 1-pixel-thick voxel mesh (front/back
+// faces plus side walls on transparent borders), centered at the origin in local
+// space. u/v carry sprite UVs. Mirrors Java's item model generator.
+void BuildExtrudedItemMesh(const uint8_t* rgba, std::vector<MeshVertex>& out);
+
 // Amanatides & Woo voxel traversal. Returns the hit voxel and the face normal.
 bool RaycastDDA(const std::function<uint8_t(int, int, int)>& getBlock,
                 float ox, float oy, float oz, float dx, float dy, float dz, float maxDist,

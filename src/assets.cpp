@@ -649,6 +649,12 @@ std::string ItemTexture(uint8_t id) {
         (id < BLOCK_COUNT ? BLOCK_DEFS[id].side : ItemName(id)) + ".png";
 }
 
+bool LoadItemRGBA(AssetStore& store, uint8_t id, uint8_t* out16) {
+    std::vector<uint8_t> bytes;
+    if (!store.ReadFile(ItemTexture(id), bytes)) return false;
+    return DecodePNG16(bytes, out16);
+}
+
 int ItemStackLimit(uint8_t id) {
     if (id == ITEM_FLINT_AND_STEEL) return 1;
     return FindTool(id) || FindArmor(id) ? 1 : 64;

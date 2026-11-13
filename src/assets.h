@@ -190,6 +190,10 @@ extern const BlockDef BLOCK_DEFS[BLOCK_COUNT];
 // other sizes are nearest-neighbor resampled. out must hold 16*16*4 bytes.
 bool DecodePNG16(const std::vector<uint8_t>& bytes, uint8_t* out16);
 
+// Loads an item/block's 16x16 RGBA pixels (frame 0 for animated strips) from
+// the asset store. False if the texture is absent. out must hold 16*16*4 bytes.
+bool LoadItemRGBA(AssetStore& store, uint8_t id, uint8_t* out16);
+
 // Decodes a PNG at its native size (GUI sprites, font). out is w*h*4 RGBA.
 bool DecodePNGAny(const std::vector<uint8_t>& bytes, std::vector<uint8_t>& out, int& w, int& h);
 

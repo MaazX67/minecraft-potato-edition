@@ -608,6 +608,42 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
     for (const uint32_t idx : liquid.indices) out.indices.push_back(vbase + idx);
 }
 
+void BuildExtrudedItemMesh(const uint8_t* rgba, std::vector<MeshVertex>& out) {
+    const float s = 0.55f / 16.0f;
+    const float t = s * 0.5f;
+    auto opaque = [&](int x, int y) -> bool {
+        if (x < 0 || y < 0 || x >= 16 || y >= 16) return false;
+        return rgba[(y * 16 + x) * 4 + 3] > 0;
+    };
+    auto vert = [&](float x, float y, float z, float u, float v) {
+        MeshVertex mv;
+        mv.x = x; mv.y = y; mv.z = z;
+        mv.tu = 0; mv.tv = 0; mv.u = u; mv.v = v;
+        mv.light = 15.0f; mv.cr = mv.cg = mv.cb = 1.0f;
+        out.push_back(mv);
+    };
+    auto quad = [&](float x0, float y0, float x1, float y1, float z0, float z1,
+                    float u0, float v0, float u1, float v1) {
+        vert(x0,y0,z0,u0,v0); vert(x1,y0,z0,u1,v0); vert(x1,y1,z0,u1,v1);
+        vert(x0,y0,z0,u0,v0); vert(x1,y1,z0,u1,v1); vert(x0,y1,z0,u0,v1);
+    };
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            if (!opaque(x, y)) continue;
+            const float x0 = (x - 8) * s, x1 = (x + 1 - 8) * s;
+            const float y0 = (8 - y) * s, y1 = (8 - y - 1) * s;
+            const float u0 = x / 16.0f, u1 = (x + 1) / 16.0f;
+            const float v0 = y / 16.0f, v1 = (y + 1) / 16.0f;
+            quad(x0,y0,x1,y1, t,t, u0,v0,u1,v1);   // front
+            quad(x0,y0,x1,y1,-t,-t, u0,v0,u1,v1);  // back
+            if (!opaque(x-1,y)) quad(x0,y0,x0,y1,-t,t, u0,v0,u0,v1); // left
+            if (!opaque(x+1,y)) quad(x1,y0,x1,y1,-t,t, u1,v0,u1,v1); // right
+            if (!opaque(x,y-1)) quad(x0,y0,x1,y0,-t,t, u0,v0,u1,v0); // top
+            if (!opaque(x,y+1)) quad(x0,y1,x1,y1,-t,t, u0,v1,u1,v1); // bottom
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Voxel raycast (Amanatides & Woo)
 // ---------------------------------------------------------------------------
