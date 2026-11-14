@@ -1240,6 +1240,18 @@ int World::SurfaceY(int x, int z) const {
     return -1;
 }
 
+TerrainColumn World::LodColumn(int x, int z) const {
+    if (mGenerator == WorldGenerator::Climate) return SampleTerrain(mNoise, x, z);
+    TerrainColumn c{};
+    if (mGenerator == WorldGenerator::Flat) {
+        c.height = 3;
+        c.biome = Biome::Plains;
+        c.temperature = 0.6f;
+        c.humidity = 0.5f;
+    }
+    return c;
+}
+
 void World::QueueMeshIfReady(int cx, int cz) {
     const std::shared_ptr<Chunk> c = FindLocked(cx, cz);
     if (!c || !c->generated.load(std::memory_order_acquire) || !c->dirty || c->meshQueued) return;

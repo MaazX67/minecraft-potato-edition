@@ -2743,6 +2743,121 @@ static void DrawHand() {
     }
 }
 
+// LOD ring beyond the streaming radius: one heightfield mesh sampled from the
+// generator (no chunk load, no palette, no meshing jobs). 8-block cells keep
+// the ridge line recognizably Java-like at a fraction of full chunk cost.
+static ID3D10Buffer* gLodVB = nullptr;
+static constexpr int LOD_MAX_VERTS = 32768;
+
+static void BuildLodMesh(float eyeX, float eyeZ, std::vector<MeshVertex>& out) {
+    constexpr int cell = 8;
+    constexpr int LOD_SEA_TOP = 64; // CLIMATE_SEA + 1
+    const int rd = gSettings.renderDistance;
+    const int rOut = (rd + 8) * CHUNK_X;
+    const int rIn = (rd - 1) * CHUNK_X;
+    const int cols = (2 * rOut) / cell + 1;
+    const int baseX = int(floorf((eyeX - float(rOut)) / cell)) * cell;
+    const int baseZ = int(floorf((eyeZ - float(rOut)) / cell)) * cell;
+    std::vector<TerrainColumn> grid(size_t(cols) * size_t(cols));
+    for (int j = 0; j < cols; ++j)
+        for (int i = 0; i < cols; ++i)
+            grid[size_t(j) * size_t(cols) + size_t(i)] =
+                gWorld->LodColumn(baseX + i * cell, baseZ + j * cell);
+    const BlockTiles& tiles = gWorld->Tiles();
+    auto tileOrigin = [&](int tile, float& tu, float& tv) {
+        tu = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+        tv = float((tile / ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+    };
+    auto corner = [&](int i, int j) -> MeshVertex {
+        const TerrainColumn& c = grid[size_t(j) * size_t(cols) + size_t(i)];
+        const bool water = c.biome == Biome::Ocean || c.biome == Biome::River || c.height <= 62;
+        const bool sandy = !water && (c.biome == Biome::Desert || c.height <= 65);
+        const bool snowy = !water && !sandy && (c.temperature < 0.24f || c.height >= 155);
+        float r = 1.0f, g = 1.0f, b = 1.0f;
+        int tile;
+        if (water) {
+            // Distant ocean reads as water through tint; the sand tile is
+            // opaque so the world pass's alpha clip never punches holes.
+            r = 0.247f; g = 0.463f; b = 0.894f;
+            tile = tiles.top[BLOCK_SAND];
+        } else if (sandy) {
+            tile = tiles.top[BLOCK_SAND];
+        } else if (snowy) {
+            tile = tiles.top[BLOCK_SNOW];
+        } else if (c.biome == Biome::Taiga) {
+            r = 0.525f; g = 0.718f; b = 0.514f;
+            tile = tiles.top[BLOCK_GRASS];
+        } else if (c.biome == Biome::Mountains) {
+            r = 0.541f; g = 0.714f; b = 0.537f;
+            tile = tiles.top[BLOCK_GRASS];
+        } else {
+            r = 0.568f; g = 0.741f; b = 0.349f; // Java plains grass 0x91BD59
+            tile = tiles.top[BLOCK_GRASS];
+        }
+        MeshVertex v;
+        v.x = float(baseX + i * cell);
+        v.z = float(baseZ + j * cell);
+        v.y = water ? float(LOD_SEA_TOP) : float(c.height + 1);
+        tileOrigin(tile, v.tu, v.tv);
+        v.u = v.x;
+        v.v = v.z;
+        v.light = 15.0f;
+        v.sky = 15.0f;
+        v.cr = r; v.cg = g; v.cb = b;
+        return v;
+    };
+    for (int j = 0; j < cols - 1; ++j) {
+        for (int i = 0; i < cols - 1; ++i) {
+            const float cx = float(baseX + i * cell + cell / 2) - eyeX;
+            const float cz = float(baseZ + j * cell + cell / 2) - eyeZ;
+            if (cx * cx + cz * cz < float(rIn) * float(rIn)) continue;
+            const MeshVertex q00 = corner(i, j), q10 = corner(i + 1, j);
+            const MeshVertex q11 = corner(i + 1, j + 1), q01 = corner(i, j + 1);
+            out.push_back(q00); out.push_back(q10); out.push_back(q11);
+            out.push_back(q00); out.push_back(q11); out.push_back(q01);
+        }
+    }
+}
+
+static void DrawLodTerrain(float eyeX, float eyeZ, const XMMATRIX& vp, const SkyState& sky) {
+    if (!gWorld || gDimension != 0) return;
+    const WorldGenerator gen = gWorld->Generator();
+    if (gen != WorldGenerator::Climate && gen != WorldGenerator::Flat) return;
+    static std::vector<MeshVertex> verts;
+    static float lastX = 1e9f, lastZ = 1e9f;
+    static int lastRd = -1, lodCount = 0;
+    if (fabsf(eyeX - lastX) > 16.0f || fabsf(eyeZ - lastZ) > 16.0f ||
+        lastRd != gSettings.renderDistance) {
+        lastX = eyeX; lastZ = eyeZ; lastRd = gSettings.renderDistance;
+        verts.clear();
+        verts.reserve(size_t(LOD_MAX_VERTS));
+        BuildLodMesh(eyeX, eyeZ, verts);
+        if (!gLodVB) {
+            D3D10_BUFFER_DESC bd = {};
+            bd.ByteWidth = UINT(LOD_MAX_VERTS * int(sizeof(MeshVertex)));
+            bd.Usage = D3D10_USAGE_DYNAMIC;
+            bd.BindFlags = D3D10_BIND_VERTEX_BUFFER;
+            bd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
+            if (FAILED(gRC.device->CreateBuffer(&bd, nullptr, &gLodVB))) return;
+        }
+        lodCount = std::min<int>(int(verts.size()), LOD_MAX_VERTS);
+        if (lodCount > 0) {
+            void* data = nullptr;
+            if (FAILED(gLodVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+            memcpy(data, verts.data(), size_t(lodCount) * sizeof(MeshVertex));
+            gLodVB->Unmap();
+        }
+    }
+    if (!gLodVB || lodCount <= 0) return;
+    const float fogEnd = float((gSettings.renderDistance + 8) * CHUNK_X);
+    SetViewProj(gRC, vp, fogEnd, &sky, 1.0f, 0.0f, 0.0f);
+    gRC.device->PSSetShader(gRC.psWorld);
+    gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gLodVB, &stride, &offset);
+    gRC.device->Draw(UINT(lodCount), 0);
+}
+
 static void DrawWorld() {
     float eyeX = gCamera.x, eyeY = gCamera.y, eyeZ = gCamera.z;
     if (gPerspective != 0) {
@@ -2809,6 +2924,9 @@ static void DrawWorld() {
     gRC.device->PSSetShader(gRC.psWorld);
     gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
     const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+
+    DrawLodTerrain(eyeX, eyeZ, vp, sky);
+    SetViewProj(gRC, vp, fogDist, &sky, 1.0f, 0.0f, waterTime);
 
     // Opaque + cutout pass.
     for (const auto& kv : gGpu) {

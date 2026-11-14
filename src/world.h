@@ -270,6 +270,10 @@ public:
     void SetBlock(int x, int y, int z, uint8_t block); // marks dirty, remeshes
     // Highest solid block in the column, or -1 if the chunk isn't generated.
     int SurfaceY(int x, int z) const;
+    // Coarse terrain sample for the beyond-render-distance LOD ring. Only
+    // meaningful for Climate/Flat worlds; Legacy/Nether return height 0.
+    TerrainColumn LodColumn(int x, int z) const;
+    const BlockTiles& Tiles() const { return mTiles; }
     bool HasChunk(int cx, int cz) const;
     size_t ChunkCount() const;
     bool PopUpload(uint64_t& key, MeshData& out);
