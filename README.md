@@ -10,6 +10,19 @@ Not affiliated with Mojang or Microsoft. Textures, sounds and the font are loade
 
 Grab the latest `PotatoEdition.exe` from the Releases page. It's one self-contained binary; the CRT is linked statically so there's no redistributable to install.
 
+## Parity probe
+
+Run `PotatoEdition.exe --parity` next to your Minecraft install. It loads the Java 26.3 JAR from
+`%APPDATA%\Migurinth\meta` (or the folders you pass with `--assets` / `--jar`), then writes `parity.txt` with one
+line:
+
+```
+PARITY-REGISTRY: jar=yes blocks=... items=... recipes=... loot=... names=... dup=0 hash=........
+```
+
+`dup=0` means no two ids share a resource name. The build is gated on that line, so paste it back when it changes.
+No window opens and nothing is installed.
+
 ## What works so far
 
 - Versioned climate terrain with nine biome categories, rivers, mountains, layered surfaces, a deepslate layer below y=8, coherent ore deposits with deepslate variants, underground caves and oak/birch/spruce trees; legacy terrain and Superflat remain available

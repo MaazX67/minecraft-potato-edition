@@ -8,7 +8,7 @@
 
 namespace potato {
 
-const uint8_t HOTBAR_BLOCKS[9] = {
+const uint16_t HOTBAR_BLOCKS[9] = {
     BLOCK_GRASS, BLOCK_DIRT, BLOCK_STONE, BLOCK_COBBLE, BLOCK_PLANKS,
     BLOCK_LOG, BLOCK_SAND, BLOCK_GRAVEL, BLOCK_BRICK
 };
@@ -230,7 +230,7 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texBlack.srv = CreateTextureSRV(rc, black, 1, 1);
 
     for (int id = 1; id < 256; ++id) {
-        if (IsValidItem(id)) texItemIcon[id] = LoadGui(rc, store, ItemTexture(uint8_t(id)).c_str());
+        if (IsValidItem(id)) texItemIcon[id] = LoadGui(rc, store, ItemTexture(uint16_t(id)).c_str());
     }
     for (int i = 0; i < 10; ++i) {
         const std::string name = "minecraft/textures/block/destroy_stage_" + std::to_string(i) + ".png";
@@ -1053,7 +1053,7 @@ int MenuSystem::HitTest(int mouseX, int mouseY) const {
 // ---------------------------------------------------------------------------
 
 static void DrawItemIcon(GuiRenderer& ui, int id, float x, float y, float scale = 1.0f) {
-    if (id <= BLOCK_AIR || !IsValidItem(id)) return;
+    if (id <= BLOCK_AIR || id >= 256 || !IsValidItem(id)) return;
     const GuiTexture& icon = ui.texItemIcon[id];
     if (!icon.srv || icon.w <= 0 || icon.h <= 0) return;
     const float frame = float(std::min(icon.w, icon.h));
@@ -1082,7 +1082,7 @@ float GuiScaleFactor(int guiScale) {
     return std::clamp(float(guiScale) * 0.5f, 0.5f, 2.0f);
 }
 
-void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar, float scale) {
+void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint16_t* hotbar, float scale) {
     const float cx = SCREEN_W * 0.5f;
     const float hotbarX = cx - 182.0f * scale, hotbarY = SCREEN_H - 44.0f * scale;
     ui.DrawSprite(&ui.texHotbar, hotbarX, hotbarY, 2 * scale, 15);
@@ -1095,7 +1095,7 @@ void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar, float 
 }
 
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
-             const uint8_t* hotbar, int health, int hunger, int armorPoints,
+             const uint16_t* hotbar, int health, int hunger, int armorPoints,
              const std::string& actionBar, bool creative, const ItemSlot* stacks,
              float scale) {
     const float s = scale;
@@ -1193,7 +1193,7 @@ constexpr float SEARCH_H = 28;
 int gCreativeScroll = 0;
 int gCreativeTab = CTAB_BUILDING;
 std::string gCreativeSearch;
-std::vector<uint8_t> gCreativeList;
+std::vector<uint16_t> gCreativeList;
 bool gCreativeListDirty = true;
 
 int CreativeMaxScroll() {
@@ -1204,8 +1204,10 @@ int CreativeMaxScroll() {
 
 void RebuildCreativeList() {
     gCreativeList.clear();
-    for (int i = 1; i < 256; ++i) {
-        const uint8_t id = uint8_t(i);
+    // Scan the whole 16-bit id space: the registry, not the old 8-bit
+    // ceiling, decides what exists. Cheap: the table only has ~200 entries.
+    for (int i = 1; i <= 0xFFFF; ++i) {
+        const uint16_t id = uint16_t(i);
         if (!IsValidItem(id)) continue;
         if (gCreativeTab == CTAB_SEARCH) {
             if (!ItemMatchesSearch(id, gCreativeSearch)) continue;
@@ -1219,7 +1221,7 @@ void RebuildCreativeList() {
     if (gCreativeScroll < 0) gCreativeScroll = 0;
 }
 
-const std::vector<uint8_t>& CreativeItems() {
+const std::vector<uint16_t>& CreativeItems() {
     if (gCreativeListDirty) RebuildCreativeList();
     return gCreativeList;
 }
@@ -1240,7 +1242,7 @@ void SlotRect(int index, float& x, float& y) {
 }
 
 void DrawScaledIcon(GuiRenderer& ui, int id, float x, float y, float size) {
-    if (id <= BLOCK_AIR || !IsValidItem(id)) return;
+    if (id <= BLOCK_AIR || id >= 256 || !IsValidItem(id)) return;
     const GuiTexture& icon = ui.texItemIcon[id];
     if (!icon.srv || icon.w <= 0 || icon.h <= 0) return;
     const float frame = float(std::min(icon.w, icon.h));
@@ -1302,7 +1304,7 @@ int InventoryHitTest(int mouseX, int mouseY) {
     const int col = int(rx) / INV_CELL;
     const int visRow = int(ry) / INV_CELL;
     const int index = (gCreativeScroll + visRow) * INV_COLS + col;
-    const std::vector<uint8_t>& items = CreativeItems();
+    const std::vector<uint16_t>& items = CreativeItems();
     if (index < 0 || index >= int(items.size())) return -1;
     return items[index];
 }
@@ -1337,7 +1339,7 @@ bool CreativeSearchFieldHitTest(int mouseX, int mouseY) {
 }
 
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
-                   const uint8_t* hotbar, const InventoryState& inv) {
+                   const uint16_t* hotbar, const InventoryState& inv) {
     ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
 
     // Tabs sit above the panel, as in Java's CreativeModeInventoryScreen.
@@ -1367,13 +1369,13 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
                     false, 0.25f, 0.25f, 0.25f);
     }
 
-    const std::vector<uint8_t>& items = CreativeItems();
+    const std::vector<uint16_t>& items = CreativeItems();
     const int total = int(items.size());
     const int first = gCreativeScroll * INV_COLS;
     const int last = std::min(total, first + INV_PICK_ROWS * INV_COLS);
     const int hovered = InventoryHitTest(mouseX, mouseY);
     for (int i = first; i < last; ++i) {
-        const uint8_t b = items[i];
+        const uint16_t b = items[i];
         float x, y;
         CellRect(i, x, y);
         DrawSlot(ui, x, y, b == hovered);
@@ -1409,7 +1411,7 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
                 INV_X + INV_PAD, INV_Y + INV_H - 20, 2, 15, false, 0.3f, 0.3f, 0.3f);
 
     if (hovered > 0) {
-        std::string name = ItemName(uint8_t(hovered));
+        std::string name = ItemName(uint16_t(hovered));
         for (char& c : name) if (c == '_') c = ' ';
         const float tw = ui.TextWidth(name, 2);
         float tx = mouseX + 16, ty = mouseY - 12;

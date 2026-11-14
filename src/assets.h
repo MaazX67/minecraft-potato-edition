@@ -77,7 +77,7 @@ private:
     ZipArchive mJar; // textures/GUI/font, names prefixed with "assets/"
 };
 
-enum BlockId : uint8_t {
+enum BlockId : uint16_t {
     BLOCK_AIR = 0, BLOCK_STONE, BLOCK_DIRT, BLOCK_GRASS, BLOCK_COBBLE,
     BLOCK_PLANKS, BLOCK_LOG, BLOCK_SAND, BLOCK_GRAVEL, BLOCK_BRICK,
     BLOCK_BEDROCK, BLOCK_COAL_ORE, BLOCK_IRON_ORE, BLOCK_GOLD_ORE,
@@ -134,7 +134,7 @@ enum BlockId : uint8_t {
 // The 160 base leaves headroom over BLOCK_COUNT (138); the whole layout is the
 // original 128 base shifted +32. Legacy saves (format 1/2) stored items at
 // 64..104; LoadWorldSave remaps them with +96.
-enum ItemId : uint8_t {
+enum ItemId : uint16_t {
     ITEM_STICK = 160,
     ITEM_WOOD_PICKAXE, ITEM_WOOD_AXE, ITEM_WOOD_SHOVEL, ITEM_WOOD_SWORD,
     ITEM_STONE_PICKAXE, ITEM_STONE_AXE, ITEM_STONE_SHOVEL, ITEM_STONE_SWORD,
@@ -162,7 +162,7 @@ struct ToolDef {
     int tier, durability;
     float speed, damage, attackSpeed;
 };
-const ToolDef* FindTool(uint8_t id);
+const ToolDef* FindTool(uint16_t id);
 struct ArmorDef {
     const char* name;
     int slot; // 0 helmet, 1 chestplate, 2 leggings, 3 boots
@@ -170,11 +170,11 @@ struct ArmorDef {
     float toughness;
     int durability;
 };
-const ArmorDef* FindArmor(uint8_t id);
+const ArmorDef* FindArmor(uint16_t id);
 bool IsValidItem(int id);
-const char* ItemName(uint8_t id);
-std::string ItemTexture(uint8_t id);
-int ItemStackLimit(uint8_t id);
+const char* ItemName(uint16_t id);
+std::string ItemTexture(uint16_t id);
+int ItemStackLimit(uint16_t id);
 
 // SOLID: collides with the player. OPAQUE: culls neighbor faces. CUTOUT:
 // alpha-tested (leaves/glass). LIQUID: rendered in the transparent pass.
@@ -202,7 +202,7 @@ void SliceAnimatedFrame(const uint8_t* rgba, int w, int h, int frame, uint8_t* o
 
 // Loads an item/block's 16x16 RGBA pixels (frame 0 for animated strips) from
 // the asset store. False if the texture is absent. out must hold 16*16*4 bytes.
-bool LoadItemRGBA(AssetStore& store, uint8_t id, uint8_t* out16);
+bool LoadItemRGBA(AssetStore& store, uint16_t id, uint8_t* out16);
 
 // Decodes a PNG at its native size (GUI sprites, font). out is w*h*4 RGBA.
 bool DecodePNGAny(const std::vector<uint8_t>& bytes, std::vector<uint8_t>& out, int& w, int& h);

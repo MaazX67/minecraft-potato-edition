@@ -422,7 +422,7 @@ static void TestToolDefinitions() {
     const float axeRates[] = {0.8f, 0.8f, 0.9f, 1, 1, 1};
     for (int material = 0; material < 6; ++material) {
         for (int kind = 0; kind < 4; ++kind) {
-            const uint8_t id = uint8_t(ITEM_WOOD_PICKAXE + material * 4 + kind);
+            const uint16_t id = uint16_t(ITEM_WOOD_PICKAXE + material * 4 + kind);
             const ToolDef* tool = FindTool(id);
             const std::string name = std::string(materials[material]) + "_" + suffixes[kind];
             const float rate = kind == 0 ? 1.2f : (kind == 1 ? axeRates[material] : (kind == 3 ? 1.6f : 1));
@@ -442,11 +442,11 @@ static void TestToolDefinitions() {
         const bool extra = id >= ITEM_ELYTRA && id <= ITEM_COPPER_INGOT;
         const bool expected = id < BLOCK_COUNT || id == ITEM_STICK || tool || armor || extra ||
                               (id >= ITEM_COAL && id <= ITEM_RAW_COPPER);
-        if (IsValidItem(id) != expected || (FindTool(uint8_t(id)) != nullptr) != tool) itemRanges = false;
-        if ((FindArmor(uint8_t(id)) != nullptr) != armor) itemRanges = false;
+        if (IsValidItem(id) != expected || (FindTool(uint16_t(id)) != nullptr) != tool) itemRanges = false;
+        if ((FindArmor(uint16_t(id)) != nullptr) != armor) itemRanges = false;
         const int limit = (tool || armor || id == ITEM_FLINT_AND_STEEL) ? 1 : 64;
-        if (expected && ItemStackLimit(uint8_t(id)) != limit) itemRanges = false;
-        if (expected && std::string(ItemName(uint8_t(id))) == "unknown") itemRanges = false;
+        if (expected && ItemStackLimit(uint16_t(id)) != limit) itemRanges = false;
+        if (expected && std::string(ItemName(uint16_t(id))) == "unknown") itemRanges = false;
     }
     CHECK(itemRanges, "block, stick, tool and material ID ranges reject gaps and keep their stack limits");
     CHECK(ItemTexture(BLOCK_LOG) == "minecraft/textures/block/oak_log.png" &&
@@ -456,14 +456,14 @@ static void TestToolDefinitions() {
 }
 
 static void TestToolRecipes() {
-    const uint8_t materials[] = {BLOCK_PLANKS, BLOCK_COBBLE, ITEM_IRON_INGOT, ITEM_DIAMOND, ITEM_GOLD_INGOT};
-    const uint8_t planks[] = {BLOCK_PLANKS, BLOCK_SPRUCE_PLANKS, BLOCK_BIRCH_PLANKS};
+    const uint16_t materials[] = {BLOCK_PLANKS, BLOCK_COBBLE, ITEM_IRON_INGOT, ITEM_DIAMOND, ITEM_GOLD_INGOT};
+    const uint16_t planks[] = {BLOCK_PLANKS, BLOCK_SPRUCE_PLANKS, BLOCK_BIRCH_PLANKS};
     const char* patterns[] = {"MMM S  S ", "MMMS S", "MSS", "MMS"};
     const int widths[] = {3, 2, 1, 1};
     for (int material = 0; material < 5; ++material) {
         for (int kind = 0; kind < 4; ++kind) {
             bool valid = true;
-            const uint8_t output = uint8_t(ITEM_WOOD_PICKAXE + material * 4 + kind);
+            const uint16_t output = uint16_t(ITEM_WOOD_PICKAXE + material * 4 + kind);
             for (int mirror = 0; mirror < 2; ++mirror) {
                 for (int offset = 0; offset <= 3 - widths[kind]; ++offset) {
                     InventoryState inv;
@@ -471,7 +471,7 @@ static void TestToolRecipes() {
                         for (int c = 0; c < widths[kind]; ++c) {
                             const char symbol = patterns[kind][r * widths[kind] + (mirror ? widths[kind] - 1 - c : c)];
                             if (symbol == ' ') continue;
-                            const uint8_t id = symbol == 'S' ? uint8_t(ITEM_STICK) :
+                            const uint16_t id = symbol == 'S' ? uint16_t(ITEM_STICK) :
                                 (material == 0 ? planks[(r + c) % 3] : materials[material]);
                             inv.craft[r * 3 + offset + c] = {id, 2};
                         }
@@ -556,7 +556,7 @@ static void TestDamagedInventory() {
     bool allTools = true;
     for (int id = ITEM_WOOD_PICKAXE; id <= ITEM_NETHERITE_SWORD; ++id) {
         InventoryState inv;
-        if (inv.Add(uint8_t(id), 2, 7) != 0 || inv.slots[27].id != id || inv.slots[28].id != id ||
+        if (inv.Add(uint16_t(id), 2, 7) != 0 || inv.slots[27].id != id || inv.slots[28].id != id ||
             inv.slots[27].count != 1 || inv.slots[28].count != 1 || inv.slots[27].damage != 7 || inv.slots[28].damage != 7) allTools = false;
         const ItemTotals before = InventoryItems(inv);
         if (!inv.Click(27, true, true) || inv.cursor.damage != 7 || inv.slots[27].damage != 0 ||
@@ -641,8 +641,8 @@ static void TestMiningAndDurability() {
           !CanHarvest(BLOCK_OBSIDIAN, ITEM_IRON_PICKAXE) && CanHarvest(BLOCK_OBSIDIAN, ITEM_DIAMOND_PICKAXE) &&
           CanHarvest(BLOCK_OBSIDIAN, ITEM_NETHERITE_PICKAXE) && CanHarvest(BLOCK_DIRT, 0),
           "harvest tiers distinguish fast low-tier gold from stone, iron, diamond and netherite picks");
-    const uint8_t ores[] = {BLOCK_COAL_ORE, BLOCK_IRON_ORE, BLOCK_GOLD_ORE, BLOCK_DIAMOND_ORE, BLOCK_REDSTONE_ORE, BLOCK_LAPIS_ORE};
-    const uint8_t drops[] = {ITEM_COAL, ITEM_RAW_IRON, ITEM_RAW_GOLD, ITEM_DIAMOND, ITEM_REDSTONE, ITEM_LAPIS};
+    const uint16_t ores[] = {BLOCK_COAL_ORE, BLOCK_IRON_ORE, BLOCK_GOLD_ORE, BLOCK_DIAMOND_ORE, BLOCK_REDSTONE_ORE, BLOCK_LAPIS_ORE};
+    const uint16_t drops[] = {ITEM_COAL, ITEM_RAW_IRON, ITEM_RAW_GOLD, ITEM_DIAMOND, ITEM_REDSTONE, ITEM_LAPIS};
     const int requiredTiers[] = {0, 1, 2, 2, 2, 1};
     bool oreDrops = true;
     for (int i = 0; i < 6; ++i) {
@@ -650,9 +650,9 @@ static void TestMiningAndDurability() {
         if (drop.id != drops[i] || drop.count != (i >= 4 ? 4 : 1) || drop.damage != 0 ||
             !BlockDrops(ores[i], ITEM_NETHERITE_SWORD).Empty()) oreDrops = false;
         for (int id = ITEM_WOOD_PICKAXE; id <= ITEM_NETHERITE_SWORD; ++id) {
-            const ToolDef* tool = FindTool(uint8_t(id));
+            const ToolDef* tool = FindTool(uint16_t(id));
             const bool harvest = tool && tool->kind == ToolKind::Pickaxe && tool->tier >= requiredTiers[i];
-            if (CanHarvest(ores[i], uint8_t(id)) != harvest || BlockDrops(ores[i], uint8_t(id)).Empty() == harvest) oreDrops = false;
+            if (CanHarvest(ores[i], uint16_t(id)) != harvest || BlockDrops(ores[i], uint16_t(id)).Empty() == harvest) oreDrops = false;
         }
     }
     CHECK(oreDrops, "all six ores enforce harvest tiers across all tools and yield the correct material/count");
@@ -665,21 +665,21 @@ static void TestMiningAndDurability() {
           "stone/grass drops transform, ordinary blocks survive and non-dropping blocks stay empty");
     bool finite = true;
     for (int block = 0; block < BLOCK_COUNT; ++block) {
-        const float seconds = MiningSeconds(uint8_t(block), ITEM_NETHERITE_PICKAXE);
+        const float seconds = MiningSeconds(uint16_t(block), ITEM_NETHERITE_PICKAXE);
         if (block == BLOCK_WATER || block == BLOCK_BEDROCK || block == BLOCK_LAVA || block == BLOCK_PORTAL) {
-            if (!std::isinf(seconds) || CanHarvest(uint8_t(block), ITEM_NETHERITE_PICKAXE)) finite = false;
+            if (!std::isinf(seconds) || CanHarvest(uint16_t(block), ITEM_NETHERITE_PICKAXE)) finite = false;
         } else if (!std::isfinite(seconds) || seconds < 0) finite = false;
     }
     CHECK(finite, "every registered block has a nonnegative finite mining time or is explicitly unbreakable");
     bool durability = true;
     for (int id = ITEM_WOOD_PICKAXE; id <= ITEM_NETHERITE_SWORD; ++id) {
-        const ToolDef* tool = FindTool(uint8_t(id));
+        const ToolDef* tool = FindTool(uint16_t(id));
         if (!tool) { durability = false; continue; }
-        ItemSlot slot = {uint8_t(id), 1};
+        ItemSlot slot = {uint16_t(id), 1};
         if (WearTool(slot, 0) || WearTool(slot, -1) || slot.damage != 0 ||
             WearTool(slot, tool->durability - 1) || slot.id != id || slot.count != 1 || slot.damage != tool->durability - 1 ||
             !WearTool(slot, 1) || slot.id != 0 || slot.count != 0 || slot.damage != 0 || WearTool(slot, 1)) durability = false;
-        slot = {uint8_t(id), 1, uint16_t(tool->durability - 2)};
+        slot = {uint16_t(id), 1, uint16_t(tool->durability - 2)};
         if (!WearTool(slot, 3) || slot.id != 0 || slot.damage != 0 || slot.count != 0) durability = false;
     }
     ItemSlot material = {ITEM_STICK, 12};
@@ -717,7 +717,7 @@ static void TestHurtAndZombies() {
           zombie.Hit(100, 99, 99) == 0 && zombie.body.impulseX == 4 && zombie.body.impulseZ == -4,
           "lethal hits clamp zombie health to zero and dead zombies reject subsequent damage/impulses");
 
-    auto ground = [](int, int y, int) -> uint8_t { return y >= 0 && y < 64 ? BLOCK_STONE : BLOCK_AIR; };
+    auto ground = [](int, int y, int) -> uint16_t { return y >= 0 && y < 64 ? BLOCK_STONE : BLOCK_AIR; };
     PlayerBody player;
     player.x = 10; player.y = 64; player.z = 0;
     Zombie passive;
@@ -772,16 +772,16 @@ static void TestHurtAndZombies() {
           "vertical body ray hits the top slab without dividing by zero on parallel axes");
 }
 
-static uint8_t ChunkBlock(const std::vector<uint8_t>& blocks, int x, int y, int z) {
+static uint16_t ChunkBlock(const std::vector<uint16_t>& blocks, int x, int y, int z) {
     return blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
 }
 
-static bool TreeBlock(uint8_t id) {
+static bool TreeBlock(uint16_t id) {
     return id == BLOCK_LOG || id == BLOCK_SPRUCE_LOG || id == BLOCK_BIRCH_LOG ||
            id == BLOCK_OAK_LEAVES || id == BLOCK_SPRUCE_LEAVES || id == BLOCK_BIRCH_LEAVES;
 }
 
-static bool ClimateColumnsValid(const std::vector<uint8_t>& blocks, const PerlinNoise& noise,
+static bool ClimateColumnsValid(const std::vector<uint16_t>& blocks, const PerlinNoise& noise,
                                 int cx, int cz, int* oreCounts, int& caveAir, bool edgesOnly = false) {
     const int oreMaxY[] = {144, 80, 40, 16, 24, 32};
     bool valid = true;
@@ -796,8 +796,8 @@ static bool ClimateColumnsValid(const std::vector<uint8_t>& blocks, const Perlin
             const bool sandy = column.biome == Biome::Desert || (!river && h <= 65);
             const bool rocky = column.biome == Biome::Mountains && h > 104;
             const bool snowy = !sandy && !river && (column.temperature < 0.24f || h >= 155);
-            const uint8_t surface = river ? uint8_t(BLOCK_GRAVEL) : (sandy ? uint8_t(BLOCK_SAND) :
-                (snowy ? uint8_t(BLOCK_SNOW) : (rocky ? uint8_t(BLOCK_STONE) : uint8_t(BLOCK_GRASS))));
+            const uint16_t surface = river ? uint16_t(BLOCK_GRAVEL) : (sandy ? uint16_t(BLOCK_SAND) :
+                (snowy ? uint16_t(BLOCK_SNOW) : (rocky ? uint16_t(BLOCK_STONE) : uint16_t(BLOCK_GRASS))));
             if (ChunkBlock(blocks, x, 0, z) != BLOCK_BEDROCK || ChunkBlock(blocks, x, h, z) != surface) valid = false;
             // Sample all four WORLD neighbors, including those beyond this chunk's edges.
             int waterFloor = 63;
@@ -806,7 +806,7 @@ static bool ClimateColumnsValid(const std::vector<uint8_t>& blocks, const Perlin
             waterFloor = std::min(waterFloor, SampleTerrain(noise, wx, wz - 1).height);
             waterFloor = std::min(waterFloor, SampleTerrain(noise, wx, wz + 1).height);
             for (int y = 1; y < CHUNK_Y; ++y) {
-                const uint8_t block = ChunkBlock(blocks, x, y, z);
+                const uint16_t block = ChunkBlock(blocks, x, y, z);
                 if (block >= BLOCK_COUNT) { valid = false; continue; }
                 if (y <= h) {
                     if (block == BLOCK_AIR) {
@@ -816,7 +816,7 @@ static bool ClimateColumnsValid(const std::vector<uint8_t>& blocks, const Perlin
                     } else if (!(BLOCK_FLAGS[block] & BF_SOLID)) valid = false;
                     if (y >= h - 5 && !(BLOCK_FLAGS[block] & BF_SOLID)) valid = false;
                 } else if (y <= 63) {
-                    const uint8_t liquid = y == 63 && column.temperature < 0.27f ? uint8_t(BLOCK_ICE) : uint8_t(BLOCK_WATER);
+                    const uint16_t liquid = y == 63 && column.temperature < 0.27f ? uint16_t(BLOCK_ICE) : uint16_t(BLOCK_WATER);
                     if (block != liquid) valid = false;
                 } else if (block != BLOCK_AIR && !TreeBlock(block)) valid = false;
                 if (y >= 224 && block != BLOCK_AIR) valid = false;
@@ -852,7 +852,7 @@ static void TestMobCatalog() {
     chicken.SetType(MobType::Chicken);
     CHECK(chicken.health == 4 && chicken.passive && Near(chicken.body.walkSpeed, 0.9f),
           "SetType applies per-mob health, temperament and speed");
-    auto ground = [](int, int y, int) -> uint8_t { return y >= 0 && y < 64 ? BLOCK_STONE : BLOCK_AIR; };
+    auto ground = [](int, int y, int) -> uint16_t { return y >= 0 && y < 64 ? BLOCK_STONE : BLOCK_AIR; };
     PlayerBody player;
     player.x = 40; player.y = 64; player.z = 0;
     chicken.body.x = 0; chicken.body.y = 64; chicken.body.z = 0; chicken.body.onGround = true;
@@ -882,20 +882,28 @@ static void TestPalettedChunk() {
     mixed.Set(1, BLOCK_AIR);
     CHECK(mixed.Get(0) == BLOCK_STONE && mixed.Get(1) == BLOCK_AIR && mixed.Get(2) == BLOCK_AIR,
           "section materializes from uniform to paletted on first mixed write");
-    for (int i = 0; i < 4096; ++i) mixed.Set(i, uint8_t(BLOCK_STONE + (i % 20 == 0 ? 1 : 0)));
+    for (int i = 0; i < 4096; ++i) mixed.Set(i, uint16_t(BLOCK_STONE + (i % 20 == 0 ? 1 : 0)));
     bool roundTrip = true;
     for (int i = 0; i < 4096; ++i)
-        roundTrip = roundTrip && mixed.Get(i) == uint8_t(BLOCK_STONE + (i % 20 == 0 ? 1 : 0));
+        roundTrip = roundTrip && mixed.Get(i) == uint16_t(BLOCK_STONE + (i % 20 == 0 ? 1 : 0));
     CHECK(roundTrip, "bit-packed palette indices round-trip every block in a mixed section");
     CHECK(mixed.StorageBytes() < 8192, "paletted sections stay below the 8 KB Java budget");
 
+    // Step 1.1: the palette must survive more than 256 distinct ids. The old
+    // 8-bit build silently dropped writes past 256; the 16-bit tier must not.
+    PalettedSection wide;
+    for (int i = 0; i < 4096; ++i) wide.Set(i, uint16_t(i % 300));
+    bool wideRoundTrip = true;
+    for (int i = 0; i < 4096; ++i) wideRoundTrip = wideRoundTrip && wide.Get(i) == uint16_t(i % 300);
+    CHECK(wideRoundTrip, "16-bit palette tier round-trips 300 distinct ids in one section");
+
     Chunk chunk;
-    std::vector<uint8_t> raw(CHUNK_VOL, BLOCK_AIR);
+    std::vector<uint16_t> raw(CHUNK_VOL, BLOCK_AIR);
     for (int y = 0; y < 70; ++y)
         for (int i = 0; i < CHUNK_X * CHUNK_Z; ++i)
             raw[i + CHUNK_X * CHUNK_Z * y] = y == 69 ? BLOCK_GRASS : (y < 64 ? BLOCK_STONE : BLOCK_DIRT);
     chunk.SetRaw(raw.data());
-    std::vector<uint8_t> decoded(CHUNK_VOL);
+    std::vector<uint16_t> decoded(CHUNK_VOL);
     chunk.GetRaw(decoded.data());
     CHECK(decoded == raw, "chunk paletted storage round-trips a terrain column byte-for-byte");
     CHECK(chunk.StorageBytes() < size_t(CHUNK_VOL), "paletted chunk uses less RAM than the flat 64 KB array");
@@ -950,7 +958,7 @@ static void TestClimateGeneration() {
 
     const int dryCX = FloorDiv16(dryX), dryCZ = FloorDiv16(dryZ);
     const int chunks[][2] = {{-1, -1}, {0, -1}, {-1, 0}, {0, 0}, {dryCX, dryCZ}, {dryCX + 1, dryCZ}};
-    std::vector<uint8_t> blocks(CHUNK_VOL), repeated(CHUNK_VOL), changed(CHUNK_VOL);
+    std::vector<uint16_t> blocks(CHUNK_VOL), repeated(CHUNK_VOL), changed(CHUNK_VOL);
     int oreCounts[6] = {}, caveAir = 0;
     bool columns = true, seams = true, chunkDeterminism = true, chunkDiffers = false;
     // Six generated chunks total for coverage; two repeat/different-seed calls below.
@@ -1016,7 +1024,7 @@ static void TestBlockExpansion() {
           "second palette batch enforces diamond tier for crying obsidian/ancient debris and hand-breaking for sea lantern/melon/red sand");
     const uint32_t seed = 1337;
     PerlinNoise noise(seed);
-    std::vector<uint8_t> blocks(CHUNK_VOL);
+    std::vector<uint16_t> blocks(CHUNK_VOL);
     GenerateClimateChunk(blocks.data(), noise, seed, 0, 0);
     bool deepslate = false;
     for (int y = 1; y < 8 && !deepslate; ++y)
@@ -1029,7 +1037,7 @@ static void TestBlockExpansion() {
             GenerateClimateChunk(blocks.data(), noise, seed, cx, cz);
             for (int y = 1; y < 8 && !deepOre; ++y)
                 for (int i = 0; i < CHUNK_X * CHUNK_Z; ++i) {
-                    const uint8_t b = blocks[i + CHUNK_X * CHUNK_Z * y];
+                    const uint16_t b = blocks[i + CHUNK_X * CHUNK_Z * y];
                     if (b >= BLOCK_DEEPSLATE_COAL_ORE && b <= BLOCK_DEEPSLATE_COPPER_ORE) { deepOre = true; break; }
                 }
         }
@@ -1510,11 +1518,11 @@ static void TestSeedsAndStructures() {
           (x2 != ax || z2 != az), "the upper 32 seed bits move structure placement");
 
     PerlinNoise noise(1337);
-    static uint8_t first[CHUNK_VOL], second[CHUNK_VOL];
+    static uint16_t first[CHUNK_VOL], second[CHUNK_VOL];
     const int cx = FloorDiv16(ax), cz = FloorDiv16(az);
     GenerateClimateChunk(first, noise, 1337, cx, cz);
     GenerateClimateChunk(second, noise, 1337, cx, cz);
-    CHECK(std::memcmp(first, second, CHUNK_VOL) == 0, "structure stamping is deterministic per chunk");
+    CHECK(std::memcmp(first, second, sizeof(first)) == 0, "structure stamping is deterministic per chunk");
     bool planks = false, chest = false;
     for (int dz = -1; dz <= 1; ++dz)
         for (int dx = -1; dx <= 1; ++dx) {
@@ -1529,7 +1537,7 @@ static void TestSeedsAndStructures() {
     int fx = 0, fz = 0, fdist = 0;
     CHECK(FindStructure(1337, 0, 0, StructureType::NetherFortress, fx, fz, fdist),
           "the seeded Nether grid finds a fortress");
-    static uint8_t nether[CHUNK_VOL];
+    static uint16_t nether[CHUNK_VOL];
     GenerateNetherChunk(nether, noise, 1337, FloorDiv16(fx), FloorDiv16(fz));
     int bricks = 0;
     for (int i = 0; i < CHUNK_VOL; ++i)
@@ -1554,33 +1562,11 @@ static void TestRegistryParity() {
 
     const bool loaded = LoadRegistry(store);
     const RegistryStats& stats = RegistryInfo();
+    const std::string line = RegistryParityLine();
+    printf("%s\n", line.c_str());
 
-    // Sorted name -> id table; two ids sharing one resource name is a bug.
-    std::map<std::string, int> byName;
-    int duplicates = 0;
-    for (int id = 1; id < BLOCK_COUNT; ++id) {
-        const std::string name = ResourceNameForItem(uint8_t(id));
-        if (byName.count(name)) ++duplicates;
-        else byName[name] = id;
-    }
-    for (int id = BLOCK_COUNT; id < 256; ++id) {
-        if (!IsValidItem(id)) continue;
-        const std::string name = ResourceNameForItem(uint8_t(id));
-        if (name == "minecraft:unknown") continue;
-        if (byName.count(name)) ++duplicates;
-        else byName[name] = id;
-    }
-
-    uint32_t hash = 2166136261u; // FNV-1a over sorted "name\0id" pairs
-    for (const auto& entry : byName) {
-        for (unsigned char c : entry.first) { hash ^= c; hash *= 16777619u; }
-        hash ^= uint8_t(entry.second);
-        hash *= 16777619u;
-    }
-
-    printf("PARITY-REGISTRY: jar=%s blocks=%d items=%d recipes=%d loot=%d names=%zu dup=%d hash=%08x\n",
-           (loaded && stats.jarLoaded) ? "yes" : "no", stats.mappedBlockNames, stats.mappedItemNames,
-           stats.recipes, stats.lootTables, byName.size(), duplicates, hash);
+    const size_t dupPos = line.find("dup=");
+    const int duplicates = dupPos == std::string::npos ? 0 : atoi(line.c_str() + dupPos + 4);
 
     CHECK(loaded && stats.jarLoaded, "jar registry loads on this machine");
     CHECK(stats.mappedBlockNames >= 136, "jar registry keeps at least 136 mapped blocks");
@@ -1634,7 +1620,7 @@ int main() {
     }
 
     // --- Greedy meshing ---
-    const std::vector<uint8_t> solid(CHUNK_VOL, BLOCK_STONE);
+    const std::vector<uint16_t> solid(CHUNK_VOL, BLOCK_STONE);
     MeshData md;
     BuildChunkMeshCPU(solid.data(), nullptr, nullptr, nullptr, nullptr, tiles, md);
     CHECK(md.vertices.size() == 24 && md.indices.size() == 36,
@@ -1647,7 +1633,7 @@ int main() {
     CHECK(hasTop && hasBottom, "face light levels present (top 15, bottom 8)");
     CheckBoxMesh(md, 0, 0, 0, float(CHUNK_X), float(CHUNK_Y), float(CHUNK_Z));
 
-    std::vector<uint8_t> one(CHUNK_VOL, 0);
+    std::vector<uint16_t> one(CHUNK_VOL, 0);
     one[5 + 16 * 5 + 256 * 64] = BLOCK_STONE;
     BuildChunkMeshCPU(one.data(), nullptr, nullptr, nullptr, nullptr, tiles, md);
     CHECK(md.vertices.size() == 24, "isolated voxel -> 6 quads");
@@ -1664,7 +1650,7 @@ int main() {
     CHECK(inPlace, "voxel quads sit on the voxel (no plane-origin drift)");
     CheckBoxMesh(md, 5, 64, 5, 6, 65, 6);
 
-    std::vector<uint8_t> two(CHUNK_VOL, 0);
+    std::vector<uint16_t> two(CHUNK_VOL, 0);
     two[5 + 16 * 5 + 256 * 64] = BLOCK_STONE;
     two[6 + 16 * 5 + 256 * 64] = BLOCK_STONE;
     BuildChunkMeshCPU(two.data(), nullptr, nullptr, nullptr, nullptr, tiles, md);
@@ -1672,7 +1658,7 @@ int main() {
     CheckBoxMesh(md, 5, 64, 5, 7, 65, 6);
 
     {
-        std::vector<uint8_t> prism(CHUNK_VOL, BLOCK_AIR);
+        std::vector<uint16_t> prism(CHUNK_VOL, BLOCK_AIR);
         for (int y = 60; y < 65; ++y)
             for (int z = 4; z < 11; ++z)
                 for (int x = 3; x < 6; ++x)
@@ -1686,7 +1672,7 @@ int main() {
 
     // --- Sky lightmap vertex channel ---
     {
-        std::vector<uint8_t> lit(CHUNK_VOL, BLOCK_AIR);
+        std::vector<uint16_t> lit(CHUNK_VOL, BLOCK_AIR);
         for (int z = 0; z < CHUNK_Z; ++z)
             for (int x = 0; x < CHUNK_X; ++x)
                 lit[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * 64] = BLOCK_STONE;
@@ -1724,7 +1710,7 @@ int main() {
     }
 
     // --- Raycast ---
-    auto get = [&](int, int y, int) -> uint8_t {
+    auto get = [&](int, int y, int) -> uint16_t {
         return (y >= 0 && y < CHUNK_Y) ? BLOCK_STONE : 0;
     };
     int hx, hy, hz, nx, ny, nz;
@@ -1734,7 +1720,7 @@ int main() {
     CHECK(!hit, "raycast up misses");
 
     {
-        auto liquidThenStone = [](int, int y, int) -> uint8_t {
+        auto liquidThenStone = [](int, int y, int) -> uint16_t {
             if (y == 65) return BLOCK_WATER;
             return y == 64 ? BLOCK_STONE : BLOCK_AIR;
         };
@@ -1936,7 +1922,7 @@ int main() {
 
     // --- Greedy mesher emits all six face directions ---
     {
-        std::vector<uint8_t> cube(CHUNK_VOL, 0);
+        std::vector<uint16_t> cube(CHUNK_VOL, 0);
         for (int y = 0; y < 16; ++y)
             for (int z = 0; z < 16; ++z)
                 for (int x = 0; x < 16; ++x)
@@ -1949,7 +1935,7 @@ int main() {
     }
 
     // --- Liquid mesh partition ---
-    std::vector<uint8_t> water(CHUNK_VOL, 0);
+    std::vector<uint16_t> water(CHUNK_VOL, 0);
     water[5 + 16 * 5 + 256 * 64] = BLOCK_WATER;
     MeshData wm;
     BuildChunkMeshCPU(water.data(), nullptr, nullptr, nullptr, nullptr, tiles, wm);
@@ -1964,7 +1950,7 @@ int main() {
         PlayerBody body;
         body.flying = false;
         body.x = 8.5f; body.y = 70.0f; body.z = 8.5f;
-        auto ground = [](int, int y, int) -> uint8_t {
+        auto ground = [](int, int y, int) -> uint16_t {
             return (y >= 0 && y < 64) ? BLOCK_STONE : BLOCK_AIR;
         };
         for (int i = 0; i < 240; ++i) body.Update(in, 1.0f / 60.0f, cam, ground);
@@ -1989,7 +1975,7 @@ int main() {
         CHECK(world.GetBlock(8, 0, 8) == BLOCK_BEDROCK, "bedrock floor at y=0");
         if (sy > 0) CHECK((BLOCK_FLAGS[world.GetBlock(8, sy, 8)] & BF_SOLID) != 0,
                           "surface block is solid");
-        std::vector<uint8_t> cb(CHUNK_VOL);
+        std::vector<uint16_t> cb(CHUNK_VOL);
         for (int y = 0; y < CHUNK_Y; ++y)
             for (int z = 0; z < CHUNK_Z; ++z)
                 for (int x = 0; x < CHUNK_X; ++x)
@@ -2011,8 +1997,8 @@ int main() {
         for (int z = 0; z < CHUNK_Z; ++z) {
             for (int x = 0; x < CHUNK_X; ++x) {
                 for (int y = 0; y < CHUNK_Y - 1; ++y) {
-                    const uint8_t a = cb[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
-                    const uint8_t b = cb[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * (y + 1)];
+                    const uint16_t a = cb[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
+                    const uint16_t b = cb[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * (y + 1)];
                     if ((BLOCK_FLAGS[a] & BF_SOLID) && !(BLOCK_FLAGS[b] & BF_SOLID)) ++exposedTop;
                 }
             }
@@ -2054,6 +2040,22 @@ int main() {
         CHECK(DecodeEdits(bytes.data(), bytes.size(), loaded) && loaded == changes,
               "block edits round-trip with negative chunks, air and boundary indices");
         CHECK(EncodeEdits(loaded) == bytes, "block edit encoding is deterministic");
+        // Version 2 stores a 16-bit block id per edit: 12-byte header, 12-byte
+        // chunk header per chunk, 4 bytes per edit. Three edits in two chunks.
+        CHECK(bytes.size() == 48, "version 2 edit entries store 16-bit block ids");
+        // A version 1 blob (8-bit block id per edit) still loads and upconverts.
+        std::vector<uint8_t> legacy = {'P', 'T', 'E', 'D'};
+        auto put32 = [&legacy](uint32_t v) {
+            for (int i = 0; i < 4; ++i) legacy.push_back(uint8_t(v >> (8 * i)));
+        };
+        put32(1);           // version 1
+        put32(1);           // one chunk
+        put32(uint32_t(-2)); put32(3); put32(1);
+        legacy.push_back(0xFF); legacy.push_back(0xFF); legacy.push_back(uint8_t(BLOCK_DIRT));
+        EditMap upgraded;
+        CHECK(DecodeEdits(legacy.data(), legacy.size(), upgraded) && upgraded.size() == 1 &&
+              upgraded[ChunkKey(-2, 3)].at(65535) == BLOCK_DIRT,
+              "version 1 edit blobs upconvert to the 16-bit format");
         bool truncatedRejected = true;
         for (size_t i = 0; i < bytes.size(); ++i)
             if (DecodeEdits(bytes.data(), i, loaded)) truncatedRejected = false;

@@ -37,8 +37,8 @@ public:
                      float fwdX, float fwdY, float fwdZ, float rightX, float rightZ);
     void SetEnabled(bool on);
     void SetVolume(float v);
-    static SoundCat BlockSound(uint8_t block);
-    static SoundCat StepSound(uint8_t block);
+    static SoundCat BlockSound(uint16_t block);
+    static SoundCat StepSound(uint16_t block);
     uint64_t Played() const { return mPlayed.load(std::memory_order_relaxed); }
     size_t Variants(SoundCat cat) const { return mSounds[cat].size(); }
 

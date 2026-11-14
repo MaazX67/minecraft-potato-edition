@@ -243,15 +243,15 @@ private:
 };
 
 // Default creative hotbar layout; the live hotbar is a mutable copy in main.
-extern const uint8_t HOTBAR_BLOCKS[9];
+extern const uint16_t HOTBAR_BLOCKS[9];
 
 // Java GUI scale 0=Auto, 1..4. The HUD was authored at the 2x sprite size, so
 // Auto maps to 1.0 and explicit values map to 0.5, 1.0, 1.5, 2.0.
 float GuiScaleFactor(int guiScale);
 
-void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar, float scale = 1.0f);
+void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint16_t* hotbar, float scale = 1.0f);
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
-             const uint8_t* hotbar, int health, int hunger, int armorPoints,
+             const uint16_t* hotbar, int health, int hunger, int armorPoints,
              const std::string& actionBar, bool creative, const ItemSlot* stacks,
              float scale = 1.0f);
 
@@ -269,7 +269,7 @@ void DrawChat(GuiRenderer& ui, const std::vector<ChatEntry>& entries, bool open,
 // rows and tab strip are drawn here; input helpers below map mouse positions
 // back onto tab ids, picker item ids and player slot indices.
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
-                   const uint8_t* hotbar, const InventoryState& inv);
+                   const uint16_t* hotbar, const InventoryState& inv);
 int InventoryHitTest(int mouseX, int mouseY);      // picker item id, or -1
 int CreativeSlotHitTest(int mouseX, int mouseY);   // player slot 0..26, or -1
 int CreativeHotbarHitTest(int mouseX, int mouseY); // hotbar slot 0..8, or -1

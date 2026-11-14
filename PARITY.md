@@ -62,11 +62,15 @@ hardcoded subsets**, proven by a probe that counts and hashes the loaded registr
 | Port ledger (`tools/parity/ledger.ps1`) | done | 11,383 classes / 98,739 methods from the 26.3 JAR |
 | `PARITY-REGISTRY` probe | done | `TestRegistryParity` in `selftest.cpp`; CI run 43585847454 green |
 | Specs | done | `docs/specs/ui.md`, `docs/specs/golden.md` (measured from the JAR) |
-| ID widening (`ItemId`/`BlockId` -> 16-bit) | step 1.1 | `enum BlockId : uint8_t`, `enum ItemId : uint8_t` still 8-bit |
+| ID widening (`ItemId`/`BlockId` -> 16-bit) | done (step 1.1) | `enum BlockId/ItemId : uint16_t`, 16-bit palette index tier, edits blob v2; see `docs/registry-widening.md` |
+| `--parity` gate (real numbers without a compiler) | done (step 1.1) | `PotatoEdition.exe --parity` writes `parity.txt` on the user's machine |
 
-Known gate gap, to close in step 1.1: CI runners have no client JAR, so `PARITY-REGISTRY` always prints `SKIP`
-there and only proves the code compiles. Add a `--parity` switch to `PotatoEdition.exe` that runs the same probe
-and writes `parity.txt`, so the user's own build produces the real numbers without needing a compiler.
+`--parity` runs the same probe as `PotatoSelfTest.exe` but inside the shipped executable: it loads the user's own
+26.3 JAR from `%APPDATA%\Migurinth\meta`, prints `PARITY-REGISTRY: ...` and exits before creating a window. CI has no
+JAR, so it prints `jar=no` there; the real gate is the user's `parity.txt`.
+
+Step 1.1 also made the hash 16-bit aware (`name\0id-lo\0id-hi`), so the number printed on the user's machine differs
+from the Step 0 8-bit hash by design. Re-baseline it from the first `--parity` run, then never let it regress.
 
 ## How the gate works
 

@@ -2,7 +2,10 @@
 #include "json.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <map>
+#include <string>
 #include <unordered_map>
 
 namespace potato {
@@ -10,8 +13,8 @@ namespace {
 
 RegistryStats gStats;
 std::vector<CraftingRecipe> gRecipes;
-std::unordered_map<std::string, uint8_t> gNameToId;
-std::unordered_map<uint8_t, LootEntry> gLoot;
+std::unordered_map<std::string, uint16_t> gNameToId;
+std::unordered_map<uint16_t, LootEntry> gLoot;
 
 bool EndsWith(const std::string& s, const char* suffix) {
     const size_t n = strlen(suffix);
@@ -24,23 +27,25 @@ std::string NormalizeName(const std::string& name) {
     return name.substr(colon + 1);
 }
 
-std::string ItemNameSafe(uint8_t id) {
+std::string ItemNameSafe(uint16_t id) {
     const char* n = ItemName(id);
     return n ? n : "";
 }
 
 void BuildNameMap() {
     if (!gNameToId.empty()) return;
-    for (int i = 1; i < BLOCK_COUNT; ++i) gNameToId.emplace(BLOCK_DEFS[i].name, uint8_t(i));
+    for (int i = 1; i < BLOCK_COUNT; ++i) gNameToId.emplace(BLOCK_DEFS[i].name, uint16_t(i));
     // Java 1.13+ renamed the block; our palette kept the short name.
     gNameToId["grass_block"] = BLOCK_GRASS;
-    for (int i = BLOCK_COUNT; i < 256; ++i) {
+    // Scan the whole 16-bit item range so a registry that outgrows 255 keeps
+    // every name mapped. IsValidItem is the authority on what exists.
+    for (int i = BLOCK_COUNT; i <= 0xFFFF; ++i) {
         if (!IsValidItem(i)) continue;
-        gNameToId.emplace(ItemNameSafe(uint8_t(i)), uint8_t(i));
+        gNameToId.emplace(ItemNameSafe(uint16_t(i)), uint16_t(i));
     }
 }
 
-bool IsTagId(uint16_t cell) { return cell >= 0x100; }
+bool IsTagId(uint16_t cell) { return cell >= 0x8000; }
 
 // Vanilla ingredient tags that this palette can satisfy. Tags outside this
 // list (saplings, dyes, banners, ...) are skipped and their recipe ignored.
@@ -74,7 +79,7 @@ bool ParseIngredientName(const std::string& raw, uint16_t& cell) {
         cell = tag;
         return true;
     }
-    const uint8_t id = ItemIdFromResourceName(raw);
+    const uint16_t id = ItemIdFromResourceName(raw);
     if (id == BLOCK_AIR) return false;
     cell = id;
     return true;
@@ -106,7 +111,7 @@ bool ParseResult(const nlohmann::json& doc, CraftingRecipe& recipe) {
     if (result.contains("id") && result["id"].is_string()) name = result["id"].get<std::string>();
     else if (result.contains("item") && result["item"].is_string()) name = result["item"].get<std::string>();
     else return false;
-    const uint8_t id = ItemIdFromResourceName(name);
+    const uint16_t id = ItemIdFromResourceName(name);
     if (id == BLOCK_AIR) return false;
     int count = 1;
     if (result.contains("count") && result["count"].is_number_integer())
@@ -155,7 +160,7 @@ bool ParseLootEntry(const nlohmann::json& entry, LootEntry& out) {
     if (!entry.is_object()) return false;
     const std::string type = entry.value("type", "");
     if (type != "minecraft:item") return false;
-    const uint8_t id = ItemIdFromResourceName(entry.value("name", ""));
+    const uint16_t id = ItemIdFromResourceName(entry.value("name", ""));
     if (id == BLOCK_AIR) return false;
     int count = 1;
     if (entry.contains("functions") && entry["functions"].is_array()) {
@@ -175,21 +180,21 @@ bool ParseLootEntry(const nlohmann::json& entry, LootEntry& out) {
 
 } // namespace
 
-uint8_t ItemIdFromResourceName(const std::string& name) {
+uint16_t ItemIdFromResourceName(const std::string& name) {
     if (name.empty()) return BLOCK_AIR;
     BuildNameMap();
     const auto it = gNameToId.find(NormalizeName(name));
-    return it == gNameToId.end() ? uint8_t(BLOCK_AIR) : it->second;
+    return it == gNameToId.end() ? uint16_t(BLOCK_AIR) : it->second;
 }
 
-std::string ResourceNameForItem(uint8_t id) {
+std::string ResourceNameForItem(uint16_t id) {
     if (id == BLOCK_GRASS) return "minecraft:grass_block";
     return "minecraft:" + ItemNameSafe(id);
 }
 
-bool RecipeCellMatches(uint16_t cell, uint8_t id) {
+bool RecipeCellMatches(uint16_t cell, uint16_t id) {
     if (id == BLOCK_AIR) return false;
-    if (!IsTagId(cell)) return uint8_t(cell) == id;
+    if (!IsTagId(cell)) return cell == id;
     const std::string name = ItemNameSafe(id);
     switch (cell) {
         case TAG_PLANKS: return EndsWith(name, "planks");
@@ -332,7 +337,7 @@ bool LoadRegistry(AssetStore& store) {
         if (!EndsWith(path, ".json")) continue;
         const size_t slash = path.find_last_of('/');
         const std::string base = path.substr(slash == std::string::npos ? 0 : slash + 1);
-        const uint8_t block = ItemIdFromResourceName(base.substr(0, base.size() - 5));
+        const uint16_t block = ItemIdFromResourceName(base.substr(0, base.size() - 5));
         if (block == BLOCK_AIR || block >= BLOCK_COUNT) continue;
         if (!store.ReadJarEntry(path, bytes) || bytes.empty()) continue;
         LootEntry entry;
@@ -349,14 +354,14 @@ const RegistryStats& RegistryInfo() { return gStats; }
 
 const std::vector<CraftingRecipe>& RegistryRecipes() { return gRecipes; }
 
-bool LootDropForBlock(uint8_t block, LootEntry& out) {
+bool LootDropForBlock(uint16_t block, LootEntry& out) {
     const auto it = gLoot.find(block);
     if (it == gLoot.end()) return false;
     out = it->second;
     return true;
 }
 
-int ItemCreativeTab(uint8_t id) {
+int ItemCreativeTab(uint16_t id) {
     if (id == BLOCK_AIR || !IsValidItem(id)) return -1;
     if (const ToolDef* tool = FindTool(id))
         return tool->kind == ToolKind::Axe || tool->kind == ToolKind::Sword ? CTAB_COMBAT : CTAB_TOOLS;
@@ -404,7 +409,7 @@ const char* CreativeTabName(int tab) {
     }
 }
 
-uint8_t CreativeTabIcon(int tab) {
+uint16_t CreativeTabIcon(int tab) {
     switch (tab) {
         case CTAB_BUILDING: return BLOCK_BRICK;
         case CTAB_COLORED: return BLOCK_RED_WOOL;
@@ -420,7 +425,7 @@ uint8_t CreativeTabIcon(int tab) {
     }
 }
 
-bool ItemMatchesSearch(uint8_t id, const std::string& query) {
+bool ItemMatchesSearch(uint16_t id, const std::string& query) {
     if (query.empty()) return true;
     std::string needle = query;
     for (char& c : needle) {
@@ -430,6 +435,44 @@ bool ItemMatchesSearch(uint8_t id, const std::string& query) {
     std::string haystack = ItemNameSafe(id);
     for (char& c : haystack) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
     return haystack.find(needle) != std::string::npos;
+}
+
+std::string RegistryParityLine() {
+    const RegistryStats& stats = RegistryInfo();
+
+    // Sorted name -> id table over the whole 16-bit id range. Two ids sharing
+    // one resource name is a mapping bug, so it is counted, not hidden.
+    std::map<std::string, uint16_t> byName;
+    int duplicates = 0;
+    auto add = [&byName, &duplicates](const std::string& name, uint16_t id) {
+        if (name == "minecraft:unknown") return;
+        if (byName.count(name)) ++duplicates;
+        else byName[name] = id;
+    };
+    for (int id = 1; id < BLOCK_COUNT; ++id) add(ResourceNameForItem(uint16_t(id)), uint16_t(id));
+    for (int id = BLOCK_COUNT; id <= 0xFFFF; ++id) {
+        if (IsValidItem(id)) add(ResourceNameForItem(uint16_t(id)), uint16_t(id));
+    }
+
+    // FNV-1a over sorted "name\0id-lo\0id-hi" so a widened id cannot alias a
+    // narrow one: the old 8-bit hash and the new 16-bit hash always differ.
+    uint32_t hash = 2166136261u;
+    for (const auto& entry : byName) {
+        for (unsigned char c : entry.first) { hash ^= c; hash *= 16777619u; }
+        hash ^= 0;
+        hash *= 16777619u;
+        hash ^= uint32_t(entry.second & 0xFFu);
+        hash *= 16777619u;
+        hash ^= uint32_t(entry.second >> 8);
+        hash *= 16777619u;
+    }
+
+    char line[256];
+    std::snprintf(line, sizeof(line),
+                  "PARITY-REGISTRY: jar=%s blocks=%d items=%d recipes=%d loot=%d names=%zu dup=%d hash=%08x",
+                  stats.jarLoaded ? "yes" : "no", stats.mappedBlockNames, stats.mappedItemNames,
+                  stats.recipes, stats.lootTables, byName.size(), duplicates, hash);
+    return line;
 }
 
 } // namespace potato

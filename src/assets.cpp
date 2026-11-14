@@ -609,7 +609,7 @@ static const ToolDef TOOLS[] = {
     {"netherite_sword", ToolKind::Sword, 4, 2031, 1, 8, 1.6f}
 };
 
-const ToolDef* FindTool(uint8_t id) {
+const ToolDef* FindTool(uint16_t id) {
     return id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD ? &TOOLS[id - ITEM_WOOD_PICKAXE] : nullptr;
 }
 
@@ -629,7 +629,7 @@ static const ArmorDef ARMOR[] = {
     {"netherite_leggings", 2, 6, 3, 555}, {"netherite_boots", 3, 3, 3, 481}
 };
 
-const ArmorDef* FindArmor(uint8_t id) {
+const ArmorDef* FindArmor(uint16_t id) {
     if (id == ITEM_ELYTRA) {
         static const ArmorDef elytra{"elytra", 1, 0, 0, 432};
         return &elytra;
@@ -645,7 +645,7 @@ bool IsValidItem(int id) {
         (id >= ITEM_ELYTRA && id <= ITEM_COPPER_INGOT);
 }
 
-const char* ItemName(uint8_t id) {
+const char* ItemName(uint16_t id) {
     if (id < BLOCK_COUNT) return BLOCK_DEFS[id].name;
     if (id == ITEM_STICK) return "stick";
     if (const ToolDef* tool = FindTool(id)) return tool->name;
@@ -663,18 +663,18 @@ const char* ItemName(uint8_t id) {
     return "unknown";
 }
 
-std::string ItemTexture(uint8_t id) {
+std::string ItemTexture(uint16_t id) {
     return std::string("minecraft/textures/") + (id < BLOCK_COUNT ? "block/" : "item/") +
         (id < BLOCK_COUNT ? BLOCK_DEFS[id].side : ItemName(id)) + ".png";
 }
 
-bool LoadItemRGBA(AssetStore& store, uint8_t id, uint8_t* out16) {
+bool LoadItemRGBA(AssetStore& store, uint16_t id, uint8_t* out16) {
     std::vector<uint8_t> bytes;
     if (!store.ReadFile(ItemTexture(id), bytes)) return false;
     return DecodePNG16(bytes, out16);
 }
 
-int ItemStackLimit(uint8_t id) {
+int ItemStackLimit(uint16_t id) {
     if (id == ITEM_FLINT_AND_STEEL) return 1;
     return FindTool(id) || FindArmor(id) ? 1 : 64;
 }

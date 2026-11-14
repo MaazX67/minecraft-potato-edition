@@ -50,17 +50,17 @@ struct BlockTiles {
 
 // Java-style PalettedContainer for one 16x16x16 chunk section. Uniform
 // sections keep a single id (no allocation); mixed sections store a palette
-// with 2/4/8-bit packed indices, so a section never exceeds 4 KB + palette.
+// with 2/4/8/16-bit packed indices, so a section never exceeds 4 KB + palette.
 class PalettedSection {
 public:
-    uint8_t Get(int index) const {
+    uint16_t Get(int index) const {
         if (mBits == 0) return mUniform;
         const int per = 32 / mBits;
         const uint32_t word = mWords[size_t(index) / per];
         const uint32_t shift = uint32_t(index % per) * mBits;
         return mPalette[(word >> shift) & ((1u << mBits) - 1u)];
     }
-    void Set(int index, uint8_t value) {
+    void Set(int index, uint16_t value) {
         if (mBits == 0) {
             if (value == mUniform) return;
             mPalette.push_back(mUniform);
@@ -73,8 +73,11 @@ public:
         int slot = Find(value);
         if (slot < 0) {
             if (mPalette.size() >= (size_t(1) << mBits)) {
-                if (mBits >= 8) return;
-                Repack(mBits == 2 ? 4 : 8);
+                // A 4,096-cell section can hold 4,096 distinct states. The 8-bit
+                // build dropped writes past 256; widen to the 16-bit index tier
+                // instead so every id round-trips.
+                if (mBits >= 16) return;
+                Repack(uint8_t(mBits == 2 ? 4 : (mBits == 4 ? 8 : 16)));
             }
             slot = int(mPalette.size());
             mPalette.push_back(value);
@@ -86,7 +89,7 @@ public:
         return mBits == 0 ? sizeof(*this) : sizeof(*this) + mWords.size() * 4 + mPalette.size();
     }
 private:
-    int Find(uint8_t value) const {
+    int Find(uint16_t value) const {
         for (size_t i = 0; i < mPalette.size(); ++i)
             if (mPalette[i] == value) return int(i);
         return -1;
@@ -98,7 +101,7 @@ private:
         const uint32_t mask = (1u << mBits) - 1u;
         word = (word & ~(mask << shift)) | ((slot & mask) << shift);
     }
-    void Write(int index, uint32_t slot, uint8_t value) {
+    void Write(int index, uint32_t slot, uint16_t value) {
         Write(index, slot);
         (void)value;
     }
@@ -116,9 +119,9 @@ private:
         mWords = std::move(packed);
         mBits = newBits;
     }
-    uint8_t mBits = 0;            // 0 = uniform, else 2/4/8 bits per index
-    uint8_t mUniform = 0;         // 0 == BLOCK_AIR (world.h has no assets.h include)
-    std::vector<uint8_t> mPalette;
+    uint8_t mBits = 0;            // 0 = uniform, else 2/4/8/16 bits per index
+    uint16_t mUniform = 0;         // 0 == BLOCK_AIR (world.h has no assets.h include)
+    std::vector<uint16_t> mPalette;
     std::vector<uint32_t> mWords;
 };
 
@@ -130,11 +133,11 @@ struct Chunk {
     bool dirty = true;
     bool meshQueued = false;
 
-    uint8_t GetIndex(int index) const { return sections[index >> 12].Get(index & 4095); }
-    void SetIndex(int index, uint8_t value) { sections[index >> 12].Set(index & 4095, value); }
-    void SetRaw(const uint8_t* raw) {
+    uint16_t GetIndex(int index) const { return sections[index >> 12].Get(index & 4095); }
+    void SetIndex(int index, uint16_t value) { sections[index >> 12].Set(index & 4095, value); }
+    void SetRaw(const uint16_t* raw) {
         for (int s = 0; s < SECTION_COUNT; ++s) {
-            const uint8_t* p = raw + s * 4096;
+            const uint16_t* p = raw + s * 4096;
             bool uniform = true;
             for (int i = 1; i < 4096 && uniform; ++i) uniform = p[i] == p[0];
             if (uniform) {
@@ -144,7 +147,7 @@ struct Chunk {
             }
         }
     }
-    void GetRaw(uint8_t* out) const {
+    void GetRaw(uint16_t* out) const {
         for (int s = 0; s < SECTION_COUNT; ++s)
             for (int i = 0; i < 4096; ++i) out[s * 4096 + i] = sections[s].Get(i);
     }
@@ -198,9 +201,9 @@ struct TerrainColumn {
 
 TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z,
                             bool largeBiomes = false, bool amplified = false);
-void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz,
+void GenerateClimateChunk(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz,
                           bool largeBiomes = false, bool amplified = false, bool structures = true);
-void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz);
+void GenerateNetherChunk(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz);
 
 // Seeded structure placement. Java 26.3 places one candidate per region cell;
 // we use a 512-block grid (256 in the Nether) keyed with SplitMix64 so a world
@@ -219,14 +222,14 @@ bool FindStructure(uint64_t seed, int fromX, int fromZ, StructureType type,
                    int& outX, int& outZ, int& distance);
 // Stamps the parts of every intersecting structure that land inside this
 // chunk. nether selects the Nether grid (fortresses only).
-void ApplyStructures(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed,
+void ApplyStructures(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed,
                      int cx, int cz, bool nether);
 
 // Full 3-axis greedy mesher. Free function so the headless selftest can run it
 // without a World. Neighbor pointers may be null (treated as air). y<0 and
 // y>=256 are air. Merge key = (tile, light, face sign).
-void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t* posX,
-                       const uint8_t* negZ, const uint8_t* posZ, const BlockTiles& tiles,
+void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint16_t* posX,
+                       const uint16_t* negZ, const uint16_t* posZ, const BlockTiles& tiles,
                        MeshData& out);
 
 // Extrudes a 16x16 RGBA item sprite into a 1-pixel-thick voxel mesh (front/back
@@ -235,7 +238,7 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
 void BuildExtrudedItemMesh(const uint8_t* rgba, std::vector<MeshVertex>& out);
 
 // Amanatides & Woo voxel traversal. Returns the hit voxel and the face normal.
-bool RaycastDDA(const std::function<uint8_t(int, int, int)>& getBlock,
+bool RaycastDDA(const std::function<uint16_t(int, int, int)>& getBlock,
                 float ox, float oy, float oz, float dx, float dy, float dz, float maxDist,
                 int& hx, int& hy, int& hz, int& nx, int& ny, int& nz);
 
@@ -247,7 +250,7 @@ inline int KeyCZ(uint64_t k) { return int(int32_t(k & 0xFFFFFFFFu)); }
 inline int FloorDiv16(int v) { return v >= 0 ? v / 16 : (v - 15) / 16; }
 
 // Save only player edits; regenerate untouched terrain from the seed.
-using ChunkEdits = std::unordered_map<uint16_t, uint8_t>;
+using ChunkEdits = std::unordered_map<uint16_t, uint16_t>;
 using EditMap = std::unordered_map<uint64_t, ChunkEdits>;
 std::vector<uint8_t> EncodeEdits(const EditMap& edits);
 bool DecodeEdits(const uint8_t* data, size_t size, EditMap& out);
@@ -272,8 +275,8 @@ public:
     void SetGenerateStructures(bool on) { mStructures = on; }
     bool GenerateStructures() const { return mStructures; }
     void Update(float camX, float camZ); // load/unload chunks around the camera
-    uint8_t GetBlock(int x, int y, int z) const;
-    void SetBlock(int x, int y, int z, uint8_t block); // marks dirty, remeshes
+    uint16_t GetBlock(int x, int y, int z) const;
+    void SetBlock(int x, int y, int z, uint16_t block); // marks dirty, remeshes
     // Highest solid block in the column, or -1 if the chunk isn't generated.
     int SurfaceY(int x, int z) const;
     // Coarse terrain sample for the beyond-render-distance LOD ring. Only

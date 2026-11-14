@@ -165,7 +165,7 @@ int FloorCell8(int value) {
 }
 
 struct ClimateVein {
-    uint8_t block = BLOCK_STONE;
+    uint16_t block = BLOCK_STONE;
     int maxY = 0;
     float lateral = 0, centerY = 0, invRadiusY = 1;
 };
@@ -193,12 +193,12 @@ ClimateVein SampleClimateVein(int x, int cellY, int z, uint64_t seed) {
     return vein;
 }
 
-bool IsTreeLeaf(uint8_t block) {
+bool IsTreeLeaf(uint16_t block) {
     return block == BLOCK_OAK_LEAVES || block == BLOCK_BIRCH_LEAVES || block == BLOCK_SPRUCE_LEAVES ||
            block == BLOCK_CHERRY_LEAVES;
 }
 
-uint8_t DeepslateOre(uint8_t ore) {
+uint16_t DeepslateOre(uint16_t ore) {
     switch (ore) {
         case BLOCK_COAL_ORE: return BLOCK_DEEPSLATE_COAL_ORE;
         case BLOCK_IRON_ORE: return BLOCK_DEEPSLATE_IRON_ORE;
@@ -308,14 +308,14 @@ StructureCandidate SampleStructureCell(uint64_t seed, int cellX, int cellZ, bool
 }
 
 struct StructureStamper {
-    uint8_t* blocks;
+    uint16_t* blocks;
     int originX, originZ;
-    void Put(int wx, int y, int wz, uint8_t block) const {
+    void Put(int wx, int y, int wz, uint16_t block) const {
         const int x = wx - originX, z = wz - originZ;
         if (x < 0 || x >= CHUNK_X || z < 0 || z >= CHUNK_Z || y < 1 || y >= CHUNK_Y) return;
         blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = block;
     }
-    void Box(int x0, int y0, int z0, int x1, int y1, int z1, uint8_t block) const {
+    void Box(int x0, int y0, int z0, int x1, int y1, int z1, uint16_t block) const {
         for (int y = y0; y <= y1; ++y)
             for (int z = z0; z <= z1; ++z)
                 for (int x = x0; x <= x1; ++x) Put(x, y, z, block);
@@ -326,7 +326,7 @@ void VillageHut(const StructureStamper& s, int x, int gy, int z) {
     s.Box(x - 2, gy, z - 2, x + 2, gy, z + 2, BLOCK_COBBLE);
     for (int dy = 1; dy <= 3; ++dy)
         for (int d = -2; d <= 2; ++d) {
-            const uint8_t wall = (d == -2 || d == 2) ? BLOCK_LOG : BLOCK_PLANKS;
+            const uint16_t wall = (d == -2 || d == 2) ? BLOCK_LOG : BLOCK_PLANKS;
             s.Put(x + d, gy + dy, z - 2, wall);
             s.Put(x + d, gy + dy, z + 2, wall);
             s.Put(x - 2, gy + dy, z + d, wall);
@@ -463,7 +463,7 @@ void BuildBastion(const StructureStamper& s, int x, int y, int z) {
     s.Box(x - 5, y, z - 5, x + 5, y, z + 5, BLOCK_BLACKSTONE);
     for (int dy = 1; dy <= 6; ++dy)
         for (int d = -5; d <= 5; ++d) {
-            const uint8_t wall = (d == -5 || d == 5) ? BLOCK_POLISHED_BLACKSTONE : BLOCK_BLACKSTONE;
+            const uint16_t wall = (d == -5 || d == 5) ? BLOCK_POLISHED_BLACKSTONE : BLOCK_BLACKSTONE;
             s.Put(x + d, y + dy, z - 5, wall);
             s.Put(x + d, y + dy, z + 5, wall);
             s.Put(x - 5, y + dy, z + d, wall);
@@ -568,7 +568,7 @@ bool FindStructure(uint64_t seed, int fromX, int fromZ, StructureType type,
     return true;
 }
 
-void ApplyStructures(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed,
+void ApplyStructures(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed,
                      int cx, int cz, bool nether) {
     const int cell = nether ? kNetherStructureCell : kOverworldStructureCell;
     const int originX = cx * CHUNK_X;
@@ -603,7 +603,7 @@ void ApplyStructures(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed,
     }
 }
 
-void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz) {
+void GenerateNetherChunk(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz) {
     const uint32_t seed32 = SeedHash32(seed);
     const int ox = cx * CHUNK_X, oz = cz * CHUNK_Z;
     for (int x = 0; x < CHUNK_X; ++x) {
@@ -612,7 +612,7 @@ void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t see
             const float ground = 64.0f + noise.Fbm2(wx * 0.01f, wz * 0.01f, 3) * 22.0f;
             for (int y = 0; y < CHUNK_Y; ++y) {
                 const uint32_t r = Hash3(uint32_t(wx), uint32_t(y), uint32_t(wz), seed32) % 1000;
-                uint8_t b = BLOCK_AIR;
+                uint16_t b = BLOCK_AIR;
                 if (y == 0 || (y < 4 && r < 600) || y >= 252 || (y > 248 && r < 600)) {
                     b = BLOCK_BEDROCK;
                 } else {
@@ -641,9 +641,9 @@ void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t see
     ApplyStructures(blocks, noise, seed, cx, cz, true);
 }
 
-void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz,
+void GenerateClimateChunk(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz,
                           bool largeBiomes, bool amplified, bool structures) {
-    memset(blocks, BLOCK_AIR, CHUNK_VOL * sizeof(uint8_t));
+    std::fill(blocks, blocks + CHUNK_VOL, uint16_t(BLOCK_AIR));
     const int originX = cx * CHUNK_X, originZ = cz * CHUNK_Z;
     TerrainColumn columns[CHUNK_X + 2][CHUNK_Z + 2];
     for (int x = -1; x <= CHUNK_X; ++x) {
@@ -668,7 +668,7 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t se
             int veinCell = -1;
             ClimateVein vein;
             for (int y = 0; y <= h; ++y) {
-                uint8_t block = y < 8 ? BLOCK_DEEPSLATE : BLOCK_STONE;
+                uint16_t block = y < 8 ? BLOCK_DEEPSLATE : BLOCK_STONE;
                 if (y == 0) block = BLOCK_BEDROCK;
                 else if (river && y >= h - 2) block = BLOCK_GRAVEL;
                 else if (sandy && y >= h - 3) block = BLOCK_SAND;
@@ -700,10 +700,10 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t se
         }
     }
 
-    auto place = [&](int wx, int y, int wz, uint8_t block, bool trunk) {
+    auto place = [&](int wx, int y, int wz, uint16_t block, bool trunk) {
         const int x = wx - originX, z = wz - originZ;
         if (x < 0 || x >= CHUNK_X || z < 0 || z >= CHUNK_Z || y < 0 || y >= CHUNK_Y) return;
-        uint8_t& target = blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
+        uint16_t& target = blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
         if (target == BLOCK_AIR || (trunk && IsTreeLeaf(target))) target = block;
     };
     // A four-block halo and shared candidate order keep tree overlap deterministic at chunk seams.
@@ -714,7 +714,7 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t se
             const TerrainColumn column = SampleTerrain(noise, wx, wz, largeBiomes, amplified);
             if (column.height <= CLIMATE_SEA + 2 || column.height > 145) continue;
             uint32_t density = 0;
-            uint8_t log = BLOCK_LOG, leaves = BLOCK_OAK_LEAVES;
+            uint16_t log = BLOCK_LOG, leaves = BLOCK_OAK_LEAVES;
             switch (column.biome) {
                 case Biome::Plains: density = 2; break;
                 case Biome::Forest:
@@ -777,7 +777,7 @@ struct MaskCell {
     }
 };
 
-int FaceTile(const BlockTiles& t, uint8_t b, int d, int sign) {
+int FaceTile(const BlockTiles& t, uint16_t b, int d, int sign) {
     if (d == 1) return sign > 0 ? t.top[b] : t.bottom[b];
     return t.side[b];
 }
@@ -789,8 +789,8 @@ int FaceLight(int d, int sign) {
 
 } // namespace
 
-void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t* posX,
-                       const uint8_t* negZ, const uint8_t* posZ, const BlockTiles& tiles,
+void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint16_t* posX,
+                       const uint16_t* negZ, const uint16_t* posZ, const BlockTiles& tiles,
                        MeshData& out) {
     out.vertices.clear();
     out.indices.clear();
@@ -798,7 +798,7 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
     MeshData liquid;
     const int dims[3] = {CHUNK_X, CHUNK_Y, CHUNK_Z};
 
-    auto sample = [&](int x, int y, int z) -> uint8_t {
+    auto sample = [&](int x, int y, int z) -> uint16_t {
         if (y < 0 || y >= CHUNK_Y) return 0;
         if (x < 0)        return negX ? negX[(CHUNK_X - 1) + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] : 0;
         if (x >= CHUNK_X) return posX ? posX[0 + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] : 0;
@@ -842,11 +842,11 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
             size_t n = 0;
             for (x[v] = 0; x[v] < dimV; ++x[v]) {
                 for (x[u] = 0; x[u] < dimU; ++x[u]) {
-                    const uint8_t a = sample(x[0], x[1], x[2]);
-                    const uint8_t b = sample(x[0] + q[0], x[1] + q[1], x[2] + q[2]);
+                    const uint16_t a = sample(x[0], x[1], x[2]);
+                    const uint16_t b = sample(x[0] + q[0], x[1] + q[1], x[2] + q[2]);
                     const bool aOpaque = (BLOCK_FLAGS[a] & BF_OPAQUE) != 0;
                     const bool bOpaque = (BLOCK_FLAGS[b] & BF_OPAQUE) != 0;
-                    uint8_t blk = 0;
+                    uint16_t blk = 0;
                     int sign = 0;
                     if (aOpaque != bOpaque) {
                         blk = aOpaque ? a : b;
@@ -1004,7 +1004,7 @@ void BuildExtrudedItemMesh(const uint8_t* rgba, std::vector<MeshVertex>& out) {
 // Voxel raycast (Amanatides & Woo)
 // ---------------------------------------------------------------------------
 
-bool RaycastDDA(const std::function<uint8_t(int, int, int)>& getBlock,
+bool RaycastDDA(const std::function<uint16_t(int, int, int)>& getBlock,
                 float ox, float oy, float oz, float dx, float dy, float dz, float maxDist,
                 int& hx, int& hy, int& hz, int& nx, int& ny, int& nz) {
     const float len = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -1025,7 +1025,7 @@ bool RaycastDDA(const std::function<uint8_t(int, int, int)>& getBlock,
     nx = ny = nz = 0;
 
     for (int i = 0; i < 512; ++i) {
-        const uint8_t b = getBlock(x, y, z);
+        const uint16_t b = getBlock(x, y, z);
         if (b != 0 && !(BLOCK_FLAGS[b] & BF_LIQUID)) {
             hx = x; hy = y; hz = z;
             return true;
@@ -1132,7 +1132,7 @@ void World::Update(float camX, float camZ) {
 }
 
 void World::GenerateChunk(Chunk& c, int cx, int cz) const {
-    std::vector<uint8_t> raw(CHUNK_VOL, BLOCK_AIR);
+    std::vector<uint16_t> raw(CHUNK_VOL, BLOCK_AIR);
     if (mGenerator == WorldGenerator::Climate || mGenerator == WorldGenerator::LargeBiomes ||
         mGenerator == WorldGenerator::Amplified) {
         GenerateClimateChunk(raw.data(), mNoise, mSeed, cx, cz,
@@ -1167,7 +1167,7 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
             heights[x][z] = h;
             const bool sandy = h <= SEA + 1;
             for (int y = 0; y <= h; ++y) {
-                uint8_t b;
+                uint16_t b;
                 if (y == 0) {
                     b = BLOCK_BEDROCK;
                 } else if (y == h) {
@@ -1211,7 +1211,7 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
             const uint32_t r = Hash3(uint32_t(cx * CHUNK_X + x), 0, uint32_t(cz * CHUNK_Z + z), SeedHash32(mSeed) ^ 0x51EDu);
             if (r % 96 != 0) continue;
             const int base = h + 1, th = 4 + int(r % 3);
-            auto setIfAir = [&](int lx, int y, int lz, uint8_t blk) {
+            auto setIfAir = [&](int lx, int y, int lz, uint16_t blk) {
                 const size_t idx = size_t(lx) + CHUNK_X * size_t(lz) + CHUNK_X * CHUNK_Z * size_t(y);
                 if (raw[idx] == BLOCK_AIR) raw[idx] = blk;
             };
@@ -1248,7 +1248,7 @@ int World::SurfaceY(int x, int z) const {
     const int lx = x - cx * CHUNK_X, lz = z - cz * CHUNK_Z;
     std::shared_lock<std::shared_mutex> blk(mBlocksMutex);
     for (int y = CHUNK_Y - 1; y >= 0; --y) {
-        const uint8_t b = c->GetIndex(lx + CHUNK_X * lz + CHUNK_X * CHUNK_Z * y);
+        const uint16_t b = c->GetIndex(lx + CHUNK_X * lz + CHUNK_X * CHUNK_Z * y);
         if (BLOCK_FLAGS[b] & BF_SOLID) return y;
     }
     return -1;
@@ -1341,8 +1341,8 @@ void World::WorkerLoop() {
                 std::shared_lock<std::shared_mutex> blk(mBlocksMutex);
                 // Mesh building consumes raw arrays; decode the paletted sections
                 // into scratch buffers for the chunk and its four neighbors.
-                std::vector<uint8_t> selfRaw(CHUNK_VOL), negXraw, posXraw, negZraw, posZraw;
-                auto decode = [](const std::shared_ptr<Chunk>& c, std::vector<uint8_t>& out) -> const uint8_t* {
+                std::vector<uint16_t> selfRaw(CHUNK_VOL), negXraw, posXraw, negZraw, posZraw;
+                auto decode = [](const std::shared_ptr<Chunk>& c, std::vector<uint16_t>& out) -> const uint16_t* {
                     if (!c) return nullptr;
                     out.resize(CHUNK_VOL);
                     c->GetRaw(out.data());
@@ -1380,7 +1380,7 @@ void World::WorkerLoop() {
     }
 }
 
-uint8_t World::GetBlock(int x, int y, int z) const {
+uint16_t World::GetBlock(int x, int y, int z) const {
     if (y < 0 || y >= CHUNK_Y) return 0;
     const int cx = FloorDiv16(x), cz = FloorDiv16(z);
     std::shared_ptr<Chunk> c;
@@ -1393,7 +1393,7 @@ uint8_t World::GetBlock(int x, int y, int z) const {
     return c->GetIndex((x - cx * CHUNK_X) + CHUNK_X * (z - cz * CHUNK_Z) + CHUNK_X * CHUNK_Z * y);
 }
 
-void World::SetBlock(int x, int y, int z, uint8_t block) {
+void World::SetBlock(int x, int y, int z, uint16_t block) {
     if (y < 0 || y >= CHUNK_Y) return;
     const int cx = FloorDiv16(x), cz = FloorDiv16(z);
     const int lx = x - cx * CHUNK_X, lz = z - cz * CHUNK_Z;
@@ -1451,11 +1451,11 @@ std::vector<uint8_t> EncodeEdits(const EditMap& edits) {
     for (const auto& kv : edits) if (!kv.second.empty()) keys.push_back(kv.first);
     std::sort(keys.begin(), keys.end());
     std::vector<uint8_t> out = {'P', 'T', 'E', 'D'};
-    PutU32(out, 1);
+    PutU32(out, 2);
     PutU32(out, uint32_t(keys.size()));
     for (uint64_t key : keys) {
         const ChunkEdits& chunk = edits.at(key);
-        std::vector<std::pair<uint16_t, uint8_t>> entries(chunk.begin(), chunk.end());
+        std::vector<std::pair<uint16_t, uint16_t>> entries(chunk.begin(), chunk.end());
         std::sort(entries.begin(), entries.end());
         PutU32(out, uint32_t(KeyCX(key)));
         PutU32(out, uint32_t(KeyCZ(key)));
@@ -1463,7 +1463,8 @@ std::vector<uint8_t> EncodeEdits(const EditMap& edits) {
         for (const auto& e : entries) {
             out.push_back(uint8_t(e.first));
             out.push_back(uint8_t(e.first >> 8));
-            out.push_back(e.second);
+            out.push_back(uint8_t(e.second));
+            out.push_back(uint8_t(e.second >> 8));
         }
     }
     return out;
@@ -1472,22 +1473,29 @@ std::vector<uint8_t> EncodeEdits(const EditMap& edits) {
 bool DecodeEdits(const uint8_t* data, size_t size, EditMap& out) {
     size_t pos = 4;
     uint32_t version = 0, chunks = 0;
+    // Version 1 stored 8-bit block ids; version 2 (P4a) stores 16-bit ids so
+    // the registry can outgrow 256 entries. Old saves upconvert silently.
     if (size < 4 || memcmp(data, "PTED", 4) != 0 || !GetU32(data, size, pos, version) ||
-        version != 1 || !GetU32(data, size, pos, chunks) || chunks > (size - pos) / 12)
+        (version != 1 && version != 2) || !GetU32(data, size, pos, chunks) ||
+        chunks > (size - pos) / 12)
         return false;
+    const size_t entryBytes = version == 1 ? 3 : 4;
     EditMap result;
     for (uint32_t c = 0; c < chunks; ++c) {
         uint32_t cx = 0, cz = 0, count = 0;
         if (!GetU32(data, size, pos, cx) || !GetU32(data, size, pos, cz) ||
             !GetU32(data, size, pos, count) || count > uint32_t(CHUNK_VOL) ||
-            (size - pos) / 3 < count)
+            (size - pos) / entryBytes < count)
             return false;
         const uint64_t key = ChunkKey(int32_t(cx), int32_t(cz));
         if (result.count(key)) return false;
         ChunkEdits& chunk = result[key];
-        for (uint32_t i = 0; i < count; ++i, pos += 3) {
-            const uint8_t block = data[pos + 2];
+        for (uint32_t i = 0; i < count; ++i) {
             const uint16_t index = uint16_t(data[pos] | (data[pos + 1] << 8));
+            const uint16_t block = version == 1
+                ? uint16_t(data[pos + 2])
+                : uint16_t(data[pos + 2] | (data[pos + 3] << 8));
+            pos += entryBytes;
             if (block >= BLOCK_COUNT || chunk.count(index)) return false;
             chunk[index] = block;
         }

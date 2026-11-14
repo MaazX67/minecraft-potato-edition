@@ -60,7 +60,7 @@ bool ParseCoord(const std::string& token, float base, float& out) {
     return true;
 }
 
-std::string DisplayName(uint8_t id) {
+std::string DisplayName(uint16_t id) {
     if (id == BLOCK_GRASS) return "Grass Block";
     std::string n = ResourceNameForItem(id);
     const size_t colon = n.find(':');
@@ -167,8 +167,9 @@ std::vector<std::string> ArgOptions(const std::string& cmd, size_t pos,
         for (int i = 0; i < int(StructureType::Count); ++i)
             out.push_back(StructureId(StructureType(i)));
     } else if (cmd == "give" && pos == 0) {
-        for (int i = 1; i < 256; ++i) {
-            const uint8_t id = uint8_t(i);
+        // The registry decides what exists, not the retired 8-bit ceiling.
+        for (int i = 1; i <= 0xFFFF; ++i) {
+            const uint16_t id = uint16_t(i);
             if (!IsValidItem(id)) continue;
             const char* name = ItemName(id);
             if (name && name[0]) out.push_back(name);

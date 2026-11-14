@@ -306,7 +306,7 @@ void SoundEngine::SetVolume(float v) {
     if (mMaster && mEnabled.load(std::memory_order_relaxed)) mMaster->SetVolume(v);
 }
 
-SoundCat SoundEngine::BlockSound(uint8_t block) {
+SoundCat SoundEngine::BlockSound(uint16_t block) {
     switch (block) {
         case BLOCK_GRASS: return SND_GRASS;
         case BLOCK_DIRT: return SND_DIRT;
@@ -332,7 +332,7 @@ SoundCat SoundEngine::BlockSound(uint8_t block) {
     }
 }
 
-SoundCat SoundEngine::StepSound(uint8_t block) {
+SoundCat SoundEngine::StepSound(uint16_t block) {
     switch (block) {
         case BLOCK_GRASS:
         case BLOCK_DIRT: return SND_STEP_GRASS;

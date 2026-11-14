@@ -91,10 +91,10 @@ static void BuildDimensionWorld(int dim, EditMap edits);
 static HurtResistance gPlayerResistance;
 static float gMobSpawnTimer = 0;
 static uint64_t gCombatHits = 0, gCriticalHits = 0, gZombieKills = 0;
-static uint8_t gAttackItem = 0;
+static uint16_t gAttackItem = 0;
 static bool gToolsTest = false, gCombatTest = false;
 static int gHotbarSlot = 0;
-static uint8_t gHotbar[9];
+static uint16_t gHotbar[9];
 static std::string gActionBar;
 static float gActionBarUntil = 0;
 static float gNowMs = 0;
@@ -112,7 +112,7 @@ static float gLastSpaceMs = -1000;
 static bool gHaveTarget = false;
 static float gMiningProgress = 0, gMiningElapsed = 0, gMiningSound = 0, gMiningDelay = 0;
 static int gMiningX = 0, gMiningY = -1, gMiningZ = 0;
-static uint8_t gMiningItem = 0, gMiningBlock = 0;
+static uint16_t gMiningItem = 0, gMiningBlock = 0;
 static uint64_t gBrokenBlocks = 0;
 static int gTargetX = 0, gTargetY = 0, gTargetZ = 0;
 static float gStepTimer = 0.3f;
@@ -564,7 +564,7 @@ static void RefreshWorldList() {
             if (!save.is_object()) continue;
             const int format = save.at("format").get<int>();
             WorldGenerator generator;
-            if ((format != 1 && format != 2 && format != 3) ||
+            if ((format < 1 || format > 4) ||
                 !ParseGenerator(save.at("generator").get<std::string>(), generator)) continue;
             SavedWorldEntry e;
             e.path = path;
@@ -799,7 +799,7 @@ static bool SaveCurrentWorld() {
     GetSystemTimeAsFileTime(&now);
     const uint64_t timestamp = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
     const nlohmann::json data = {
-        {"format", 3}, {"generator", GeneratorName(gOverworldGen)}, {"name", gWorldName},
+        {"format", 4}, {"generator", GeneratorName(gOverworldGen)}, {"name", gWorldName},
         {"worldTime", gWorldClock.Ticks()},
         {"savedAt", timestamp}, {"seed", gWorldSeed}, {"mode", gGameMode},
         {"cheats", gAllowCheats}, {"keepInventory", gKeepInventory},
@@ -807,7 +807,7 @@ static bool SaveCurrentWorld() {
         {"rotation", {gCamera.yaw, gCamera.pitch}}, {"flying", gBody.flying},
         {"health", gSurvival.health}, {"hunger", gSurvival.hunger},
         {"saturation", gSurvival.saturation}, {"exhaustion", gSurvival.exhaustion},
-        {"selected", gHotbarSlot}, {"hotbar", std::vector<uint8_t>(gHotbar, gHotbar + 9)},
+        {"selected", gHotbarSlot}, {"hotbar", std::vector<uint16_t>(gHotbar, gHotbar + 9)},
         {"inventory", inventory}, {"craft", craft}, {"cursor", slot(gInventory.cursor)}, {"toolDamage", toolDamage},
         {"armor", armor}, {"armorDamage", armorDamage},
         {"offhand", slot(gInventory.offhand)}, {"offhandDamage", gInventory.offhand.damage},
@@ -851,7 +851,7 @@ static bool LoadWorldSave(const std::string& path) {
         if (!data.is_object()) return false;
         const int format = data.at("format").get<int>();
         WorldGenerator generator;
-        if ((format != 1 && format != 2 && format != 3) ||
+        if ((format < 1 || format > 4) ||
             !ParseGenerator(data.at("generator").get<std::string>(), generator)) return false;
         uint64_t worldTime = 0;
         if (format == 2) {
@@ -875,8 +875,8 @@ static bool LoadWorldSave(const std::string& path) {
             int id = value.at(0).get<int>();
             const int count = value.at(1).get<int>();
             if (legacy && id >= 64 && id <= 104) id += 96;
-            if (!IsValidItem(id) || count < 0 || count > ItemStackLimit(uint8_t(id)) || (id == 0) != (count == 0)) return false;
-            s = {uint8_t(id), count};
+            if (!IsValidItem(id) || count < 0 || count > ItemStackLimit(uint16_t(id)) || (id == 0) != (count == 0)) return false;
+            s = {uint16_t(id), count};
             return true;
         };
         const auto& slots = data.at("inventory");
@@ -927,13 +927,13 @@ static bool LoadWorldSave(const std::string& path) {
                 inventory.offhand.damage = uint16_t(d);
             }
         }
-        auto hotbar = data.at("hotbar").get<std::vector<uint8_t>>();
+        auto hotbar = data.at("hotbar").get<std::vector<uint16_t>>();
         if (hotbar.size() != 9) return false;
         for (auto& slotId : hotbar) {
             int id = slotId;
             if (legacy && id >= 64 && id <= 104) id += 96;
             if (!IsValidItem(id)) return false;
-            slotId = uint8_t(id);
+            slotId = uint16_t(id);
         }
         const int selected = data.at("selected").get<int>();
         const int health = data.at("health").get<int>(), hunger = data.at("hunger").get<int>();
@@ -996,7 +996,7 @@ static bool LoadWorldSave(const std::string& path) {
             const auto& f = data.at("furnace");
             auto rd = [](const nlohmann::json& j) -> ItemSlot {
                 ItemSlot s;
-                s.id = uint8_t(j[0].get<int>());
+                s.id = uint16_t(j[0].get<int>());
                 s.count = j[1].get<int>();
                 if (!IsValidItem(s.id) || s.count < 0) return {};
                 return s;
@@ -1012,7 +1012,7 @@ static bool LoadWorldSave(const std::string& path) {
         if (data.contains("chests")) {
             auto rd = [](const nlohmann::json& j) -> ItemSlot {
                 ItemSlot s;
-                s.id = uint8_t(j[0].get<int>());
+                s.id = uint16_t(j[0].get<int>());
                 s.count = j[1].get<int>();
                 if (!IsValidItem(s.id) || s.count < 0) return {};
                 return s;
@@ -1600,7 +1600,7 @@ static void DumpAtlas() {
 static void SyncHotbar() {
     for (int i = 0; i < 9; ++i) {
         const ItemSlot& slot = gInventory.slots[27 + i];
-        gHotbar[i] = slot.Empty() ? uint8_t(BLOCK_AIR) : slot.id;
+        gHotbar[i] = slot.Empty() ? uint16_t(BLOCK_AIR) : slot.id;
     }
 }
 
@@ -1647,7 +1647,7 @@ static void HandleInventoryClick(int index, bool right) {
     }
 }
 
-static uint8_t SmeltResult(uint8_t id) {
+static uint16_t SmeltResult(uint16_t id) {
     switch (id) {
         case BLOCK_IRON_ORE: case ITEM_RAW_IRON: return ITEM_IRON_INGOT;
         case BLOCK_GOLD_ORE: case ITEM_RAW_GOLD: return ITEM_GOLD_INGOT;
@@ -1658,7 +1658,7 @@ static uint8_t SmeltResult(uint8_t id) {
     }
 }
 
-static float FuelSeconds(uint8_t id) {
+static float FuelSeconds(uint16_t id) {
     switch (id) {
         case ITEM_COAL: return 80.0f;
         case ITEM_STICK: return 5.0f;
@@ -1670,7 +1670,7 @@ static float FuelSeconds(uint8_t id) {
 }
 
 static void TickFurnace(float dt) {
-    const uint8_t result = SmeltResult(gFurnace.input.id);
+    const uint16_t result = SmeltResult(gFurnace.input.id);
     const bool canCook = result != 0 &&
         (gFurnace.output.Empty() ||
          (gFurnace.output.id == result && gFurnace.output.count < ItemStackLimit(result)));
@@ -1936,7 +1936,7 @@ public:
     }
     int Weather() const override { return gWeather; }
     bool GiveItem(const std::string& item, int count, std::string& givenName) override {
-        const uint8_t id = ItemIdFromResourceName(item);
+        const uint16_t id = ItemIdFromResourceName(item);
         if (id == BLOCK_AIR) return false;
         givenName = id == BLOCK_GRASS ? "Grass Block" : std::string();
         if (givenName.empty()) {
@@ -2155,7 +2155,7 @@ static void DropMobLoot(const Mob& mob) {
     const MobStats& stats = GetMobStats(mob.type);
     auto give = [](const char* name, int lo, int hi) {
         if (!name || !name[0] || hi <= 0) return;
-        const uint8_t id = ItemIdFromResourceName(name);
+        const uint16_t id = ItemIdFromResourceName(name);
         if (id == BLOCK_AIR) return;
         const int count = lo + (hi > lo ? int(rand()) % (hi - lo + 1) : 0);
         if (count > 0) gInventory.Add(id, count);
@@ -2174,7 +2174,7 @@ static void HandleGameFrame(float dt) {
     gCamera.rightX = cosf(gCamera.yaw);
     gCamera.rightZ = sinf(gCamera.yaw);
 
-    auto getBlock = [&](int x, int y, int z) -> uint8_t { return gWorld->GetBlock(x, y, z); };
+    auto getBlock = [&](int x, int y, int z) -> uint16_t { return gWorld->GetBlock(x, y, z); };
 
     if (gResumePending) {
         gWorld->Update(gBody.x, gBody.z);
@@ -2255,8 +2255,8 @@ static void HandleGameFrame(float dt) {
     gCamera.z = gBody.z;
     if (gPortalCooldown <= 0) {
         const int fx = int(floorf(gBody.x)), fz = int(floorf(gBody.z));
-        const uint8_t atFeet = gWorld->GetBlock(fx, int(floorf(gBody.y + 0.2f)), fz);
-        const uint8_t atHead = gWorld->GetBlock(fx, int(floorf(gBody.y + 1.4f)), fz);
+        const uint16_t atFeet = gWorld->GetBlock(fx, int(floorf(gBody.y + 0.2f)), fz);
+        const uint16_t atHead = gWorld->GetBlock(fx, int(floorf(gBody.y + 1.4f)), fz);
         if (atFeet == BLOCK_PORTAL || atHead == BLOCK_PORTAL) {
             EnterDimension(1 - gDimension);
             return;
@@ -2276,7 +2276,7 @@ static void HandleGameFrame(float dt) {
     const bool moving = (gBody.vx * gBody.vx + gBody.vz * gBody.vz) > 0.01f;
     if (gGameMode == 0) {
         gSurvival.Update(dt, moving, gBody.sprinting, gSettings.difficulty);
-        const uint8_t feet = gWorld->GetBlock(int(floorf(gBody.x)),
+        const uint16_t feet = gWorld->GetBlock(int(floorf(gBody.x)),
                                             int(floorf(gBody.y + 0.2f)), int(floorf(gBody.z)));
         if (feet == BLOCK_LAVA) {
             static float sLavaTimer = 0;
@@ -2292,7 +2292,7 @@ static void HandleGameFrame(float dt) {
         gStepTimer += dt;
         if (gStepTimer >= (gBody.sprinting ? 0.28f : 0.38f)) {
             gStepTimer = 0;
-            const uint8_t under = gWorld->GetBlock(int(floorf(gBody.x)),
+            const uint16_t under = gWorld->GetBlock(int(floorf(gBody.x)),
                                                    int(floorf(gBody.y - 0.5f)),
                                                    int(floorf(gBody.z)));
             gSound.PlayAt(SoundEngine::StepSound(under), gBody.x, gBody.y, gBody.z);
@@ -2356,7 +2356,7 @@ static void HandleGameFrame(float dt) {
                 const float angle = float(tick % 6283) * 0.001f;
                 const int x = int(floorf(gBody.x + sinf(angle) * 26)), z = int(floorf(gBody.z + cosf(angle) * 26));
                 const int y = gWorld->SurfaceY(x, z);
-                const uint8_t ground = y >= 0 ? gWorld->GetBlock(x, y, z) : BLOCK_AIR;
+                const uint16_t ground = y >= 0 ? gWorld->GetBlock(x, y, z) : BLOCK_AIR;
                 if (y >= 0 && ground != BLOCK_AIR && ground != BLOCK_WATER &&
                     gWorld->GetBlock(x, y + 1, z) == BLOCK_AIR && gWorld->GetBlock(x, y + 2, z) == BLOCK_AIR) {
                     Mob mob;
@@ -2470,7 +2470,7 @@ static void HandleGameFrame(float dt) {
                              hx, hy, hz, nx, ny, nz);
     if (gHaveTarget) { gTargetX = hx; gTargetY = hy; gTargetZ = hz; }
 
-    const uint8_t held = gHotbar[gHotbarSlot];
+    const uint16_t held = gHotbar[gHotbarSlot];
     const ToolDef* tool = FindTool(held);
     gCooldown.attackSpeed = tool ? tool->attackSpeed : 4.0f;
     gCooldown.baseDamage = tool ? tool->damage : 1.0f;
@@ -2516,7 +2516,7 @@ static void HandleGameFrame(float dt) {
     }
     gMiningDelay = std::max(0.0f, gMiningDelay - dt);
     if (gInput.leftDown && gHaveTarget && !targetZombie && gMiningDelay == 0) {
-        const uint8_t old = gWorld->GetBlock(hx, hy, hz);
+        const uint16_t old = gWorld->GetBlock(hx, hy, hz);
         if (hx != gMiningX || hy != gMiningY || hz != gMiningZ || held != gMiningItem || old != gMiningBlock) {
             gMiningX = hx; gMiningY = hy; gMiningZ = hz;
             gMiningItem = held; gMiningBlock = old;
@@ -2614,7 +2614,7 @@ static void HandleGameFrame(float dt) {
                 pz + 1 > gBody.z - PlayerBody::HALF && pz < gBody.z + PlayerBody::HALF &&
                 py + 1 > gBody.y && py < gBody.y + PlayerBody::HEIGHT;
             if (!insideBody) {
-                const uint8_t block = gHotbar[gHotbarSlot];
+                const uint16_t block = gHotbar[gHotbarSlot];
                 if (block == BLOCK_AIR || block >= BLOCK_COUNT || (gGameMode == 0 && gInventory.slots[27 + gHotbarSlot].Empty())) return;
                 gWorld->SetBlock(px, py, pz, block);
                 if (gGameMode == 0) {
@@ -2969,7 +2969,7 @@ static void DrawEntityShadows() {
     for (const Shadow& s : list) {
         int gy = -1;
         for (int y = int(floorf(s.y)) + 1; y > int(floorf(s.y)) - 8; --y) {
-            const uint8_t b = gWorld->GetBlock(int(floorf(s.x)), y, int(floorf(s.z)));
+            const uint16_t b = gWorld->GetBlock(int(floorf(s.x)), y, int(floorf(s.z)));
             if (b != BLOCK_AIR && !(BLOCK_FLAGS[b] & BF_LIQUID)) { gy = y; break; }
         }
         if (gy < 0) continue;
@@ -3046,7 +3046,7 @@ static void DrawPlayer() {
 
 // Held block: a 3D mini-cube textured from the block atlas (top/side/bottom).
 // Local space, centered at origin; u/v span 0..1 so PSMain maps one full tile.
-static void BuildHeldBlockCube(uint8_t block, std::vector<MeshVertex>& out) {
+static void BuildHeldBlockCube(uint16_t block, std::vector<MeshVertex>& out) {
     const float h = 0.20f;
     auto tileUV = [](int tile, float& tu, float& tv) {
         tu = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
@@ -3142,13 +3142,13 @@ static void DrawHand() {
     gRC.device->Draw(UINT(vertices.size()), 0);
 
     // Held item: a 3D block cube or an extruded 2D sprite, swung with the arm.
-    const uint8_t held = gHotbar[gHotbarSlot];
+    const uint16_t held = gHotbar[gHotbarSlot];
     if (held != BLOCK_AIR && gHeldVB) {
         std::vector<MeshVertex> local;
         const bool isBlock = held < BLOCK_COUNT;
         if (isBlock) {
             BuildHeldBlockCube(held, local);
-        } else if (gItemHasPixels[held] && gGui.texItemIcon[held].srv) {
+        } else if (held < 256 && gItemHasPixels[held] && gGui.texItemIcon[held].srv) {
             BuildExtrudedItemMesh(gItemPixels[held], local);
         }
         if (!local.empty() && local.size() <= 20000) {
@@ -3319,7 +3319,7 @@ static void DrawWorld() {
         const float dir = gPerspective == 1 ? -1.0f : 1.0f;
         float dist = 4.0f;
         int hx, hy, hz, nx, ny, nz;
-        if (RaycastDDA([](int x, int y, int z) -> uint8_t { return gWorld->GetBlock(x, y, z); },
+        if (RaycastDDA([](int x, int y, int z) -> uint16_t { return gWorld->GetBlock(x, y, z); },
                        gCamera.x, gCamera.y, gCamera.z,
                        gCamera.fwdX * dir, gCamera.fwdY * dir, gCamera.fwdZ * dir,
                        dist, hx, hy, hz, nx, ny, nz)) {
@@ -3539,7 +3539,7 @@ static void DrawDebug(float scale) {
     snprintf(line, sizeof(line), "Names: %d blocks  %d items", reg.mappedBlockNames, reg.mappedItemNames);
     row(line);
     if (gHaveTarget) {
-        const uint8_t tb = gWorld->GetBlock(gTargetX, gTargetY, gTargetZ);
+        const uint16_t tb = gWorld->GetBlock(gTargetX, gTargetY, gTargetZ);
         snprintf(line, sizeof(line), "Target: %d %d %d (%s)", gTargetX, gTargetY, gTargetZ,
                  BLOCK_DEFS[tb].name);
         row(line);
@@ -3621,7 +3621,37 @@ static void LoadSplash() {
     if (!lines.empty()) gSplash = lines[size_t(rand()) % lines.size()];
 }
 
+static std::string CommandArgValue(const char* flag) {
+    const char* at = strstr(GetCommandLineA(), flag);
+    if (!at) return std::string();
+    const char* p = at + strlen(flag);
+    while (*p == ' ' || *p == '=') ++p;
+    std::string parsed;
+    if (*p == '"') { ++p; while (*p && *p != '"') parsed += *p++; }
+    else { while (*p && *p != ' ') parsed += *p++; }
+    return parsed;
+}
+
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
+    // Headless parity gate: --parity loads the user's own 26.3 jar, prints the
+    // registry probe line, writes parity.txt next to the exe and exits before
+    // any window or GPU resource exists. CI has no jar, so it prints jar=no.
+    if (strstr(GetCommandLineA(), "--parity") != nullptr) {
+        std::string assetsPath = CommandArgValue("--assets");
+        if (assetsPath.empty()) assetsPath = DefaultAssetIndexPath();
+        std::string jar = CommandArgValue("--jar");
+        if (jar.empty()) jar = DefaultClientJarPath();
+        AssetStore store;
+        store.LoadIndex(assetsPath);
+        if (!jar.empty()) store.LoadJar(jar);
+        if (store.HasJar()) LoadRegistry(store);
+        const std::string line = RegistryParityLine();
+        printf("%s\n", line.c_str());
+        std::ofstream out("parity.txt", std::ios::binary | std::ios::trunc);
+        out << line << "\n";
+        out.close();
+        return 0;
+    }
     gAutomation = strstr(GetCommandLineA(), "--automation") != nullptr;
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     LoadPreferences();
@@ -3718,7 +3748,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
     if (!gGui.Init(gRC, gStore)) return 1;
     for (int id = BLOCK_COUNT; id < 256; ++id) {
-        if (IsValidItem(id) && LoadItemRGBA(gStore, uint8_t(id), gItemPixels[id]))
+        if (IsValidItem(id) && LoadItemRGBA(gStore, uint16_t(id), gItemPixels[id]))
             gItemHasPixels[id] = true;
     }
     if (!gGui.LoadPlayerSkin(gRC, gStore, gProfile)) {
@@ -3783,7 +3813,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         SyncHotbar();
     }
     if (gToolsTest || gCombatTest) {
-        gInventory.slots[27] = {gToolsTest ? uint8_t(ITEM_WOOD_PICKAXE) : uint8_t(ITEM_DIAMOND_SWORD), 1};
+        gInventory.slots[27] = {gToolsTest ? uint16_t(ITEM_WOOD_PICKAXE) : uint16_t(ITEM_DIAMOND_SWORD), 1};
         SyncHotbar();
     }
     if (gAutomation && strstr(GetCommandLineA(), "--save-test")) {
@@ -3950,7 +3980,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                     } else if (CreativeSearchFieldHitTest(gInput.mouseX, gInput.mouseY)) {
                         // The search box is always focused while its tab is open.
                     } else if (const int b = InventoryHitTest(gInput.mouseX, gInput.mouseY); b > 0) {
-                        const uint8_t id = uint8_t(b);
+                        const uint16_t id = uint16_t(b);
                         const int limit = ItemStackLimit(id);
                         if (gInput.keys[VK_SHIFT]) {
                             gInventory.Add(id, limit);

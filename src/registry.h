@@ -10,7 +10,7 @@ namespace potato {
 // id range so one uint16 cell can hold either.
 enum RecipeTag : uint16_t {
     TAG_NONE = 0,
-    TAG_PLANKS = 0x100,
+    TAG_PLANKS = 0x8000,
     TAG_LOGS,
     TAG_WOOL,
     TAG_COALS,
@@ -43,25 +43,32 @@ bool LoadRegistry(AssetStore& store);
 
 const RegistryStats& RegistryInfo();
 
+// One machine-readable parity line for the loaded registry:
+//   PARITY-REGISTRY: jar=yes blocks=136 items=66 recipes=64 loot=... names=202 dup=0 hash=1a2b3c4d
+// `names` counts distinct resource names over the whole id range and `hash` is
+// FNV-1a over the sorted name->id table, so any change to the mapping is visible
+// as a different hash. Safe without a jar (reports jar=no).
+std::string RegistryParityLine();
+
 // Recipes read from the jar. Empty until LoadRegistry succeeds; the crafting
 // engine then keeps using its built-in Java-parity table.
 const std::vector<CraftingRecipe>& RegistryRecipes();
 
 // Name mapping ("minecraft:oak_planks" or "oak_planks" -> BLOCK_PLANKS).
-uint8_t ItemIdFromResourceName(const std::string& name);
-std::string ResourceNameForItem(uint8_t id);
+uint16_t ItemIdFromResourceName(const std::string& name);
+std::string ResourceNameForItem(uint16_t id);
 
 // True when a recipe cell (item id or tag) accepts the given item id.
-bool RecipeCellMatches(uint16_t cell, uint8_t id);
+bool RecipeCellMatches(uint16_t cell, uint16_t id);
 
 // Single-item block loot table result. Mirrors the simple pools used by the
 // vanilla block tables; fortune/silk-touch variants fall back to base counts.
 struct LootEntry {
-    uint8_t item = 0;
+    uint16_t item = 0;
     int count = 1;
 };
 // False when the jar has no usable table for this block.
-bool LootDropForBlock(uint8_t block, LootEntry& out);
+bool LootDropForBlock(uint16_t block, LootEntry& out);
 
 // Testing seams: parse one Java 26.3 resource file. Both never throw.
 bool ParseRecipeJson(const std::string& text, CraftingRecipe& out);

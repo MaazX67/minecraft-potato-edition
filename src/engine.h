@@ -202,11 +202,11 @@ struct PlayerBody {
     static constexpr float HALF = 0.3f, HEIGHT = 1.8f, EYE = 1.62f;
 
     void Update(const InputState& in, float dt, FlyCamera& cam,
-                const std::function<uint8_t(int, int, int)>& getBlock);
+                const std::function<uint16_t(int, int, int)>& getBlock);
 };
 
 struct ItemSlot {
-    uint8_t id = 0;
+    uint16_t id = 0;
     int count = 0;
     uint16_t damage = 0;
     bool Empty() const { return id == 0 || count <= 0; }
@@ -230,8 +230,8 @@ struct InventoryState {
     ItemSlot offhand;
     ItemSlot cursor;
 
-    int Capacity(uint8_t id) const;
-    int Add(uint8_t id, int count, uint16_t damage = 0);
+    int Capacity(uint16_t id) const;
+    int Add(uint16_t id, int count, uint16_t damage = 0);
     ItemSlot Result(bool table) const;
     bool Click(int index, bool right, bool table, bool shift = false);
     // Java double-click pickup: gather every matching stack into the cursor.
@@ -241,10 +241,10 @@ struct InventoryState {
     float Toughness() const;
 };
 
-float BlockHardness(uint8_t block);
-float MiningSeconds(uint8_t block, uint8_t item, bool onGround = true, bool underwater = false);
-bool CanHarvest(uint8_t block, uint8_t item);
-ItemSlot BlockDrops(uint8_t block, uint8_t item);
+float BlockHardness(uint16_t block);
+float MiningSeconds(uint16_t block, uint16_t item, bool onGround = true, bool underwater = false);
+bool CanHarvest(uint16_t block, uint16_t item);
+ItemSlot BlockDrops(uint16_t block, uint16_t item);
 bool WearTool(ItemSlot& slot, int amount);
 
 struct FurnaceState {
@@ -262,10 +262,10 @@ enum CreativeTab {
     CTAB_BUILDING, CTAB_COLORED, CTAB_NATURAL, CTAB_FUNCTIONAL, CTAB_REDSTONE,
     CTAB_TOOLS, CTAB_COMBAT, CTAB_FOOD, CTAB_INGREDIENTS, CTAB_SEARCH, CTAB_COUNT
 };
-int ItemCreativeTab(uint8_t id);
+int ItemCreativeTab(uint16_t id);
 const char* CreativeTabName(int tab);
-uint8_t CreativeTabIcon(int tab);
-bool ItemMatchesSearch(uint8_t id, const std::string& query);
+uint16_t CreativeTabIcon(int tab);
+bool ItemMatchesSearch(uint16_t id, const std::string& query);
 
 struct SurvivalState {
     int health = 20, hunger = 20;
@@ -355,7 +355,7 @@ struct Mob {
     bool passive = false;
     Mob() { SetType(MobType::Zombie); }
     void SetType(MobType type);
-    void Update(float dt, const PlayerBody& player, const std::function<uint8_t(int, int, int)>& getBlock);
+    void Update(float dt, const PlayerBody& player, const std::function<uint16_t(int, int, int)>& getBlock);
     float Hit(float damage, float knockX, float knockZ);
 };
 using Zombie = Mob;
