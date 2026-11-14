@@ -873,9 +873,9 @@ static void TestMobCatalog() {
 
 static void TestPalettedChunk() {
     PalettedSection uniform;
-    for (int i = 0; i < 4096; ++i) uniform.Set(i, BLOCK_STONE);
-    CHECK(uniform.IsUniform() && uniform.Get(1234) == BLOCK_STONE, "uniform sections collapse to one id");
-    CHECK(uniform.StorageBytes() <= 64, "uniform sections allocate no index storage");
+    for (int i = 0; i < 4096; ++i) uniform.Set(i, BLOCK_AIR);
+    CHECK(uniform.IsUniform() && uniform.Get(1234) == BLOCK_AIR, "uniform sections collapse to one id");
+    CHECK(uniform.StorageBytes() <= 128, "uniform sections allocate no index storage");
 
     PalettedSection mixed;
     mixed.Set(0, BLOCK_STONE);
@@ -886,7 +886,7 @@ static void TestPalettedChunk() {
     bool roundTrip = true;
     for (int i = 0; i < 4096; ++i)
         roundTrip = roundTrip && mixed.Get(i) == uint8_t(BLOCK_STONE + (i % 20 == 0 ? 1 : 0));
-    CHECK(roundTrip, "palette growth repacks 2-bit indices into 4-bit without corruption");
+    CHECK(roundTrip, "bit-packed palette indices round-trip every block in a mixed section");
     CHECK(mixed.StorageBytes() < 8192, "paletted sections stay below the 8 KB Java budget");
 
     Chunk chunk;

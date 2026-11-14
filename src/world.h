@@ -132,8 +132,16 @@ struct Chunk {
     uint8_t GetIndex(int index) const { return sections[index >> 12].Get(index & 4095); }
     void SetIndex(int index, uint8_t value) { sections[index >> 12].Set(index & 4095, value); }
     void SetRaw(const uint8_t* raw) {
-        for (int s = 0; s < SECTION_COUNT; ++s)
-            for (int i = 0; i < 4096; ++i) sections[s].Set(i, raw[s * 4096 + i]);
+        for (int s = 0; s < SECTION_COUNT; ++s) {
+            const uint8_t* p = raw + s * 4096;
+            bool uniform = true;
+            for (int i = 1; i < 4096 && uniform; ++i) uniform = p[i] == p[0];
+            if (uniform) {
+                for (int i = 0; i < 4096; ++i) sections[s].Set(i, p[0]);
+            } else {
+                for (int i = 0; i < 4096; ++i) sections[s].Set(i, p[i]);
+            }
+        }
     }
     void GetRaw(uint8_t* out) const {
         for (int s = 0; s < SECTION_COUNT; ++s)
