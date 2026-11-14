@@ -6,3 +6,9 @@ CMakeSettings.json
 ci*/
 ci-artifact*/
 *.exe
+
+# parity ledger is derived from Mojang's jar; local only
+tools/parity/ledger.json
+
+# local build/verify outputs and the v1.0.0-Alpha backup
+run/
