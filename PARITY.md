@@ -55,6 +55,19 @@ Scores are **seed values** from the v2.0.0 state; each is replaced by a harness 
 Exit criteria: every 26.3 block, item, recipe and loot table is loaded from the JAR/index at runtime, with **zero
 hardcoded subsets**, proven by a probe that counts and hashes the loaded registry.
 
+## Phase 0 status
+
+| Step | State | Evidence |
+| --- | --- | --- |
+| Port ledger (`tools/parity/ledger.ps1`) | done | 11,383 classes / 98,739 methods from the 26.3 JAR |
+| `PARITY-REGISTRY` probe | done | `TestRegistryParity` in `selftest.cpp`; CI run 43585847454 green |
+| Specs | done | `docs/specs/ui.md`, `docs/specs/golden.md` (measured from the JAR) |
+| ID widening (`ItemId`/`BlockId` -> 16-bit) | step 1.1 | `enum BlockId : uint8_t`, `enum ItemId : uint8_t` still 8-bit |
+
+Known gate gap, to close in step 1.1: CI runners have no client JAR, so `PARITY-REGISTRY` always prints `SKIP`
+there and only proves the code compiles. Add a `--parity` switch to `PotatoEdition.exe` that runs the same probe
+and writes `parity.txt`, so the user's own build produces the real numbers without needing a compiler.
+
 ## How the gate works
 
 - Probes live in `PotatoSelfTest.exe`. CI already runs that binary, so parity failures fail the build without any
