@@ -234,6 +234,8 @@ struct InventoryState {
     int Add(uint8_t id, int count, uint16_t damage = 0);
     ItemSlot Result(bool table) const;
     bool Click(int index, bool right, bool table, bool shift = false);
+    // Java double-click pickup: gather every matching stack into the cursor.
+    bool DoubleClickCollect(int index, bool table);
     bool Close();
     int Defense() const;
     float Toughness() const;

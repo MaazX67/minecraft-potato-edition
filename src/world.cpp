@@ -756,7 +756,7 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t se
         }
     }
 
-    ApplyStructures(blocks, noise, seed, cx, cz, false);
+    if (structures) ApplyStructures(blocks, noise, seed, cx, cz, false);
 }
 
 // ---------------------------------------------------------------------------

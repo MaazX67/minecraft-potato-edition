@@ -798,6 +798,34 @@ bool InventoryState::Click(int index, bool right, bool table, bool shift) {
     return true;
 }
 
+bool InventoryState::DoubleClickCollect(int index, bool table) {
+    if (index < 0 || index > 50 || index == 45) return false;
+    if (index >= 46 && table) return false;
+    const ItemSlot* clicked = index < 36 ? &slots[index]
+                           : (index < 45 ? &craft[index - 36]
+                           : (index == 50 ? &offhand : &armor[index - 46]));
+    const uint8_t id = cursor.Empty() ? clicked->id : cursor.id;
+    if (id == BLOCK_AIR) return false;
+    const uint16_t damage = cursor.Empty() ? clicked->damage : cursor.damage;
+    const int limit = ItemStackLimit(id);
+    int have = cursor.Empty() ? 0 : cursor.count;
+    auto grab = [&](ItemSlot& s) {
+        if (s.Empty() || s.id != id || s.damage != damage) return;
+        const int take = std::min(s.count, limit - have);
+        if (take <= 0) return;
+        have += take;
+        s.count -= take;
+        if (s.count == 0) s = {};
+    };
+    for (ItemSlot& s : slots) grab(s);
+    for (ItemSlot& s : craft) grab(s);
+    for (ItemSlot& s : armor) grab(s);
+    grab(offhand);
+    if (have <= 0) return false;
+    cursor = {id, have, damage};
+    return true;
+}
+
 bool InventoryState::Close() {
     InventoryState returned = *this;
     if (!returned.cursor.Empty() && returned.Add(returned.cursor.id, returned.cursor.count, returned.cursor.damage) != 0) return false;

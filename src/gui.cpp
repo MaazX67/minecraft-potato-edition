@@ -747,7 +747,7 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
             "mobGriefing", "doFireTick"};
         for (int i = 0; i < RULE_COUNT; ++i) {
             snprintf(label, sizeof(label), "%s: %s", RULES[i], create.rules[i] ? "ON" : "OFF");
-            mButtons.push_back({cx - 400, 80 + i * 44, 380, 36, label,
+            mButtons.push_back({cx - 400, 80.0f + i * 44.0f, 380, 36, label,
                                 ACT_RULE_TOGGLE_BASE + i, true});
         }
         snprintf(label, sizeof(label), "randomTickSpeed: %d", create.randomTickSpeed);

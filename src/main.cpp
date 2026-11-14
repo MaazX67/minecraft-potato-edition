@@ -158,6 +158,8 @@ static std::string gEditName;
 static int gEditingBind = -1;
 static int gLastWorldClickIndex = -1;
 static float gLastWorldClickMs = -1000.0f;
+static int gLastInvClickIndex = -1;
+static float gLastInvClickMs = -1000.0f;
 static PerlinNoise* gWeatherNoise = nullptr;
 
 static void SetScreen(HWND hwnd, Screen s);
@@ -1630,7 +1632,12 @@ static void PlayerDied() {
 }
 
 static void HandleInventoryClick(int index, bool right) {
-    if (gInventory.Click(index, right, gCraftTable, gInput.keys[VK_SHIFT])) {
+    const bool dbl = !right && !gInput.keys[VK_SHIFT] && index >= 0 &&
+                     index == gLastInvClickIndex && (gTimeSec - gLastInvClickMs) < 0.35f;
+    if (index >= 0) { gLastInvClickIndex = index; gLastInvClickMs = gTimeSec; }
+    const bool changed = dbl ? gInventory.DoubleClickCollect(index, gCraftTable)
+                             : gInventory.Click(index, right, gCraftTable, gInput.keys[VK_SHIFT]);
+    if (changed) {
         gInventoryMessage.clear();
         if (gGameMode == 0) SyncHotbar();
     }
