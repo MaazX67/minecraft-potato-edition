@@ -58,7 +58,7 @@ struct Chunk {
 
 class PerlinNoise {
 public:
-    explicit PerlinNoise(uint32_t seed);
+    explicit PerlinNoise(uint64_t seed);
     float Noise2(float x, float y) const;
     float Fbm2(float x, float y, int octaves) const; // normalized to ~[-1, 1]
     float Noise3(float x, float y, float z) const;
@@ -66,6 +66,22 @@ public:
 private:
     uint8_t mP[512];
 };
+
+// Java-style 64-bit world seeds. SplitMix64 expands one seed into an endless
+// stream of independent, well-distributed values.
+inline uint64_t SplitMix64(uint64_t& state) {
+    uint64_t z = (state += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+}
+inline uint64_t MixSeed64(uint64_t seed) {
+    return SplitMix64(seed);
+}
+inline uint32_t SeedHash32(uint64_t seed) {
+    return uint32_t(MixSeed64(seed) >> 32);
+}
+
 
 enum class WorldGenerator { Legacy, Climate, Flat, Nether };
 const char* GeneratorName(WorldGenerator generator);
@@ -82,8 +98,28 @@ struct TerrainColumn {
 };
 
 TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z);
-void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz);
-void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz);
+void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz);
+void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz);
+
+// Seeded structure placement. Java 26.3 places one candidate per region cell;
+// we use a 512-block grid (256 in the Nether) keyed with SplitMix64 so a world
+// seed alone determines every village, temple, outpost, mineshaft and fortress.
+enum class StructureType {
+    Village, DesertPyramid, JungleTemple, RuinedPortal, PillagerOutpost,
+    Mineshaft, Stronghold, NetherFortress, Bastion, Count
+};
+const char* StructureId(StructureType type);          // "village", "desert_pyramid", ...
+const char* StructureName(StructureType type);        // "Village", "Desert Pyramid", ...
+bool IsNetherStructure(StructureType type);
+bool ParseStructure(const std::string& name, StructureType& type); // resource ids accepted
+// Nearest candidate of the requested type (block coords). Distance is the
+// horizontal block distance from (fromX, fromZ).
+bool FindStructure(uint64_t seed, int fromX, int fromZ, StructureType type,
+                   int& outX, int& outZ, int& distance);
+// Stamps the parts of every intersecting structure that land inside this
+// chunk. nether selects the Nether grid (fortresses only).
+void ApplyStructures(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed,
+                     int cx, int cz, bool nether);
 
 // Full 3-axis greedy mesher. Free function so the headless selftest can run it
 // without a World. Neighbor pointers may be null (treated as air). y<0 and
@@ -122,7 +158,7 @@ bool DecodeEdits(const uint8_t* data, size_t size, EditMap& out);
 // in reverse. Chunks are shared_ptr so in-flight jobs survive map eviction.
 class World {
 public:
-    World(uint32_t seed, int renderDistance, WorldGenerator generator = WorldGenerator::Legacy);
+    World(uint64_t seed, int renderDistance, WorldGenerator generator = WorldGenerator::Legacy);
     ~World();
     World(const World&) = delete;
     World& operator=(const World&) = delete;
@@ -142,7 +178,7 @@ public:
     // call. Update() only detaches them from the map; the 64KB frees happen
     // here, under the render thread's hard per-frame ceiling.
     void EvictStep(int maxCount);
-    uint32_t Seed() const { return mSeed; }
+    uint64_t Seed() const { return mSeed; }
     WorldGenerator Generator() const { return mGenerator; }
     EditMap SnapshotEdits() const;
     // Call before the first Update(); edits apply as chunks generate.
@@ -170,7 +206,7 @@ private:
     void MarkNeighborDirty(int cx, int cz); // mQueueMutex must be held
     std::shared_ptr<Chunk> FindLocked(int cx, int cz) const;
 
-    const uint32_t mSeed;
+    const uint64_t mSeed;
     const WorldGenerator mGenerator;
     int mRd;
     PerlinNoise mNoise;

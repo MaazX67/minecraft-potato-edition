@@ -16,7 +16,8 @@ public:
     virtual void Teleport(float x, float y, float z) = 0;
     virtual uint64_t TimeTicks() const = 0;
     virtual void SetTimeTicks(uint64_t ticks) = 0;
-    virtual uint32_t WorldSeed() const = 0;
+    virtual uint64_t WorldSeed() const = 0;
+    virtual bool LocateStructure(const std::string& structure, int& x, int& z, int& distance) = 0;
     // 0 clear, 1 rain, 2 thunder. durationTicks 0 means the Java default.
     virtual void SetWeather(int weather, int durationTicks) = 0;
     virtual int Weather() const = 0;

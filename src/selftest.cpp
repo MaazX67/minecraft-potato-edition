@@ -1233,13 +1233,14 @@ public:
     int summoned = 0;
     bool keepInventory = false;
     std::string lastBiome;
+    std::string lastStructure;
     int GameMode() const override { return mode; }
     void SetGameMode(int value) override { mode = value; }
     void PlayerPos(float& x, float& y, float& z) const override { x = px; y = py; z = pz; }
     void Teleport(float x, float y, float z) override { px = x; py = y; pz = z; }
     uint64_t TimeTicks() const override { return ticks; }
     void SetTimeTicks(uint64_t value) override { ticks = value; }
-    uint32_t WorldSeed() const override { return 1337; }
+    uint64_t WorldSeed() const override { return 5000001337ull; }
     void SetWeather(int value, int duration) override { weather = value; weatherDuration = duration; }
     int Weather() const override { return weather; }
     bool GiveItem(const std::string& item, int count, std::string& name) override {
@@ -1252,6 +1253,12 @@ public:
         if (biome != "plains") return false;
         lastBiome = biome;
         x = 24; z = -40; distance = 61;
+        return true;
+    }
+    bool LocateStructure(const std::string& structure, int& x, int& z, int& distance) override {
+        if (structure != "village") return false;
+        lastStructure = structure;
+        x = -176; z = 288; distance = 336;
         return true;
     }
     int Summon(const std::string& entity, int count) override {
@@ -1319,11 +1326,17 @@ static void TestChatCommands() {
     CHECK(host.weather == 0, "weather clear stops precipitation");
 
     r = run("/seed");
-    CHECK(r.ok && has(r.lines[0], "1337"), "seed reports the world seed");
+    CHECK(r.ok && has(r.lines[0], "5000001337"), "seed reports the full 64-bit world seed");
 
     r = run("/locate biome plains");
     CHECK(r.ok && host.lastBiome == "plains" && has(r.lines[0], "61 blocks away"), "locate reports the found biome");
     CHECK(run("/locate biome candyland").error, "unknown biomes are rejected");
+
+    r = run("/locate structure village");
+    CHECK(r.ok && host.lastStructure == "village" && has(r.lines[0], "336 blocks away"),
+          "locate structure reports the nearest seeded structure");
+    CHECK(has(r.lines[0], "The nearest village is at"), "locate structure uses Java's message shape");
+    CHECK(run("/locate structure castle").error, "unknown structures are rejected");
 
     r = run("/summon zombie 2");
     CHECK(r.ok && host.summoned == 2 && has(r.lines[0], "Zombie"), "summon spawns zombies");
@@ -1373,6 +1386,11 @@ static void TestChatCommands() {
           "nested lists keep the earlier argument");
     options = potato::CommandCompletions("/give sto");
     CHECK(!options.empty() && has(options[0], "stone"), "tab completes item ids");
+    options = potato::CommandCompletions("/locate ");
+    CHECK(options.size() == 2 && options[1] == "/locate structure", "locate offers biome and structure");
+    options = potato::CommandCompletions("/locate structure nether_");
+    CHECK(options.size() == 1 && options[0] == "/locate structure nether_fortress",
+          "structure names complete after the structure keyword");
     CHECK(potato::CommonPrefix({"/gamemode creative", "/gamemode c"}) == "/gamemode c",
           "common prefix keeps the shared text");
 
@@ -1384,6 +1402,64 @@ static void TestChatCommands() {
     const float rainY = weather.List()[0].y;
     weather.Update(0.1f);
     CHECK(weather.List()[0].y < rainY, "rain falls over time");
+}
+
+static void TestSeedsAndStructures() {
+    uint64_t state = 0;
+    CHECK(SplitMix64(state) == 0xE220A8397B1DCDAFull, "SplitMix64 matches the reference golden stream");
+    CHECK(MixSeed64(1337) == MixSeed64(1337), "64-bit seed mixing is deterministic");
+    CHECK(MixSeed64(1337) != MixSeed64(1337 + 0x100000000ull),
+          "seeds differing above 32 bits expand to different noise streams");
+
+    StructureType type;
+    CHECK(ParseStructure("village", type) && type == StructureType::Village &&
+          ParseStructure("minecraft:desert_pyramid", type) && type == StructureType::DesertPyramid &&
+          ParseStructure("Nether Fortress", type) && type == StructureType::NetherFortress &&
+          ParseStructure("bastion_remnant", type) && type == StructureType::Bastion &&
+          !ParseStructure("castle", type), "structure ids, resource ids and display names parse");
+    CHECK(std::string(StructureId(StructureType::Mineshaft)) == "mineshaft" &&
+          std::string(StructureName(StructureType::Bastion)) == "Bastion Remnant" &&
+          IsNetherStructure(StructureType::NetherFortress) && !IsNetherStructure(StructureType::Village),
+          "structure ids, display names and dimension flags match Java");
+
+    int ax = 0, az = 0, adist = 0, bx = 0, bz = 0, bdist = 0;
+    CHECK(FindStructure(1337, 0, 0, StructureType::Village, ax, az, adist) &&
+          FindStructure(1337, 0, 0, StructureType::Village, bx, bz, bdist),
+          "seeded structure search finds a village");
+    CHECK(ax == bx && az == bz && adist == bdist, "structure search repeats exactly for one seed");
+    CHECK(adist == int(std::lround(std::sqrt(double(ax) * ax + double(az) * az))) && adist > 0,
+          "structure distance is the horizontal block distance");
+
+    int x2 = 0, z2 = 0, d2 = 0;
+    CHECK(FindStructure(1337 + 0x100000000ull, 0, 0, StructureType::Village, x2, z2, d2) &&
+          (x2 != ax || z2 != az), "the upper 32 seed bits move structure placement");
+
+    PerlinNoise noise(1337);
+    static uint8_t first[CHUNK_VOL], second[CHUNK_VOL];
+    const int cx = FloorDiv16(ax), cz = FloorDiv16(az);
+    GenerateClimateChunk(first, noise, 1337, cx, cz);
+    GenerateClimateChunk(second, noise, 1337, cx, cz);
+    CHECK(std::memcmp(first, second, CHUNK_VOL) == 0, "structure stamping is deterministic per chunk");
+    bool planks = false, chest = false;
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dx = -1; dx <= 1; ++dx) {
+            GenerateClimateChunk(first, noise, 1337, cx + dx, cz + dz);
+            for (int i = 0; i < CHUNK_VOL; ++i) {
+                if (first[i] == BLOCK_PLANKS) planks = true;
+                if (first[i] == BLOCK_CHEST) chest = true;
+            }
+        }
+    CHECK(planks && chest, "the village chunks contain building blocks and a chest");
+
+    int fx = 0, fz = 0, fdist = 0;
+    CHECK(FindStructure(1337, 0, 0, StructureType::NetherFortress, fx, fz, fdist),
+          "the seeded Nether grid finds a fortress");
+    static uint8_t nether[CHUNK_VOL];
+    GenerateNetherChunk(nether, noise, 1337, FloorDiv16(fx), FloorDiv16(fz));
+    int bricks = 0;
+    for (int i = 0; i < CHUNK_VOL; ++i)
+        if (nether[i] == BLOCK_NETHER_BRICKS) ++bricks;
+    CHECK(bricks > 0, "the fortress stamps nether bricks into its chunk");
 }
 
 int main() {
@@ -1404,6 +1480,7 @@ int main() {
     TestRegistryParsing();
     TestShiftClickParity();
     TestChatCommands();
+    TestSeedsAndStructures();
 
     // --- Perlin determinism and bounds ---
     PerlinNoise a(1337), b(1337), c(7);

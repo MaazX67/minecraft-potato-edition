@@ -1,6 +1,7 @@
 #include "world.h"
 #include "assets.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -28,10 +29,10 @@ static float Grad2(int h, float x, float y) {
     }
 }
 
-PerlinNoise::PerlinNoise(uint32_t seed) {
+PerlinNoise::PerlinNoise(uint64_t seed) {
     uint8_t base[256];
     std::iota(base, base + 256, 0);
-    std::mt19937 rng(seed);
+    std::mt19937_64 rng(MixSeed64(seed));
     std::shuffle(base, base + 256, rng);
     for (int i = 0; i < 512; ++i) mP[i] = base[i & 255];
 }
@@ -165,9 +166,10 @@ struct ClimateVein {
     float lateral = 0, centerY = 0, invRadiusY = 1;
 };
 
-ClimateVein SampleClimateVein(int x, int cellY, int z, uint32_t seed) {
+ClimateVein SampleClimateVein(int x, int cellY, int z, uint64_t seed) {
     const int cellX = FloorCell8(x), cellZ = FloorCell8(z);
-    const uint32_t hash = Hash3(uint32_t(cellX), uint32_t(cellY), uint32_t(cellZ), seed ^ 0xA341316Cu);
+    const uint32_t hash = Hash3(uint32_t(cellX), uint32_t(cellY), uint32_t(cellZ),
+                                SeedHash32(seed) ^ 0xA341316Cu);
     const uint32_t roll = hash % 100;
     const int bottom = cellY * 8;
     ClimateVein vein;
@@ -239,14 +241,369 @@ TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z) {
     return {height, biome, temperature, humidity};
 }
 
-void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz) {
+// ---------------------------------------------------------------------------
+// Seeded structures: one candidate per region cell, chosen and jittered from
+// the 64-bit world seed so a seed alone defines every structure in the world.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr int kOverworldStructureCell = 512;
+constexpr int kNetherStructureCell = 256;
+
+int FloorDivGrid(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
+
+uint64_t StructureCellHash(uint64_t seed, int cellX, int cellZ, bool nether) {
+    return MixSeed64(seed ^ (uint64_t(uint32_t(cellX)) * 0x9E3779B97F4A7C15ull)
+                          ^ (uint64_t(uint32_t(cellZ)) * 0xC2B2AE3D27D4EB4Full)
+                          ^ (nether ? 0x4E45544845524Bull : 0x4F56455257ull));
+}
+
+struct StructureCandidate {
+    bool present = false;
+    StructureType type = StructureType::Village;
+    int x = 0;
+    int z = 0;
+};
+
+StructureCandidate SampleStructureCell(uint64_t seed, int cellX, int cellZ, bool nether) {
+    StructureCandidate out;
+    const uint64_t h = StructureCellHash(seed, cellX, cellZ, nether);
+    const uint32_t roll = uint32_t(h % 1000u);
+    if (nether) {
+        if (roll < 90) out.type = StructureType::NetherFortress;
+        else if (roll < 150) out.type = StructureType::Bastion;
+        else return out;
+    } else if (roll < 55) {
+        out.type = StructureType::Village;
+    } else if (roll < 80) {
+        out.type = StructureType::PillagerOutpost;
+    } else if (roll < 125) {
+        out.type = StructureType::RuinedPortal;
+    } else if (roll < 155) {
+        out.type = StructureType::DesertPyramid;
+    } else if (roll < 175) {
+        out.type = StructureType::JungleTemple;
+    } else if (roll < 395) {
+        out.type = StructureType::Mineshaft;
+    } else if (roll < 455) {
+        out.type = StructureType::Stronghold;
+    } else {
+        return out;
+    }
+    out.present = true;
+    const int cell = nether ? kNetherStructureCell : kOverworldStructureCell;
+    const int span = cell - 96;
+    out.x = cellX * cell + 48 + int((h >> 16) % uint64_t(span));
+    out.z = cellZ * cell + 48 + int((h >> 34) % uint64_t(span));
+    return out;
+}
+
+struct StructureStamper {
+    uint8_t* blocks;
+    int originX, originZ;
+    void Put(int wx, int y, int wz, uint8_t block) const {
+        const int x = wx - originX, z = wz - originZ;
+        if (x < 0 || x >= CHUNK_X || z < 0 || z >= CHUNK_Z || y < 1 || y >= CHUNK_Y) return;
+        blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = block;
+    }
+    void Box(int x0, int y0, int z0, int x1, int y1, int z1, uint8_t block) const {
+        for (int y = y0; y <= y1; ++y)
+            for (int z = z0; z <= z1; ++z)
+                for (int x = x0; x <= x1; ++x) Put(x, y, z, block);
+    }
+};
+
+void VillageHut(const StructureStamper& s, int x, int gy, int z) {
+    s.Box(x - 2, gy, z - 2, x + 2, gy, z + 2, BLOCK_COBBLE);
+    for (int dy = 1; dy <= 3; ++dy)
+        for (int d = -2; d <= 2; ++d) {
+            const uint8_t wall = (d == -2 || d == 2) ? BLOCK_LOG : BLOCK_PLANKS;
+            s.Put(x + d, gy + dy, z - 2, wall);
+            s.Put(x + d, gy + dy, z + 2, wall);
+            s.Put(x - 2, gy + dy, z + d, wall);
+            s.Put(x + 2, gy + dy, z + d, wall);
+        }
+    s.Box(x - 2, gy + 4, z - 2, x + 2, gy + 4, z + 2, BLOCK_PLANKS);
+    s.Put(x, gy + 1, z - 2, BLOCK_AIR);
+    s.Put(x, gy + 2, z - 2, BLOCK_AIR);
+    s.Put(x - 1, gy + 2, z + 2, BLOCK_GLASS);
+    s.Put(x + 1, gy + 2, z + 2, BLOCK_GLASS);
+    s.Put(x + 1, gy + 1, z + 1, BLOCK_CHEST);
+}
+
+void BuildVillage(const StructureStamper& s, int x, int gy, int z) {
+    s.Box(x - 6, gy, z - 6, x + 6, gy, z + 6, BLOCK_COBBLE);
+    s.Box(x - 1, gy + 1, z - 1, x + 1, gy + 1, z + 1, BLOCK_COBBLE);
+    s.Put(x, gy + 1, z, BLOCK_WATER);
+    for (int dx = -1; dx <= 1; dx += 2)
+        for (int dz = -1; dz <= 1; dz += 2) s.Put(x + dx, gy + 2, z + dz, BLOCK_LOG);
+    s.Box(x - 2, gy + 3, z - 2, x + 2, gy + 3, z + 2, BLOCK_PLANKS);
+    VillageHut(s, x - 10, gy, z);
+    VillageHut(s, x + 10, gy, z);
+    VillageHut(s, x, gy, z - 10);
+    VillageHut(s, x, gy, z + 10);
+}
+
+void BuildDesertPyramid(const StructureStamper& s, int x, int gy, int z) {
+    for (int step = 0; step <= 6; ++step) {
+        const int r = 7 - step;
+        const int y = gy + step;
+        s.Box(x - r, y, z - r, x + r, y, z + r, BLOCK_SANDSTONE);
+        if (step == 2)
+            for (int d = -r + 1; d <= r - 1; ++d) {
+                s.Put(x + d, y, z - r, BLOCK_TERRACOTTA);
+                s.Put(x + d, y, z + r, BLOCK_TERRACOTTA);
+                s.Put(x - r, y, z + d, BLOCK_TERRACOTTA);
+                s.Put(x + r, y, z + d, BLOCK_TERRACOTTA);
+            }
+    }
+    s.Put(x, gy + 7, z, BLOCK_TERRACOTTA);
+    // Entrance tunnel on the south face plus the treasure room.
+    s.Box(x - 1, gy + 1, z + 1, x + 1, gy + 2, z + 7, BLOCK_AIR);
+    s.Box(x - 5, gy + 1, z - 5, x + 5, gy + 3, z + 5, BLOCK_AIR);
+    s.Put(x - 4, gy + 1, z - 4, BLOCK_CHEST);
+    s.Put(x + 4, gy + 1, z - 4, BLOCK_CHEST);
+    s.Put(x, gy + 1, z, BLOCK_TERRACOTTA);
+}
+
+void BuildJungleTemple(const StructureStamper& s, int x, int gy, int z) {
+    for (int step = 0; step <= 2; ++step) {
+        const int r = 5 - step * 2;
+        s.Box(x - r, gy + step * 2, z - r, x + r, gy + step * 2 + 1, z + r, BLOCK_MOSSY_COBBLE);
+    }
+    s.Put(x, gy + 6, z, BLOCK_CHEST);
+    s.Box(x - 1, gy + 1, z + 4, x + 1, gy + 2, z + 5, BLOCK_AIR);
+    s.Put(x - 2, gy + 1, z - 2, BLOCK_CRAFTING_TABLE);
+    s.Put(x + 2, gy + 3, z + 2, BLOCK_MOSSY_COBBLE);
+}
+
+void BuildRuinedPortal(const StructureStamper& s, int x, int gy, int z) {
+    s.Box(x - 3, gy, z - 2, x + 3, gy, z + 2, BLOCK_NETHERRACK);
+    s.Box(x - 2, gy + 1, z - 2, x + 2, gy + 1, z + 2, BLOCK_NETHERRACK);
+    for (int dy = 1; dy <= 5; ++dy) {
+        s.Put(x - 2, gy + dy, z, BLOCK_OBSIDIAN);
+        s.Put(x + 2, gy + dy, z, BLOCK_OBSIDIAN);
+    }
+    for (int dx = -1; dx <= 1; ++dx) s.Put(x + dx, gy + 6, z, BLOCK_OBSIDIAN);
+    s.Put(x + 2, gy + 3, z, BLOCK_AIR);
+    s.Put(x - 2, gy + 2, z, BLOCK_CRYING_OBSIDIAN);
+    s.Put(x - 3, gy + 1, z - 1, BLOCK_MAGMA);
+    s.Put(x + 3, gy + 1, z + 1, BLOCK_CHEST);
+}
+
+void BuildPillagerOutpost(const StructureStamper& s, int x, int gy, int z) {
+    s.Box(x - 5, gy, z - 5, x + 5, gy, z + 5, BLOCK_COBBLE);
+    for (int dx = -3; dx <= 3; dx += 3)
+        for (int dz = -3; dz <= 3; dz += 3)
+            for (int dy = 1; dy <= 4; ++dy) s.Put(x + dx, gy + dy, z + dz, BLOCK_LOG);
+    s.Box(x - 4, gy + 5, z - 4, x + 4, gy + 5, z + 4, BLOCK_PLANKS);
+    for (int dy = 6; dy <= 7; ++dy)
+        for (int d = -3; d <= 3; ++d) {
+            s.Put(x + d, gy + dy, z - 3, BLOCK_PLANKS);
+            s.Put(x + d, gy + dy, z + 3, BLOCK_PLANKS);
+            s.Put(x - 3, gy + dy, z + d, BLOCK_PLANKS);
+            s.Put(x + 3, gy + dy, z + d, BLOCK_PLANKS);
+        }
+    s.Put(x, gy + 6, z - 3, BLOCK_AIR);
+    s.Put(x, gy + 7, z - 3, BLOCK_AIR);
+    s.Box(x - 4, gy + 8, z - 4, x + 4, gy + 8, z + 4, BLOCK_PLANKS);
+    s.Put(x + 2, gy + 6, z + 2, BLOCK_CHEST);
+}
+
+void BuildMineshaft(const StructureStamper& s, int x, int y, int z) {
+    s.Box(x - 10, y, z - 1, x + 10, y, z + 1, BLOCK_PLANKS);
+    s.Box(x - 10, y + 1, z - 1, x + 10, y + 3, z + 1, BLOCK_AIR);
+    for (int d = -8; d <= 8; d += 4)
+        for (int dz = -1; dz <= 1; dz += 2)
+            for (int dy = 1; dy <= 3; ++dy) s.Put(x + d, y + dy, z + dz, BLOCK_LOG);
+    s.Box(x - 10, y + 4, z - 2, x + 10, y + 4, z + 2, BLOCK_PLANKS);
+    s.Box(x - 1, y, z - 8, x + 1, y, z + 8, BLOCK_PLANKS);
+    s.Box(x - 1, y + 1, z - 8, x + 1, y + 3, z + 8, BLOCK_AIR);
+    s.Put(x + 6, y + 1, z + 2, BLOCK_CHEST);
+    s.Put(x - 7, y, z + 1, BLOCK_COBBLE);
+}
+
+void BuildStronghold(const StructureStamper& s, int x, int y, int z) {
+    s.Box(x - 6, y, z - 6, x + 6, y + 5, z + 6, BLOCK_STONE_BRICKS);
+    s.Box(x - 5, y + 1, z - 5, x + 5, y + 4, z + 5, BLOCK_AIR);
+    s.Put(x - 6, y + 3, z - 6, BLOCK_MOSSY_STONE_BRICKS);
+    s.Put(x + 6, y + 2, z + 3, BLOCK_MOSSY_STONE_BRICKS);
+    s.Put(x - 3, y + 5, z + 1, BLOCK_MOSSY_STONE_BRICKS);
+    s.Box(x + 6, y + 1, z - 1, x + 6, y + 3, z + 1, BLOCK_AIR);
+    s.Box(x + 7, y, z - 1, x + 10, y + 3, z + 1, BLOCK_STONE_BRICKS);
+    s.Box(x + 7, y + 1, z - 1, x + 10, y + 2, z + 1, BLOCK_AIR);
+    s.Put(x + 4, y + 1, z + 4, BLOCK_CHEST);
+    s.Box(x - 1, y + 1, z - 1, x + 1, y + 4, z + 1, BLOCK_STONE_BRICKS);
+}
+
+void BuildNetherFortress(const StructureStamper& s, int x, int y, int z) {
+    s.Box(x - 12, y - 1, z - 2, x + 12, y - 1, z + 2, BLOCK_NETHER_BRICKS);
+    for (int dx = -12; dx <= 12; ++dx)
+        for (int dz = -2; dz <= 2; dz += 4) {
+            s.Put(x + dx, y, z + dz, BLOCK_NETHER_BRICKS);
+            s.Put(x + dx, y + 1, z + dz, BLOCK_NETHER_BRICKS);
+        }
+    for (int dx = -12; dx <= 12; dx += 6)
+        for (int dz = -2; dz <= 2; dz += 4)
+            for (int dy = 1; dy <= 4; ++dy) s.Put(x + dx, y + dy, z + dz, BLOCK_NETHER_BRICKS);
+    s.Box(x - 12, y + 5, z - 2, x + 12, y + 5, z + 2, BLOCK_NETHER_BRICKS);
+    s.Put(x + 9, y + 1, z + 1, BLOCK_CHEST);
+}
+
+void BuildBastion(const StructureStamper& s, int x, int y, int z) {
+    s.Box(x - 5, y, z - 5, x + 5, y, z + 5, BLOCK_BLACKSTONE);
+    for (int dy = 1; dy <= 6; ++dy)
+        for (int d = -5; d <= 5; ++d) {
+            const uint8_t wall = (d == -5 || d == 5) ? BLOCK_POLISHED_BLACKSTONE : BLOCK_BLACKSTONE;
+            s.Put(x + d, y + dy, z - 5, wall);
+            s.Put(x + d, y + dy, z + 5, wall);
+            s.Put(x - 5, y + dy, z + d, wall);
+            s.Put(x + 5, y + dy, z + d, wall);
+        }
+    s.Box(x - 6, y + 7, z - 6, x + 6, y + 7, z + 6, BLOCK_POLISHED_BLACKSTONE);
+    s.Box(x - 1, y + 1, z + 5, x + 1, y + 3, z + 5, BLOCK_AIR);
+    s.Put(x, y + 2, z + 3, BLOCK_GOLD_BLOCK);
+    s.Put(x - 3, y + 1, z - 3, BLOCK_CHEST);
+}
+
+int StructureGroundY(const PerlinNoise& noise, const StructureCandidate& c) {
+    return SampleTerrain(noise, c.x, c.z).height;
+}
+
+} // namespace
+
+const char* StructureId(StructureType type) {
+    switch (type) {
+        case StructureType::Village: return "village";
+        case StructureType::DesertPyramid: return "desert_pyramid";
+        case StructureType::JungleTemple: return "jungle_temple";
+        case StructureType::RuinedPortal: return "ruined_portal";
+        case StructureType::PillagerOutpost: return "pillager_outpost";
+        case StructureType::Mineshaft: return "mineshaft";
+        case StructureType::Stronghold: return "stronghold";
+        case StructureType::NetherFortress: return "nether_fortress";
+        case StructureType::Bastion: return "bastion";
+        default: return "";
+    }
+}
+
+const char* StructureName(StructureType type) {
+    switch (type) {
+        case StructureType::Village: return "Village";
+        case StructureType::DesertPyramid: return "Desert Pyramid";
+        case StructureType::JungleTemple: return "Jungle Temple";
+        case StructureType::RuinedPortal: return "Ruined Portal";
+        case StructureType::PillagerOutpost: return "Pillager Outpost";
+        case StructureType::Mineshaft: return "Mineshaft";
+        case StructureType::Stronghold: return "Stronghold";
+        case StructureType::NetherFortress: return "Nether Fortress";
+        case StructureType::Bastion: return "Bastion Remnant";
+        default: return "";
+    }
+}
+
+bool IsNetherStructure(StructureType type) {
+    return type == StructureType::NetherFortress || type == StructureType::Bastion;
+}
+
+bool ParseStructure(const std::string& name, StructureType& type) {
+    std::string key;
+    for (char ch : name) {
+        if (ch == ' ' || ch == '-') key.push_back('_');
+        else key.push_back(char(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    const std::string prefix = "minecraft:";
+    if (key.compare(0, prefix.size(), prefix) == 0) key.erase(0, prefix.size());
+    if (key == "desert_temple" || key == "pyramid") key = "desert_pyramid";
+    if (key == "jungle_pyramid") key = "jungle_temple";
+    if (key == "fortress") key = "nether_fortress";
+    if (key == "bastion_remnant") key = "bastion";
+    for (int i = 0; i < int(StructureType::Count); ++i) {
+        const StructureType candidate = StructureType(i);
+        if (key == StructureId(candidate)) { type = candidate; return true; }
+    }
+    return false;
+}
+
+bool FindStructure(uint64_t seed, int fromX, int fromZ, StructureType type,
+                   int& outX, int& outZ, int& distance) {
+    if (type == StructureType::Count) return false;
+    const bool nether = IsNetherStructure(type);
+    const int cell = nether ? kNetherStructureCell : kOverworldStructureCell;
+    const int baseCX = FloorDivGrid(fromX, cell);
+    const int baseCZ = FloorDivGrid(fromZ, cell);
+    int64_t bestSq = -1;
+    int bestX = 0, bestZ = 0;
+    for (int ring = 0; ring <= 32; ++ring) {
+        for (int gx = baseCX - ring; gx <= baseCX + ring; ++gx) {
+            for (int gz = baseCZ - ring; gz <= baseCZ + ring; ++gz) {
+                if (ring > 0 && abs(gx - baseCX) != ring && abs(gz - baseCZ) != ring) continue;
+                const StructureCandidate c = SampleStructureCell(seed, gx, gz, nether);
+                if (!c.present || c.type != type) continue;
+                const int64_t dx = int64_t(c.x) - fromX;
+                const int64_t dz = int64_t(c.z) - fromZ;
+                const int64_t sq = dx * dx + dz * dz;
+                if (bestSq < 0 || sq < bestSq) {
+                    bestSq = sq;
+                    bestX = c.x;
+                    bestZ = c.z;
+                }
+            }
+        }
+        if (bestSq >= 0 && double(ring) * double(cell) > std::sqrt(double(bestSq)) + double(cell)) break;
+    }
+    if (bestSq < 0) return false;
+    outX = bestX;
+    outZ = bestZ;
+    distance = int(std::llround(std::sqrt(double(bestSq))));
+    return true;
+}
+
+void ApplyStructures(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed,
+                     int cx, int cz, bool nether) {
+    const int cell = nether ? kNetherStructureCell : kOverworldStructureCell;
+    const int originX = cx * CHUNK_X;
+    const int originZ = cz * CHUNK_Z;
+    const int minCX = FloorDivGrid(originX - 16, cell);
+    const int maxCX = FloorDivGrid(originX + CHUNK_X + 16, cell);
+    const int minCZ = FloorDivGrid(originZ - 16, cell);
+    const int maxCZ = FloorDivGrid(originZ + CHUNK_Z + 16, cell);
+    const StructureStamper stamper{blocks, originX, originZ};
+    for (int gx = minCX; gx <= maxCX; ++gx) {
+        for (int gz = minCZ; gz <= maxCZ; ++gz) {
+            const StructureCandidate c = SampleStructureCell(seed, gx, gz, nether);
+            if (!c.present || IsNetherStructure(c.type) != nether) continue;
+            const int gy = StructureGroundY(noise, c);
+            switch (c.type) {
+                case StructureType::Village: BuildVillage(stamper, c.x, gy, c.z); break;
+                case StructureType::DesertPyramid: BuildDesertPyramid(stamper, c.x, gy, c.z); break;
+                case StructureType::JungleTemple: BuildJungleTemple(stamper, c.x, gy, c.z); break;
+                case StructureType::RuinedPortal: BuildRuinedPortal(stamper, c.x, gy, c.z); break;
+                case StructureType::PillagerOutpost: BuildPillagerOutpost(stamper, c.x, gy, c.z); break;
+                case StructureType::Mineshaft:
+                    BuildMineshaft(stamper, c.x, std::clamp(gy - 26, 14, 44), c.z);
+                    break;
+                case StructureType::Stronghold:
+                    BuildStronghold(stamper, c.x, std::clamp(gy - 22, 12, 40), c.z);
+                    break;
+                case StructureType::NetherFortress: BuildNetherFortress(stamper, c.x, 72, c.z); break;
+                case StructureType::Bastion: BuildBastion(stamper, c.x, 68, c.z); break;
+                default: break;
+            }
+        }
+    }
+}
+
+void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz) {
+    const uint32_t seed32 = SeedHash32(seed);
     const int ox = cx * CHUNK_X, oz = cz * CHUNK_Z;
     for (int x = 0; x < CHUNK_X; ++x) {
         for (int z = 0; z < CHUNK_Z; ++z) {
             const float wx = float(ox + x), wz = float(oz + z);
             const float ground = 64.0f + noise.Fbm2(wx * 0.01f, wz * 0.01f, 3) * 22.0f;
             for (int y = 0; y < CHUNK_Y; ++y) {
-                const uint32_t r = Hash3(uint32_t(wx), uint32_t(y), uint32_t(wz), seed) % 1000;
+                const uint32_t r = Hash3(uint32_t(wx), uint32_t(y), uint32_t(wz), seed32) % 1000;
                 uint8_t b = BLOCK_AIR;
                 if (y == 0 || (y < 4 && r < 600) || y >= 252 || (y > 248 && r < 600)) {
                     b = BLOCK_BEDROCK;
@@ -273,9 +630,10 @@ void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t see
             }
         }
     }
+    ApplyStructures(blocks, noise, seed, cx, cz, true);
 }
 
-void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t seed, int cx, int cz) {
+void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz) {
     memset(blocks, BLOCK_AIR, CHUNK_VOL * sizeof(uint8_t));
     const int originX = cx * CHUNK_X, originZ = cz * CHUNK_Z;
     TerrainColumn columns[CHUNK_X + 2][CHUNK_Z + 2];
@@ -342,7 +700,7 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t se
     // A four-block halo and shared candidate order keep tree overlap deterministic at chunk seams.
     for (int wx = originX - 4; wx < originX + CHUNK_X + 4; ++wx) {
         for (int wz = originZ - 4; wz < originZ + CHUNK_Z + 4; ++wz) {
-            const uint32_t hash = Hash3(uint32_t(wx), 0, uint32_t(wz), seed ^ 0x51ED270Bu);
+            const uint32_t hash = Hash3(uint32_t(wx), 0, uint32_t(wz), SeedHash32(seed) ^ 0x51ED270Bu);
             if ((hash & 255u) >= 16u) continue;
             const TerrainColumn column = SampleTerrain(noise, wx, wz);
             if (column.height <= CLIMATE_SEA + 2 || column.height > 145) continue;
@@ -390,49 +748,7 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint32_t se
         }
     }
 
-    // Rare surface structures: ruined nether portals and small village houses.
-    auto put = [&](int x, int y, int z, uint8_t b) {
-        if (x < 0 || x >= CHUNK_X || z < 0 || z >= CHUNK_Z || y < 0 || y >= CHUNK_Y) return;
-        blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = b;
-    };
-    for (int x = 3; x < CHUNK_X - 4; ++x) {
-        for (int z = 3; z < CHUNK_Z - 4; ++z) {
-            const int wx = originX + x, wz = originZ + z;
-            const uint32_t h = Hash3(uint32_t(wx), 7, uint32_t(wz), seed ^ 0x57AEu);
-            if ((h & 4095u) != 0) continue;
-            const TerrainColumn col = SampleTerrain(noise, wx, wz);
-            if (col.height <= CLIMATE_SEA + 2 || col.height > 140) continue;
-            const int y = col.height + 1;
-            if ((h >> 12) % 2 == 0) {
-                for (int dx = -2; dx <= 2; ++dx)
-                    for (int dz = -2; dz <= 2; ++dz) put(x + dx, y - 1, z + dz, BLOCK_NETHERRACK);
-                for (int dy = 0; dy < 4; ++dy) {
-                    put(x - 1, y + dy, z, BLOCK_OBSIDIAN);
-                    put(x + 2, y + dy, z, BLOCK_OBSIDIAN);
-                }
-                for (int dx = -1; dx <= 2; ++dx) put(x + dx, y + 4, z, BLOCK_OBSIDIAN);
-                put(x - 1, y + 3, z, BLOCK_CRYING_OBSIDIAN);
-                put(x + 2, y + 1, z, BLOCK_AIR);
-                put(x + 3, y, z + 1, BLOCK_CHEST);
-            } else if (col.biome == Biome::Plains || col.biome == Biome::Forest ||
-                       col.biome == Biome::CherryGrove) {
-                for (int dx = 0; dx < 5; ++dx)
-                    for (int dz = 0; dz < 5; ++dz) {
-                        put(x + dx, y - 1, z + dz, BLOCK_COBBLE);
-                        put(x + dx, y + 3, z + dz, BLOCK_PLANKS);
-                    }
-                for (int dy = 0; dy < 3; ++dy)
-                    for (int d = 0; d < 5; ++d) {
-                        const uint8_t wall = (d == 0 || d == 4) ? BLOCK_LOG : BLOCK_PLANKS;
-                        put(x + d, y + dy, z, wall); put(x + d, y + dy, z + 4, wall);
-                        put(x, y + dy, z + d, wall); put(x + 4, y + dy, z + d, wall);
-                    }
-                put(x + 2, y, z, BLOCK_AIR); put(x + 2, y + 1, z, BLOCK_AIR);
-                put(x + 2, y, z + 2, BLOCK_CHEST);
-                put(x + 1, y + 1, z + 4, BLOCK_GLASS); put(x + 3, y + 1, z + 4, BLOCK_GLASS);
-            }
-        }
-    }
+    ApplyStructures(blocks, noise, seed, cx, cz, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -693,7 +1009,7 @@ bool RaycastDDA(const std::function<uint8_t(int, int, int)>& getBlock,
 // World
 // ---------------------------------------------------------------------------
 
-World::World(uint32_t seed, int renderDistance, WorldGenerator generator)
+World::World(uint64_t seed, int renderDistance, WorldGenerator generator)
     : mSeed(seed), mGenerator(generator), mRd(renderDistance), mNoise(seed) {
     mWorkers.emplace_back([this] { WorkerLoop(); });
     mWorkers.emplace_back([this] { WorkerLoop(); });
@@ -814,7 +1130,7 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
                     b = sandy ? BLOCK_SAND : BLOCK_DIRT;
                 } else {
                     b = BLOCK_STONE;
-                    const uint32_t r = Hash3(uint32_t(wx), uint32_t(y), uint32_t(wz), mSeed) % 1000;
+                    const uint32_t r = Hash3(uint32_t(wx), uint32_t(y), uint32_t(wz), SeedHash32(mSeed)) % 1000;
                     if (y < 15 && r < 8) b = BLOCK_DIAMOND_ORE;
                     else if (y < 16 && r < 34) b = BLOCK_REDSTONE_ORE;
                     else if (y < 30 && r < 46) b = BLOCK_LAPIS_ORE;
@@ -846,7 +1162,7 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
             const int h = heights[x][z];
             if (h <= SEA + 1 || h + 9 >= CHUNK_Y) continue;
             if (c.blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * h] != BLOCK_GRASS) continue;
-            const uint32_t r = Hash3(uint32_t(cx * CHUNK_X + x), 0, uint32_t(cz * CHUNK_Z + z), mSeed ^ 0x51EDu);
+            const uint32_t r = Hash3(uint32_t(cx * CHUNK_X + x), 0, uint32_t(cz * CHUNK_Z + z), SeedHash32(mSeed) ^ 0x51EDu);
             if (r % 96 != 0) continue;
             const int base = h + 1, th = 4 + int(r % 3);
             auto setIfAir = [&](int lx, int y, int lz, uint8_t blk) {

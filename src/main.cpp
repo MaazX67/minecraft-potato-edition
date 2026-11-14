@@ -118,7 +118,7 @@ static WorldCreateInfo gCreate;
 static int gGameMode = 0; // 0 survival, 1 creative
 static bool gAllowCheats = false;
 static bool gKeepInventory = false;
-static uint32_t gWorldSeed = 1337;
+static uint64_t gWorldSeed = 1337;
 static InventoryState gInventory;
 static bool gCraftTable = false;
 static bool gInventoryTest = false;
@@ -334,15 +334,16 @@ static void StartGame() {
 
 // Java seed rules: blank -> random, all-digits -> the number itself,
 // anything else -> Java String.hashCode (h = 31*h + c, 32-bit wrap).
-static uint32_t ParseSeed(const std::string& text) {
+static uint64_t ParseSeed(const std::string& text) {
     if (text.empty())
-        return uint32_t(GetTickCount64()) ^ (uint32_t(rand()) << 16) ^ uint32_t(rand());
+        return MixSeed64(GetTickCount64() ^ (uint64_t(rand()) << 32) ^ uint64_t(rand()));
     char* end = nullptr;
     const long long v = strtoll(text.c_str(), &end, 10);
-    if (end != text.c_str() && *end == '\0') return uint32_t(v);
-    uint32_t h = 0;
-    for (char c : text) h = 31u * h + uint32_t(uint8_t(c));
-    return h;
+    if (end != text.c_str() && *end == '\0') return uint64_t(v);
+    // Java's String.hashCode stays 32-bit but is sign-extended into the seed.
+    int32_t h = 0;
+    for (char c : text) h = int32_t(31u * uint32_t(h) + uint32_t(uint8_t(c)));
+    return uint64_t(int64_t(h));
 }
 
 static int ResolveTile(const char* tex) {
@@ -494,7 +495,7 @@ static void RefreshWorldList() {
             const char* typeName = generator == WorldGenerator::Flat ? "Superflat"
                 : (generator == WorldGenerator::Legacy ? "Legacy" : "Default");
             const std::string details = std::string(mode == 1 ? "Creative Mode" : "Survival Mode") +
-                ", " + typeName + ", Seed: " + std::to_string(save.at("seed").get<uint32_t>());
+                ", " + typeName + ", Seed: " + std::to_string(save.at("seed").get<uint64_t>());
             gMenu.worlds.push_back({path, save.at("name").get<std::string>(), details,
                                    save.at("savedAt").get<uint64_t>()});
         } catch (const nlohmann::json::exception&) {
@@ -508,7 +509,7 @@ static void RefreshWorldList() {
     if (!gMenu.worlds.empty()) gMenu.selectedWorld = 0;
 }
 
-static void ResetWorld(uint32_t seed, EditMap edits = {}, WorldGenerator generator = WorldGenerator::Climate) {
+static void ResetWorld(uint64_t seed, EditMap edits = {}, WorldGenerator generator = WorldGenerator::Climate) {
     gWorldClock.Set(0);
     gZombies.clear();
     gMobSpawnTimer = 0;
@@ -612,7 +613,7 @@ static bool LoadWorldSave(const std::string& path) {
             if (!data.at("worldTime").is_number_unsigned()) return false;
             worldTime = data.at("worldTime").get<uint64_t>();
         }
-        const uint32_t seed = data.at("seed").get<uint32_t>();
+        const uint64_t seed = data.at("seed").get<uint64_t>();
         const std::string name = data.at("name").get<std::string>();
         const int mode = data.at("mode").get<int>(), difficulty = data.at("difficulty").get<int>();
         const auto position = data.at("position").get<std::vector<float>>();
@@ -1544,7 +1545,13 @@ public:
     }
     uint64_t TimeTicks() const override { return gWorldClock.Ticks(); }
     void SetTimeTicks(uint64_t ticks) override { gWorldClock.Set(ticks); }
-    uint32_t WorldSeed() const override { return gWorldSeed; }
+    uint64_t WorldSeed() const override { return gWorldSeed; }
+    bool LocateStructure(const std::string& structure, int& x, int& z, int& distance) override {
+        StructureType type;
+        if (!ParseStructure(structure, type)) return false;
+        return FindStructure(gWorldSeed, int(floorf(gBody.x)), int(floorf(gBody.z)), type,
+                             x, z, distance);
+    }
     void SetWeather(int weather, int durationTicks) override {
         gWeather = weather;
         gWeatherTicksLeft = float(durationTicks > 0 ? durationTicks
@@ -2743,7 +2750,8 @@ static void DrawDebug() {
     snprintf(line, sizeof(line), "HP: %d  Hunger: %d  Slot: %s", gSurvival.health, gSurvival.hunger,
              ItemName(gHotbar[gHotbarSlot]));
     row(line);
-    snprintf(line, sizeof(line), "Mode: %s  Seed: %u", gGameMode ? "Creative" : "Survival", gWorldSeed);
+    snprintf(line, sizeof(line), "Mode: %s  Seed: %llu", gGameMode ? "Creative" : "Survival",
+             static_cast<unsigned long long>(gWorldSeed));
     row(line);
     snprintf(line, sizeof(line), "Local player: %s  Assets: Java %s", gProfile.name.c_str(), gAssetVersion.c_str());
     row(line);

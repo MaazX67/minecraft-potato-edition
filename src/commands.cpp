@@ -1,6 +1,7 @@
 #include "commands.h"
 #include "engine.h"
 #include "registry.h"
+#include "world.h"
 
 #include <cctype>
 #include <cmath>
@@ -158,9 +159,12 @@ std::vector<std::string> ArgOptions(const std::string& cmd, size_t pos,
     } else if (cmd == "kill" && pos == 0) {
         out = {"player", "zombie", "@e"};
     } else if (cmd == "locate" && pos == 0) {
-        out = {"biome"};
+        out = {"biome", "structure"};
     } else if (cmd == "locate" && pos == 1 && !done.empty() && Lower(done[0]) == "biome") {
         for (const char* biome : kBiomes) out.push_back(biome);
+    } else if (cmd == "locate" && pos == 1 && !done.empty() && Lower(done[0]) == "structure") {
+        for (int i = 0; i < int(StructureType::Count); ++i)
+            out.push_back(StructureId(StructureType(i)));
     } else if (cmd == "give" && pos == 0) {
         for (int i = 1; i < 256; ++i) {
             const uint8_t id = uint8_t(i);
@@ -272,10 +276,21 @@ CommandResult ExecuteCommand(const std::string& line, CommandHost& host) {
                      biome.c_str(), x, z, distance);
             return Ok(std::string(msg));
         }
-        if (what == "structure" || what == "poi") {
-            return Err("Structure locating is not available on this world");
+        if (what == "structure") {
+            if (tokens.size() < 2) return Usage("/locate structure <structure>");
+            StructureType type;
+            if (!ParseStructure(tokens[1], type))
+                return Err("Unknown structure '" + tokens[1] + "'");
+            int x = 0, z = 0, distance = 0;
+            if (!host.LocateStructure(StructureId(type), x, z, distance))
+                return Err("Could not find a structure of type \"" + std::string(StructureId(type)) +
+                           "\" within a reasonable distance");
+            char msg[192];
+            snprintf(msg, sizeof(msg), "The nearest %s is at [%d, ~, %d] (%d blocks away)",
+                     StructureId(type), x, z, distance);
+            return Ok(std::string(msg));
         }
-        return Usage("/locate biome <biome>");
+        return Usage("/locate <biome|structure> <type>");
     }
     if (cmd == "summon") {
         if (tokens.empty()) return Usage("/summon <entity> [count]");
