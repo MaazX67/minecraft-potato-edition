@@ -1365,10 +1365,12 @@ static void TestChatCommands() {
     options = potato::CommandCompletions("/weather ");
     CHECK(options.size() == 3, "tab offers every weather argument");
     options = potato::CommandCompletions("/time set mid");
-    printf("  [diag] /time set mid -> %zu:", options.size());
-    for (const std::string& o : options) printf(" '%s'", o.c_str());
-    printf("\n");
     CHECK(options.size() == 1 && options[0] == "/time set midnight", "tab completes nested arguments");
+    options = potato::CommandCompletions("/time set ");
+    CHECK(options.size() == 4 && options[3] == "/time set midnight", "trailing space advances to the next argument");
+    options = potato::CommandCompletions("/gamerule keepInventory ");
+    CHECK(options.size() == 2 && options[0] == "/gamerule keepInventory true",
+          "nested lists keep the earlier argument");
     options = potato::CommandCompletions("/give sto");
     CHECK(!options.empty() && has(options[0], "stone"), "tab completes item ids");
     CHECK(potato::CommonPrefix({"/gamemode creative", "/gamemode c"}) == "/gamemode c",

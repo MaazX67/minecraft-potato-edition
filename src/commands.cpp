@@ -137,22 +137,21 @@ std::vector<std::string> CommandNames() {
             "/summon", "/kill", "/clear", "/gamerule", "/help"};
 }
 
-std::vector<std::string> ArgOptions(const std::string& cmd, const std::vector<std::string>& args) {
+// Options for the token at index pos; done holds every earlier token.
+std::vector<std::string> ArgOptions(const std::string& cmd, size_t pos,
+                                    const std::vector<std::string>& done) {
     std::vector<std::string> out;
-    const size_t pos = args.empty() ? 0 : args.size() - 1;
-    const std::string partial = args.empty() ? std::string() : args.back();
-    (void)partial;
     if (cmd == "gamemode" && pos == 0) {
         out = {"survival", "creative", "s", "c"};
     } else if (cmd == "weather" && pos == 0) {
         out = {"clear", "rain", "thunder"};
     } else if (cmd == "time" && pos == 0) {
         out = {"set", "add", "query"};
-    } else if (cmd == "time" && pos == 1 && !args.empty() && Lower(args[0]) == "set") {
+    } else if (cmd == "time" && pos == 1 && !done.empty() && Lower(done[0]) == "set") {
         out = {"day", "noon", "night", "midnight"};
     } else if (cmd == "gamerule" && pos == 0) {
         for (const char* rule : kGameRules) out.push_back(rule);
-    } else if (cmd == "gamerule" && pos == 1 && !args.empty() && IsGameRule(args[0])) {
+    } else if (cmd == "gamerule" && pos == 1 && !done.empty() && IsGameRule(done[0])) {
         out = {"true", "false"};
     } else if (cmd == "summon" && pos == 0) {
         out = {"zombie"};
@@ -160,7 +159,7 @@ std::vector<std::string> ArgOptions(const std::string& cmd, const std::vector<st
         out = {"player", "zombie", "@e"};
     } else if (cmd == "locate" && pos == 0) {
         out = {"biome"};
-    } else if (cmd == "locate" && pos == 1 && !args.empty() && Lower(args[0]) == "biome") {
+    } else if (cmd == "locate" && pos == 1 && !done.empty() && Lower(done[0]) == "biome") {
         for (const char* biome : kBiomes) out.push_back(biome);
     } else if (cmd == "give" && pos == 0) {
         for (int i = 1; i < 256; ++i) {
@@ -352,11 +351,23 @@ std::vector<std::string> CommandCompletions(const std::string& input) {
     }
     const std::string cmd = Lower(body.substr(0, space));
     const std::string rest = body.substr(space + 1);
-    const std::vector<std::string> args = Tokenize(rest);
-    const std::string partial = Lower(args.empty() ? std::string() : args.back());
-    for (const std::string& option : ArgOptions(cmd, args))
-        if (Lower(option).compare(0, partial.size(), partial) == 0)
-            out.push_back("/" + cmd + " " + option);
+    const std::vector<std::string> tokens = Tokenize(rest);
+    const bool trailing = !rest.empty() && (rest.back() == ' ' || rest.back() == '\t');
+    std::vector<std::string> done;
+    std::string partial;
+    if (trailing) {
+        done = tokens;
+    } else if (!tokens.empty()) {
+        done.assign(tokens.begin(), tokens.end() - 1);
+        partial = tokens.back();
+    }
+    const std::string lowerPartial = Lower(partial);
+    std::string base = "/" + cmd;
+    for (const std::string& token : done) base += " " + token;
+    base += " ";
+    for (const std::string& option : ArgOptions(cmd, done.size(), done))
+        if (Lower(option).compare(0, lowerPartial.size(), lowerPartial) == 0)
+            out.push_back(base + option);
     return out;
 }
 
