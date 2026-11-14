@@ -47,13 +47,103 @@ struct BlockTiles {
     }
 };
 
+// Java-style PalettedContainer for one 16x16x16 chunk section. Uniform
+// sections keep a single id (no allocation); mixed sections store a palette
+// with 2/4/8-bit packed indices, so a section never exceeds 4 KB + palette.
+class PalettedSection {
+public:
+    uint8_t Get(int index) const {
+        if (mBits == 0) return mUniform;
+        const int per = 32 / mBits;
+        const uint32_t word = mWords[size_t(index) / per];
+        const uint32_t shift = uint32_t(index % per) * mBits;
+        return mPalette[(word >> shift) & ((1u << mBits) - 1u)];
+    }
+    void Set(int index, uint8_t value) {
+        if (mBits == 0) {
+            if (value == mUniform) return;
+            mPalette.push_back(mUniform);
+            mPalette.push_back(value);
+            mBits = 2;
+            mWords.assign(4096 * 2 / 32, 0);
+            Write(index, 1);
+            return;
+        }
+        int slot = Find(value);
+        if (slot < 0) {
+            if (mPalette.size() >= (size_t(1) << mBits)) {
+                if (mBits >= 8) return;
+                Repack(mBits == 2 ? 4 : 8);
+            }
+            slot = int(mPalette.size());
+            mPalette.push_back(value);
+        }
+        Write(index, uint32_t(slot));
+    }
+    bool IsUniform() const { return mBits == 0; }
+    size_t StorageBytes() const {
+        return mBits == 0 ? sizeof(*this) : sizeof(*this) + mWords.size() * 4 + mPalette.size();
+    }
+private:
+    int Find(uint8_t value) const {
+        for (size_t i = 0; i < mPalette.size(); ++i)
+            if (mPalette[i] == value) return int(i);
+        return -1;
+    }
+    void Write(int index, uint32_t slot) {
+        const int per = 32 / mBits;
+        uint32_t& word = mWords[size_t(index) / per];
+        const uint32_t shift = uint32_t(index % per) * mBits;
+        const uint32_t mask = (1u << mBits) - 1u;
+        word = (word & ~(mask << shift)) | ((slot & mask) << shift);
+    }
+    void Write(int index, uint32_t slot, uint8_t value) {
+        Write(index, slot);
+        (void)value;
+    }
+    void Repack(uint8_t newBits) {
+        std::vector<uint32_t> packed(4096 * newBits / 32, 0);
+        for (int i = 0; i < 4096; ++i) {
+            const int per = 32 / mBits;
+            const uint32_t word = mWords[size_t(i) / per];
+            const uint32_t shift = uint32_t(i % per) * mBits;
+            const uint32_t slot = (word >> shift) & ((1u << mBits) - 1u);
+            const int nper = 32 / newBits;
+            const uint32_t nshift = uint32_t(i % nper) * newBits;
+            packed[size_t(i) / nper] |= slot << nshift;
+        }
+        mWords = std::move(packed);
+        mBits = newBits;
+    }
+    uint8_t mBits = 0;            // 0 = uniform, else 2/4/8 bits per index
+    uint8_t mUniform = BLOCK_AIR;
+    std::vector<uint8_t> mPalette;
+    std::vector<uint32_t> mWords;
+};
+
 struct Chunk {
-    uint8_t blocks[CHUNK_VOL];
+    static constexpr int SECTION_COUNT = CHUNK_Y / 16;
+    PalettedSection sections[SECTION_COUNT];
     std::atomic<bool> generated{false};
     bool genQueued = false;
     bool dirty = true;
     bool meshQueued = false;
-    Chunk() { memset(blocks, 0, sizeof(blocks)); }
+
+    uint8_t GetIndex(int index) const { return sections[index >> 12].Get(index & 4095); }
+    void SetIndex(int index, uint8_t value) { sections[index >> 12].Set(index & 4095, value); }
+    void SetRaw(const uint8_t* raw) {
+        for (int s = 0; s < SECTION_COUNT; ++s)
+            for (int i = 0; i < 4096; ++i) sections[s].Set(i, raw[s * 4096 + i]);
+    }
+    void GetRaw(uint8_t* out) const {
+        for (int s = 0; s < SECTION_COUNT; ++s)
+            for (int i = 0; i < 4096; ++i) out[s * 4096 + i] = sections[s].Get(i);
+    }
+    size_t StorageBytes() const {
+        size_t total = sizeof(*this);
+        for (const PalettedSection& s : sections) total += s.StorageBytes() - sizeof(PalettedSection);
+        return total;
+    }
 };
 
 class PerlinNoise {

@@ -1092,20 +1092,23 @@ void World::Update(float camX, float camZ) {
 }
 
 void World::GenerateChunk(Chunk& c, int cx, int cz) const {
+    std::vector<uint8_t> raw(CHUNK_VOL, BLOCK_AIR);
     if (mGenerator == WorldGenerator::Climate) {
-        GenerateClimateChunk(c.blocks, mNoise, mSeed, cx, cz);
+        GenerateClimateChunk(raw.data(), mNoise, mSeed, cx, cz);
+        c.SetRaw(raw.data());
         return;
     }
     if (mGenerator == WorldGenerator::Nether) {
-        GenerateNetherChunk(c.blocks, mNoise, mSeed, cx, cz);
+        GenerateNetherChunk(raw.data(), mNoise, mSeed, cx, cz);
+        c.SetRaw(raw.data());
         return;
     }
     if (mGenerator == WorldGenerator::Flat) {
-        memset(c.blocks, BLOCK_AIR, sizeof(c.blocks));
         constexpr int layer = CHUNK_X * CHUNK_Z;
-        std::fill_n(c.blocks, layer, BLOCK_BEDROCK);
-        std::fill_n(c.blocks + layer, layer * 2, BLOCK_DIRT);
-        std::fill_n(c.blocks + layer * 3, layer, BLOCK_GRASS);
+        std::fill_n(raw.data(), layer, BLOCK_BEDROCK);
+        std::fill_n(raw.data() + layer, layer * 2, BLOCK_DIRT);
+        std::fill_n(raw.data() + layer * 3, layer, BLOCK_GRASS);
+        c.SetRaw(raw.data());
         return;
     }
     constexpr int SEA = 60;
@@ -1147,10 +1150,10 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
                     const float cave = mNoise.Fbm3(wx * 0.055f, float(y) * 0.08f, wz * 0.055f, 3);
                     if (cave > 0.58f) b = BLOCK_AIR;
                 }
-                c.blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = b;
+                raw[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = b;
             }
             for (int y = h + 1; y <= SEA; ++y) {
-                c.blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = BLOCK_WATER;
+                raw[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = BLOCK_WATER;
             }
         }
     }
@@ -1161,13 +1164,13 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
         for (int z = 2; z < CHUNK_Z - 2; ++z) {
             const int h = heights[x][z];
             if (h <= SEA + 1 || h + 9 >= CHUNK_Y) continue;
-            if (c.blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * h] != BLOCK_GRASS) continue;
+            if (raw[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * h] != BLOCK_GRASS) continue;
             const uint32_t r = Hash3(uint32_t(cx * CHUNK_X + x), 0, uint32_t(cz * CHUNK_Z + z), SeedHash32(mSeed) ^ 0x51EDu);
             if (r % 96 != 0) continue;
             const int base = h + 1, th = 4 + int(r % 3);
             auto setIfAir = [&](int lx, int y, int lz, uint8_t blk) {
                 const size_t idx = size_t(lx) + CHUNK_X * size_t(lz) + CHUNK_X * CHUNK_Z * size_t(y);
-                if (c.blocks[idx] == BLOCK_AIR) c.blocks[idx] = blk;
+                if (raw[idx] == BLOCK_AIR) raw[idx] = blk;
             };
             for (int dx = -2; dx <= 2; ++dx) {
                 for (int dz = -2; dz <= 2; ++dz) {
@@ -1184,10 +1187,11 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
                 }
             }
             for (int i = 0; i < th; ++i) {
-                c.blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * (base + i)] = BLOCK_LOG;
+                raw[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * (base + i)] = BLOCK_LOG;
             }
         }
     }
+    c.SetRaw(raw.data());
 }
 
 int World::SurfaceY(int x, int z) const {
@@ -1201,7 +1205,7 @@ int World::SurfaceY(int x, int z) const {
     const int lx = x - cx * CHUNK_X, lz = z - cz * CHUNK_Z;
     std::shared_lock<std::shared_mutex> blk(mBlocksMutex);
     for (int y = CHUNK_Y - 1; y >= 0; --y) {
-        const uint8_t b = c->blocks[lx + CHUNK_X * lz + CHUNK_X * CHUNK_Z * y];
+        const uint8_t b = c->GetIndex(lx + CHUNK_X * lz + CHUNK_X * CHUNK_Z * y);
         if (BLOCK_FLAGS[b] & BF_SOLID) return y;
     }
     return -1;
@@ -1262,7 +1266,7 @@ void World::WorkerLoop() {
                 std::lock_guard<std::mutex> lk(mEditsMutex);
                 const auto edits = mEdits.find(ChunkKey(gj.cx, gj.cz));
                 if (edits != mEdits.end())
-                    for (const auto& e : edits->second) gj.chunk->blocks[e.first] = e.second;
+                    for (const auto& e : edits->second) gj.chunk->SetIndex(e.first, e.second);
             }
             gj.chunk->generated.store(true, std::memory_order_release);
             {
@@ -1277,11 +1281,21 @@ void World::WorkerLoop() {
             MeshData md;
             {
                 std::shared_lock<std::shared_mutex> blk(mBlocksMutex);
-                BuildChunkMeshCPU(mj.chunk->blocks,
-                                  mj.negX ? mj.negX->blocks : nullptr,
-                                  mj.posX ? mj.posX->blocks : nullptr,
-                                  mj.negZ ? mj.negZ->blocks : nullptr,
-                                  mj.posZ ? mj.posZ->blocks : nullptr,
+                // Mesh building consumes raw arrays; decode the paletted sections
+                // into scratch buffers for the chunk and its four neighbors.
+                std::vector<uint8_t> selfRaw(CHUNK_VOL), negXraw, posXraw, negZraw, posZraw;
+                auto decode = [](const std::shared_ptr<Chunk>& c, std::vector<uint8_t>& out) -> const uint8_t* {
+                    if (!c) return nullptr;
+                    out.resize(CHUNK_VOL);
+                    c->GetRaw(out.data());
+                    return out.data();
+                };
+                mj.chunk->GetRaw(selfRaw.data());
+                BuildChunkMeshCPU(selfRaw.data(),
+                                  decode(mj.negX, negXraw),
+                                  decode(mj.posX, posXraw),
+                                  decode(mj.negZ, negZraw),
+                                  decode(mj.posZ, posZraw),
                                   mTiles, md);
             }
             // Vertices are chunk-local; bake the chunk's world offset so each
@@ -1318,7 +1332,7 @@ uint8_t World::GetBlock(int x, int y, int z) const {
     }
     if (!c || !c->generated.load(std::memory_order_acquire)) return 0;
     std::shared_lock<std::shared_mutex> blk(mBlocksMutex);
-    return c->blocks[(x - cx * CHUNK_X) + CHUNK_X * (z - cz * CHUNK_Z) + CHUNK_X * CHUNK_Z * y];
+    return c->GetIndex((x - cx * CHUNK_X) + CHUNK_X * (z - cz * CHUNK_Z) + CHUNK_X * CHUNK_Z * y);
 }
 
 void World::SetBlock(int x, int y, int z, uint8_t block) {
@@ -1338,7 +1352,7 @@ void World::SetBlock(int x, int y, int z, uint8_t block) {
     }
     {
         std::unique_lock<std::shared_mutex> blk(mBlocksMutex);
-        c->blocks[index] = block;
+        c->SetIndex(index, block);
     }
     {
         std::lock_guard<std::mutex> lk(mQueueMutex);
