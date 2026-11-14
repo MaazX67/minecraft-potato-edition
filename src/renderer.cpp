@@ -219,6 +219,14 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
     rd.DepthClipEnable = TRUE;
     hr = rc.device->CreateRasterizerState(&rd, &rc.rasterizer);
     if (FAILED(hr)) return false;
+    // The LOD heightfield deliberately overlaps the outermost loaded chunk
+    // ring so no sky holes appear at the streaming boundary. Bias it away from
+    // the eye so the real chunk geometry always wins the depth test instead of
+    // z-fighting into striped bands.
+    rd.DepthBias = 2000;
+    rd.SlopeScaledDepthBias = 2.0f;
+    hr = rc.device->CreateRasterizerState(&rd, &rc.rasterizerLod);
+    if (FAILED(hr)) return false;
 
     rc.device->IASetInputLayout(rc.layout);
     rc.device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -314,6 +322,7 @@ void ShutdownRenderer(RenderContext& rc) {
     SafeRelease(rc.panoramaSRV);
     SafeRelease(rc.psSky);
     SafeRelease(rc.atlasSRV);
+    SafeRelease(rc.rasterizerLod);
     SafeRelease(rc.rasterizer);
     SafeRelease(rc.depthReadOnly);
     SafeRelease(rc.depthOff);

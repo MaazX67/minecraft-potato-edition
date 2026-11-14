@@ -182,7 +182,7 @@ inline uint32_t SeedHash32(uint64_t seed) {
 }
 
 
-enum class WorldGenerator { Legacy, Climate, Flat, Nether };
+enum class WorldGenerator { Legacy, Climate, Flat, Nether, LargeBiomes, Amplified };
 const char* GeneratorName(WorldGenerator generator);
 bool ParseGenerator(const std::string& name, WorldGenerator& generator);
 
@@ -196,8 +196,10 @@ struct TerrainColumn {
     float humidity;
 };
 
-TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z);
-void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz);
+TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z,
+                            bool largeBiomes = false, bool amplified = false);
+void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz,
+                          bool largeBiomes = false, bool amplified = false, bool structures = true);
 void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz);
 
 // Seeded structure placement. Java 26.3 places one candidate per region cell;
@@ -265,6 +267,10 @@ public:
     void SetRenderDistance(int rd);
     int RenderDistance() const;
     void SetBlockTiles(const BlockTiles& tiles) { mTiles = tiles; }
+    // Create New World > Generate Structures. Must be set before the first
+    // Update(); already-generated chunks keep their structures.
+    void SetGenerateStructures(bool on) { mStructures = on; }
+    bool GenerateStructures() const { return mStructures; }
     void Update(float camX, float camZ); // load/unload chunks around the camera
     uint8_t GetBlock(int x, int y, int z) const;
     void SetBlock(int x, int y, int z, uint8_t block); // marks dirty, remeshes
@@ -311,6 +317,7 @@ private:
 
     const uint64_t mSeed;
     const WorldGenerator mGenerator;
+    bool mStructures = true;
     int mRd;
     PerlinNoise mNoise;
     BlockTiles mTiles;

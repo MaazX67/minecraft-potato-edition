@@ -30,6 +30,7 @@ struct RenderContext {
     ID3D10DepthStencilState* depthOff = nullptr;
     ID3D10DepthStencilState* depthReadOnly = nullptr; // particles: test on, write off
     ID3D10RasterizerState* rasterizer = nullptr;
+    ID3D10RasterizerState* rasterizerLod = nullptr; // depth-biased so chunk meshes win
     ID3D10ShaderResourceView* atlasSRV = nullptr;
     // Title-screen panorama cubemap (optional; null falls back to dirt).
     ID3D10PixelShader* psSky = nullptr;

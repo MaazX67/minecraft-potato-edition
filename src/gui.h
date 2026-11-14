@@ -19,7 +19,8 @@ struct GuiTexture {
 
 enum class Screen {
     Title, CreateWorld, Options, Pause, Game, Inventory, Death,
-    VideoOptions, SoundOptions, ControlsOptions, Profile, SelectWorld, Furnace, Chest
+    VideoOptions, SoundOptions, ControlsOptions, Profile, SelectWorld, Furnace, Chest,
+    ConfirmDelete, EditWorld, GameRules
 };
 
 struct PlayerProfile {
@@ -44,9 +45,32 @@ struct Settings {
     bool vsync = false;
     bool fullscreen = false;
     int difficulty = 2; // 0 peaceful, 1 easy, 2 normal, 3 hard
+    // Video
+    bool fancyGraphics = true;
+    bool smoothLighting = true;
+    int maxFramerate = 120; // 0 = unlimited
+    int guiScale = 0;       // 0 = auto, 1..4
+    int clouds = 2;         // 0 off, 1 fast, 2 fancy
+    int particles = 2;      // 0 minimal, 1 decreased, 2 all
+    bool entityShadows = true;
+    // Controls
+    bool invertMouse = false;
+    float scrollSensitivity = 1.0f;
+    // Sound categories: master, music, jukebox, weather, blocks, hostile,
+    // friendly, players, ambient.
+    float categoryVolume[9] = {1.0f, 0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    // Key binds, default vanilla layout.
+    int bindForward = 'W', bindBack = 'S', bindLeft = 'A', bindRight = 'D';
+    int bindJump = VK_SPACE, bindSneak = VK_SHIFT, bindSprint = VK_CONTROL;
+    int bindInventory = 'E', bindDrop = 'Q', bindChat = 'T', bindCommand = VK_OEM_2;
+    int bindPerspective = VK_F5;
 };
 
-enum SliderId { SL_FOV = 1, SL_RD, SL_SENS, SL_SOUND, SL_MUSIC, SL_BRIGHT };
+enum SliderId {
+    SL_FOV = 1, SL_RD, SL_SENS, SL_SOUND, SL_MUSIC, SL_BRIGHT, SL_SCROLL,
+    SL_CAT_MASTER = 100, SL_CAT_MUSIC, SL_CAT_JUKEBOX, SL_CAT_WEATHER, SL_CAT_BLOCKS,
+    SL_CAT_HOSTILE, SL_CAT_FRIENDLY, SL_CAT_PLAYERS, SL_CAT_AMBIENT
+};
 
 // Orthographic textured-quad renderer. One dynamic vertex buffer, batches
 // grouped by texture, drawn with PSMainUI (alpha blend, depth off). Vertex
@@ -77,6 +101,7 @@ public:
                          float angle, float shade, bool shadow,
                          float cr = 1.0f, float cg = 1.0f, float cb = 1.0f);
     float TextWidth(const std::string& text, float scale) const;
+    GuiTexture CreateGuiTexture(RenderContext& rc, const uint8_t* rgba, int w, int h);
 
     GuiTexture texButton, texButtonHi, texButtonDisabled, texLogo, texEdition, texCrosshair;
     GuiTexture texHotbar, texHotbarSel, texFont, texDirt, texWhite, texBlack;
@@ -122,8 +147,33 @@ enum MenuAction {
     ACT_SKIN_PREV, ACT_SKIN_NEXT, ACT_SKIN_MODEL,
     ACT_NEW_WORLD, ACT_LOAD_WORLD, ACT_WORLD_PREV, ACT_WORLD_NEXT,
     ACT_CYCLE_WORLD_TYPE, ACT_TOGGLE_CHEATS, ACT_TOGGLE_KEEPINV,
+    ACT_WORLD_EDIT, ACT_WORLD_DELETE, ACT_WORLD_RECREATE,
+    ACT_CONFIRM_DELETE, ACT_CANCEL_DELETE,
+    ACT_EDIT_RENAME, ACT_EDIT_FOLDER, ACT_EDIT_RESET_ICON, ACT_EDIT_DONE, ACT_EDIT_CANCEL,
+    ACT_GAMERULES, ACT_GAMERULES_DONE,
+    ACT_TOGGLE_STRUCTURES, ACT_TOGGLE_BONUS,
+    ACT_VIDEO_MENU, ACT_SOUND_MENU, ACT_CONTROLS_MENU, ACT_DONE_VIDEO, ACT_DONE_CONTROLS,
+    ACT_TOGGLE_FANCY, ACT_TOGGLE_SMOOTH, ACT_CYCLE_FPS, ACT_CYCLE_GUISCALE,
+    ACT_CYCLE_CLOUDS, ACT_CYCLE_PARTICLES, ACT_TOGGLE_SHADOWS,
+    ACT_TOGGLE_INVERT, ACT_CYCLE_RD_DOWN, ACT_CYCLE_RD_UP,
+    ACT_CYCLE_RULE_RANDOMTICK,
+    ACT_RULE_TOGGLE_BASE = 300,
+    ACT_BIND_BASE = 400,
     ACT_WORLD_ROW = 1000
 };
+
+// Menu-configurable game rules (Create New World > More > Game Rules).
+enum MenuRule {
+    RULE_DAYLIGHT, RULE_MOBSPAWN, RULE_WEATHER, RULE_KEEPINV,
+    RULE_MOBGRIEF, RULE_FIRETICK, RULE_COUNT
+};
+enum MenuKeyBind {
+    BIND_FORWARD, BIND_BACK, BIND_LEFT, BIND_RIGHT, BIND_JUMP, BIND_SNEAK,
+    BIND_SPRINT, BIND_INVENTORY, BIND_DROP, BIND_CHAT, BIND_COMMAND, BIND_PERSPECTIVE,
+    BIND_COUNT
+};
+const char* DefaultBindName(int bind);
+const char* KeyName(int vk);
 
 // State of the Create New World form; main owns it and applies it on create.
 struct WorldCreateInfo {
@@ -136,23 +186,37 @@ struct WorldCreateInfo {
     WorldGenerator generator = WorldGenerator::Climate;
     bool allowCheats = false;
     bool keepInventory = false;
+    bool structures = true;
+    bool bonusChest = false;
+    bool rules[RULE_COUNT] = {true, true, true, false, true, true};
+    int randomTickSpeed = 3;
 };
 
 // Vanilla-style screens built from real GUI sprites. The 3D background
 // (panorama skybox or frozen world) is rendered by the caller first.
 struct SavedWorldEntry {
-    std::string path, name, details;
+    std::string path, name, details, folder, savedText;
     uint64_t savedAt = 0;
+    int mode = 0;
+    int difficulty = 2;
+    bool cheats = false;
+    uint64_t seed = 0;
+    std::string generator;
+    std::vector<uint8_t> icon;
+    int iconW = 0, iconH = 0;
 };
 
 class MenuSystem {
 public:
     std::vector<SavedWorldEntry> worlds;
+    std::vector<GuiTexture> worldIcons;
     int selectedWorld = -1;
     int worldPage = 0;
+    void LoadWorldIcons(RenderContext& rc);
     void Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldCreateInfo& create,
               const std::string& typed, int mouseX, int mouseY, bool leftDown,
-              const std::string& splash, float timeSec, const PlayerProfile& profile);
+              const std::string& splash, float timeSec, const PlayerProfile& profile,
+              const std::string& editName, int editingBind);
     int HitTest(int mouseX, int mouseY) const;
     bool ConsumeChanged() { const bool c = mChanged; mChanged = false; return c; }
 

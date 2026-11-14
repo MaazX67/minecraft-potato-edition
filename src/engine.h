@@ -163,6 +163,12 @@ struct InputState {
     }
 };
 
+struct KeyBinds {
+    int forward = 'W', back = 'S', left = 'A', right = 'D';
+    int jump = VK_SPACE, sneak = VK_SHIFT, sprint = VK_CONTROL;
+};
+extern KeyBinds gBinds;
+
 // Fly camera: yaw/pitch mouse look, WASD + Space/Shift, dt-corrected.
 // Conventions: yaw 0 faces -Z, +X is right, +Y is up.
 class FlyCamera {

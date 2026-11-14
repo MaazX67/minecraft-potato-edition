@@ -118,6 +118,8 @@ const char* GeneratorName(WorldGenerator generator) {
         case WorldGenerator::Climate: return "potato-climate-v2";
         case WorldGenerator::Flat: return "potato-flat-v1";
         case WorldGenerator::Nether: return "potato-nether-v1";
+        case WorldGenerator::LargeBiomes: return "potato-large-biomes-v1";
+        case WorldGenerator::Amplified: return "potato-amplified-v1";
     }
     return "unknown";
 }
@@ -127,6 +129,8 @@ bool ParseGenerator(const std::string& name, WorldGenerator& generator) {
     else if (name == "potato-climate-v2" || name == "climate") generator = WorldGenerator::Climate;
     else if (name == "potato-flat-v1" || name == "flat") generator = WorldGenerator::Flat;
     else if (name == "potato-nether-v1" || name == "nether") generator = WorldGenerator::Nether;
+    else if (name == "potato-large-biomes-v1" || name == "large_biomes") generator = WorldGenerator::LargeBiomes;
+    else if (name == "potato-amplified-v1" || name == "amplified") generator = WorldGenerator::Amplified;
     else return false;
     return true;
 }
@@ -208,8 +212,10 @@ uint8_t DeepslateOre(uint8_t ore) {
 
 } // namespace
 
-TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z) {
-    const float wx = float(x), wz = float(z);
+TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z,
+                            bool largeBiomes, bool amplified) {
+    const float freq = largeBiomes ? 0.35f : 1.0f;
+    const float wx = float(x) * freq, wz = float(z) * freq;
     const float continental = noise.Fbm2(wx * 0.0012f + 37.1f, wz * 0.0012f - 19.4f, 3);
     const float erosion = noise.Fbm2(wx * 0.0027f - 83.2f, wz * 0.0027f + 41.8f, 3);
     const float ridge = 1.0f - std::clamp(fabsf(noise.Fbm2(wx * 0.007f + 53.8f, wz * 0.007f - 31.4f, 2)), 0.0f, 1.0f);
@@ -218,6 +224,8 @@ TerrainColumn SampleTerrain(const PerlinNoise& noise, int x, int z) {
         * (1.0f - SmoothRange(-0.38f, 0.20f, erosion)) * SmoothRange(-0.08f, 0.18f, continental);
     const float hills = noise.Fbm2(wx * 0.012f - 15.3f, wz * 0.012f + 67.9f, 2);
     float elevation = float(CLIMATE_SEA) + continental * 95.0f + inland * (8.0f + hills * 13.0f) + mountains;
+    if (amplified) elevation = float(CLIMATE_SEA) + (elevation - float(CLIMATE_SEA)) * 1.8f +
+        fabsf(mountains) * 0.6f;
     const float riverNoise = noise.Noise2(wx * 0.004f + 91.7f + erosion * 0.8f,
                                          wz * 0.004f - 72.5f + continental * 0.6f);
     const float river = 1.0f - SmoothRange(0.016f, 0.085f, fabsf(riverNoise));
@@ -630,16 +638,17 @@ void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t see
             }
         }
     }
-    ApplyStructures(blocks, noise, seed, cx, cz, true);
+    if (structures) ApplyStructures(blocks, noise, seed, cx, cz, true);
 }
 
-void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz) {
+void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz,
+                          bool largeBiomes = false, bool amplified = false, bool structures = true) {
     memset(blocks, BLOCK_AIR, CHUNK_VOL * sizeof(uint8_t));
     const int originX = cx * CHUNK_X, originZ = cz * CHUNK_Z;
     TerrainColumn columns[CHUNK_X + 2][CHUNK_Z + 2];
     for (int x = -1; x <= CHUNK_X; ++x) {
         for (int z = -1; z <= CHUNK_Z; ++z) {
-            columns[x + 1][z + 1] = SampleTerrain(noise, originX + x, originZ + z);
+            columns[x + 1][z + 1] = SampleTerrain(noise, originX + x, originZ + z, largeBiomes, amplified);
         }
     }
     for (int x = 0; x < CHUNK_X; ++x) {
@@ -702,7 +711,7 @@ void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t se
         for (int wz = originZ - 4; wz < originZ + CHUNK_Z + 4; ++wz) {
             const uint32_t hash = Hash3(uint32_t(wx), 0, uint32_t(wz), SeedHash32(seed) ^ 0x51ED270Bu);
             if ((hash & 255u) >= 16u) continue;
-            const TerrainColumn column = SampleTerrain(noise, wx, wz);
+            const TerrainColumn column = SampleTerrain(noise, wx, wz, largeBiomes, amplified);
             if (column.height <= CLIMATE_SEA + 2 || column.height > 145) continue;
             uint32_t density = 0;
             uint8_t log = BLOCK_LOG, leaves = BLOCK_OAK_LEAVES;
@@ -1124,8 +1133,11 @@ void World::Update(float camX, float camZ) {
 
 void World::GenerateChunk(Chunk& c, int cx, int cz) const {
     std::vector<uint8_t> raw(CHUNK_VOL, BLOCK_AIR);
-    if (mGenerator == WorldGenerator::Climate) {
-        GenerateClimateChunk(raw.data(), mNoise, mSeed, cx, cz);
+    if (mGenerator == WorldGenerator::Climate || mGenerator == WorldGenerator::LargeBiomes ||
+        mGenerator == WorldGenerator::Amplified) {
+        GenerateClimateChunk(raw.data(), mNoise, mSeed, cx, cz,
+                             mGenerator == WorldGenerator::LargeBiomes,
+                             mGenerator == WorldGenerator::Amplified, mStructures);
         c.SetRaw(raw.data());
         return;
     }
@@ -1243,7 +1255,10 @@ int World::SurfaceY(int x, int z) const {
 }
 
 TerrainColumn World::LodColumn(int x, int z) const {
-    if (mGenerator == WorldGenerator::Climate) return SampleTerrain(mNoise, x, z);
+    if (mGenerator == WorldGenerator::Climate || mGenerator == WorldGenerator::LargeBiomes ||
+        mGenerator == WorldGenerator::Amplified)
+        return SampleTerrain(mNoise, x, z, mGenerator == WorldGenerator::LargeBiomes,
+                             mGenerator == WorldGenerator::Amplified);
     TerrainColumn c{};
     if (mGenerator == WorldGenerator::Flat) {
         c.height = 3;

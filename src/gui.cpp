@@ -75,6 +75,61 @@ const char* SkinName(int skin) {
     return skin >= 0 && skin < SKIN_COUNT ? SKINS[skin].name : "Unknown";
 }
 
+const char* KeyName(int vk) {
+    static thread_local char buf[24];
+    if (vk >= 'A' && vk <= 'Z') { buf[0] = char(vk); buf[1] = 0; return buf; }
+    if (vk >= '0' && vk <= '9') { buf[0] = char(vk); buf[1] = 0; return buf; }
+    switch (vk) {
+        case VK_SPACE: return "Space";
+        case VK_SHIFT: return "Shift";
+        case VK_CONTROL: return "Ctrl";
+        case VK_MENU: return "Alt";
+        case VK_TAB: return "Tab";
+        case VK_ESCAPE: return "Esc";
+        case VK_RETURN: return "Enter";
+        case VK_BACK: return "Backspace";
+        case VK_UP: return "Up";
+        case VK_DOWN: return "Down";
+        case VK_LEFT: return "Left";
+        case VK_RIGHT: return "Right";
+        case VK_OEM_2: return "/";
+        case VK_OEM_3: return "`";
+        case VK_OEM_MINUS: return "-";
+        case VK_OEM_PLUS: return "=";
+        case VK_OEM_4: return "[";
+        case VK_OEM_6: return "]";
+        case VK_OEM_5: return "\\";
+        case VK_OEM_1: return ";";
+        case VK_OEM_7: return "'";
+        case VK_OEM_COMMA: return ",";
+        case VK_OEM_PERIOD: return ".";
+        default:
+            if (vk >= VK_F1 && vk <= VK_F12) {
+                snprintf(buf, sizeof(buf), "F%d", vk - VK_F1 + 1);
+                return buf;
+            }
+            return "?";
+    }
+}
+
+const char* DefaultBindName(int bind) {
+    switch (bind) {
+        case BIND_FORWARD: return "W";
+        case BIND_BACK: return "S";
+        case BIND_LEFT: return "A";
+        case BIND_RIGHT: return "D";
+        case BIND_JUMP: return "Space";
+        case BIND_SNEAK: return "Shift";
+        case BIND_SPRINT: return "Ctrl";
+        case BIND_INVENTORY: return "E";
+        case BIND_DROP: return "Q";
+        case BIND_CHAT: return "T";
+        case BIND_COMMAND: return "/";
+        case BIND_PERSPECTIVE: return "F5";
+        default: return "?";
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GuiRenderer
 // ---------------------------------------------------------------------------
@@ -99,6 +154,14 @@ GuiTexture GuiRenderer::LoadGui(RenderContext& rc, AssetStore& store, const char
     }
     t.w = t.h = 16;
     t.srv = CreateTextureSRV(rc, checker, 16, 16);
+    return t;
+}
+
+GuiTexture GuiRenderer::CreateGuiTexture(RenderContext& rc, const uint8_t* rgba, int w, int h) {
+    GuiTexture t;
+    if (!rgba || w <= 0 || h <= 0) return t;
+    t.srv = CreateTextureSRV(rc, rgba, w, h);
+    if (t.srv) { t.w = w; t.h = h; }
     return t;
 }
 
@@ -576,7 +639,8 @@ static void DrawTextField(GuiRenderer& ui, const std::string& text, float x, flo
 
 void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldCreateInfo& create,
                       const std::string& typed, int mouseX, int mouseY, bool leftDown,
-                      const std::string& splash, float timeSec, const PlayerProfile& profile) {
+                      const std::string& splash, float timeSec, const PlayerProfile& profile,
+                      const std::string& editName, int editingBind) {
     (void)typed; // The caller edits create/profile state, including backspace.
     mButtons.clear();
     mSliders.clear();
@@ -607,30 +671,90 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         DrawMenuFrame(ui, "Select World");
         if (worlds.empty())
             ui.DrawTextCentered("No worlds found.", cx, 140, 2, 15, true);
+        static const char* DIFFS[] = {"Peaceful", "Easy", "Normal", "Hard"};
         for (int row = 0; row < 5; ++row) {
             const int index = worldPage * 5 + row;
             if (index >= int(worlds.size())) break;
-            const float y = 84.0f + row * 104.0f;
+            const float y = 76.0f + row * 104.0f;
             const bool selected = index == selectedWorld;
-            ui.DrawQuad(&ui.texWhite, cx - 400, y, 800, 92, 0, 0, 1, 1, 15,
-                        selected ? 0.627f : 0.16f, selected ? 0.627f : 0.16f,
-                        selected ? 0.627f : 0.16f);
-            ui.DrawQuad(&ui.texWhite, cx - 398, y + 2, 796, 88, 0, 0, 1, 1, 15, 0, 0, 0);
-            std::string name = worlds[index].name;
-            while (!name.empty() && ui.TextWidth(name, 2) > 744) name.pop_back();
-            ui.DrawText(name, cx - 378, y + 16, 2, 15, true);
-            ui.DrawText(worlds[index].details, cx - 378, y + 46, 2, 15, true,
-                        0.627f, 0.627f, 0.627f);
+            const float bevel = selected ? 0.627f : 0.16f;
+            ui.DrawQuad(&ui.texWhite, cx - 400, y, 800, 96, 0, 0, 1, 1, 15, bevel, bevel, bevel);
+            ui.DrawQuad(&ui.texWhite, cx - 398, y + 2, 796, 92, 0, 0, 1, 1, 15, 0, 0, 0);
+            const float iconX = cx - 390, iconY = y + 16;
+            if (index < int(worldIcons.size()) && worldIcons[index].srv) {
+                ui.DrawQuad(&worldIcons[index], iconX, iconY, 64, 64, 0, 0, 1, 1, 15);
+            } else {
+                for (int cy2 = 0; cy2 < 2; ++cy2)
+                    for (int cx2 = 0; cx2 < 2; ++cx2) {
+                        const float c = ((cx2 + cy2) & 1) ? 0.22f : 0.09f;
+                        ui.DrawQuad(&ui.texWhite, iconX + cx2 * 32, iconY + cy2 * 32, 32, 32,
+                                    0, 0, 1, 1, 15, c, c, c);
+                    }
+            }
+            const SavedWorldEntry& w = worlds[index];
+            std::string name = w.name;
+            while (!name.empty() && ui.TextWidth(name, 2) > 690) name.pop_back();
+            ui.DrawText(name, cx - 312, y + 12, 2, 15, true);
+            snprintf(label, sizeof(label), "%s Mode, %s, Cheats: %s",
+                     w.mode == 1 ? "Creative" : "Survival",
+                     (w.difficulty >= 0 && w.difficulty < 4) ? DIFFS[w.difficulty] : "Normal",
+                     w.cheats ? "ON" : "OFF");
+            ui.DrawText(label, cx - 312, y + 38, 2, 15, true, 0.627f, 0.627f, 0.627f);
+            snprintf(label, sizeof(label), "%s  %s  v26.3", w.folder.c_str(), w.savedText.c_str());
+            ui.DrawText(label, cx - 312, y + 62, 2, 15, true, 0.45f, 0.45f, 0.45f);
         }
         const int pages = std::max(1, (int(worlds.size()) + 4) / 5);
         snprintf(label, sizeof(label), "Page %d / %d", worldPage + 1, pages);
-        ui.DrawTextCentered(label, cx, 628, 2, 15, true);
-        mButtons.push_back({cx - 400, 612, 120, 40, "<", ACT_WORLD_PREV, worldPage > 0});
-        mButtons.push_back({cx + 280, 612, 120, 40, ">", ACT_WORLD_NEXT, worldPage + 1 < pages});
+        ui.DrawTextCentered(label, cx, 598, 2, 15, true);
+        mButtons.push_back({cx - 400, 594, 100, 28, "<", ACT_WORLD_PREV, worldPage > 0});
+        mButtons.push_back({cx + 300, 594, 100, 28, ">", ACT_WORLD_NEXT, worldPage + 1 < pages});
+        const bool hasWorld = selectedWorld >= 0 && selectedWorld < int(worlds.size());
+        mButtons.push_back({cx - 400, 628, 256, 36, "Edit", ACT_WORLD_EDIT, hasWorld});
+        mButtons.push_back({cx - 128, 628, 256, 36, "Delete", ACT_WORLD_DELETE, hasWorld});
+        mButtons.push_back({cx + 144, 628, 256, 36, "Re-Create", ACT_WORLD_RECREATE, hasWorld});
         mButtons.push_back({cx - 400, MENU_FOOTER_Y, 260, 40, "Play Selected World",
-                            ACT_LOAD_WORLD, selectedWorld >= 0 && selectedWorld < int(worlds.size())});
+                            ACT_LOAD_WORLD, hasWorld});
         mButtons.push_back({cx - 130, MENU_FOOTER_Y, 260, 40, "Create New World", ACT_NEW_WORLD, true});
         mButtons.push_back({cx + 140, MENU_FOOTER_Y, 260, 40, "Cancel", ACT_CANCEL_CREATE, true});
+    } else if (screen == Screen::ConfirmDelete) {
+        DrawMenuFrame(ui, "Delete World");
+        const std::string worldName = (selectedWorld >= 0 && selectedWorld < int(worlds.size()))
+            ? worlds[selectedWorld].name : std::string("this world");
+        ui.DrawTextCentered("Are you sure you want to delete this world?", cx, 150, 2, 15, true);
+        snprintf(label, sizeof(label), "'%s' will be lost forever!", worldName.c_str());
+        ui.DrawTextCentered(label, cx, 190, 2, 15, true, 0.94f, 0.94f, 0.35f);
+        ui.DrawTextCentered("This cannot be undone.", cx, 214, 2, 15, true, 0.627f, 0.627f, 0.627f);
+        mButtons.push_back({cx - 308, 300, 300, 40, "Delete World", ACT_CONFIRM_DELETE, true});
+        mButtons.push_back({cx + 8, 300, 300, 40, "Cancel", ACT_CANCEL_DELETE, true});
+    } else if (screen == Screen::EditWorld) {
+        DrawMenuFrame(ui, "Edit World");
+        const bool hasWorld = selectedWorld >= 0 && selectedWorld < int(worlds.size());
+        const float fx = cx - 200;
+        ui.DrawText("World Name", fx, 90, 2, 15, true, 0.627f, 0.627f, 0.627f);
+        DrawTextField(ui, editName, fx, 112, 400, 40, true, timeSec);
+        ui.DrawTextCentered("Click the name field, then use Rename World.", cx, 166,
+                            2, 15, true, 0.45f, 0.45f, 0.45f);
+        mButtons.push_back({fx, 200, 400, 40, "Rename World", ACT_EDIT_RENAME, hasWorld && !editName.empty()});
+        mButtons.push_back({fx, 248, 400, 40, "Open World Folder", ACT_EDIT_FOLDER, hasWorld});
+        mButtons.push_back({fx, 296, 400, 40, "Reset Icon", ACT_EDIT_RESET_ICON, hasWorld});
+        mButtons.push_back({fx, 344, 400, 40, "Re-Create", ACT_WORLD_RECREATE, hasWorld});
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 196, 40, "Done", ACT_EDIT_DONE, true});
+        mButtons.push_back({cx + 4, MENU_FOOTER_Y, 196, 40, "Cancel", ACT_EDIT_CANCEL, true});
+    } else if (screen == Screen::GameRules) {
+        DrawMenuFrame(ui, "Game Rules");
+        static const char* RULES[] = {
+            "doDaylightCycle", "doMobSpawning", "doWeatherCycle", "keepInventory",
+            "mobGriefing", "doFireTick"};
+        for (int i = 0; i < RULE_COUNT; ++i) {
+            snprintf(label, sizeof(label), "%s: %s", RULES[i], create.rules[i] ? "ON" : "OFF");
+            mButtons.push_back({cx - 400, 80 + i * 44, 380, 36, label,
+                                ACT_RULE_TOGGLE_BASE + i, true});
+        }
+        snprintf(label, sizeof(label), "randomTickSpeed: %d", create.randomTickSpeed);
+        mButtons.push_back({cx + 20, 80, 380, 36, label, ACT_CYCLE_RULE_RANDOMTICK, true});
+        ui.DrawTextCentered("Applies to the new world.", cx + 210, 128, 2, 15, true,
+                            0.627f, 0.627f, 0.627f);
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_GAMERULES_DONE, true});
     } else if (screen == Screen::CreateWorld) {
         // This screen supplies its modern background over the caller's scene.
         DrawTiled(ui, ui.texMenuBg, 0, 0, SCREEN_W, SCREEN_H);
@@ -669,15 +793,25 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
             ui.DrawText("Seed for the world generator", fx, 104, 2, 15, true, 0.627f, 0.627f, 0.627f);
             DrawTextField(ui, create.seed, fx, 126, fw, fh, create.focus == 2, timeSec);
             ui.DrawText("Leave blank for a random seed", fx, 172, 2, 15, true, 0.627f, 0.627f, 0.627f);
-            const char* type = create.generator == WorldGenerator::Flat ? "Superflat" :
-                (create.generator == WorldGenerator::Climate ? "Default (Climate)" : "Legacy");
+            const char* type = "Default";
+            if (create.generator == WorldGenerator::Flat) type = "Superflat";
+            else if (create.generator == WorldGenerator::LargeBiomes) type = "Large Biomes";
+            else if (create.generator == WorldGenerator::Amplified) type = "Amplified";
             snprintf(label, sizeof(label), "World Type: %s", type);
             mButtons.push_back({fx, 208, fw, fh, label, ACT_CYCLE_WORLD_TYPE, true});
+            snprintf(label, sizeof(label), "Generate Structures: %s",
+                     create.structures ? "ON" : "OFF");
+            mButtons.push_back({fx, 256, fw, fh, label, ACT_TOGGLE_STRUCTURES, true});
+            snprintf(label, sizeof(label), "Bonus Chest: %s", create.bonusChest ? "ON" : "OFF");
+            mButtons.push_back({fx, 304, fw, fh, label, ACT_TOGGLE_BONUS, true});
         } else {
             snprintf(label, sizeof(label), "Keep Inventory: %s", create.keepInventory ? "ON" : "OFF");
             mButtons.push_back({fx, 126, fw, fh, label, ACT_TOGGLE_KEEPINV, true});
             ui.DrawTextCentered("Items stay in your inventory when you die.", cx, 172, 2, 15, true,
                                 0.627f, 0.627f, 0.627f);
+            mButtons.push_back({fx, 208, fw, fh, "Game Rules...", ACT_GAMERULES, true});
+            ui.DrawTextCentered("Daylight, spawning, weather, griefing and fire.", cx, 254,
+                                2, 15, true, 0.627f, 0.627f, 0.627f);
         }
         mButtons.push_back({fx, 600, fw, fh, "Create New World", ACT_CREATE_WORLD, !create.name.empty()});
         mButtons.push_back({fx, 648, fw, fh, "Cancel", ACT_CANCEL_CREATE, true});
@@ -697,25 +831,78 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_OPTIONS_DONE, true});
     } else if (screen == Screen::VideoOptions) {
         DrawMenuFrame(ui, "Video Settings");
-        mSliders.push_back({SL_FOV, cx - 310, 80, 300, 40});
-        mSliders.push_back({SL_RD, cx + 10, 80, 300, 40});
-        mSliders.push_back({SL_BRIGHT, cx - 310, 130, 300, 40});
+        mSliders.push_back({SL_FOV, cx - 400, 76, 380, 40});
+        mSliders.push_back({SL_RD, cx + 20, 76, 380, 40});
+        mSliders.push_back({SL_BRIGHT, cx - 400, 120, 380, 40});
+        mSliders.push_back({SL_SENS, cx + 20, 120, 380, 40});
+        snprintf(label, sizeof(label), "Graphics: %s", settings.fancyGraphics ? "Fancy" : "Fast");
+        mButtons.push_back({cx - 400, 164, 380, 36, label, ACT_TOGGLE_FANCY, true});
+        snprintf(label, sizeof(label), "Smooth Lighting: %s", settings.smoothLighting ? "ON" : "OFF");
+        mButtons.push_back({cx + 20, 164, 380, 36, label, ACT_TOGGLE_SMOOTH, true});
+        snprintf(label, sizeof(label), "Max Framerate: %s",
+                 settings.maxFramerate <= 0 ? "Unlimited" : std::to_string(settings.maxFramerate).c_str());
+        mButtons.push_back({cx - 400, 208, 380, 36, label, ACT_CYCLE_FPS, true});
+        snprintf(label, sizeof(label), "GUI Scale: %s",
+                 settings.guiScale == 0 ? "Auto" : std::to_string(settings.guiScale).c_str());
+        mButtons.push_back({cx + 20, 208, 380, 36, label, ACT_CYCLE_GUISCALE, true});
+        snprintf(label, sizeof(label), "Clouds: %s",
+                 settings.clouds == 0 ? "OFF" : (settings.clouds == 1 ? "Fast" : "Fancy"));
+        mButtons.push_back({cx - 400, 252, 380, 36, label, ACT_CYCLE_CLOUDS, true});
+        snprintf(label, sizeof(label), "Particles: %s",
+                 settings.particles == 0 ? "Minimal" : (settings.particles == 1 ? "Decreased" : "All"));
+        mButtons.push_back({cx + 20, 252, 380, 36, label, ACT_CYCLE_PARTICLES, true});
+        snprintf(label, sizeof(label), "Entity Shadows: %s", settings.entityShadows ? "ON" : "OFF");
+        mButtons.push_back({cx - 400, 296, 380, 36, label, ACT_TOGGLE_SHADOWS, true});
         snprintf(label, sizeof(label), "View Bobbing: %s", settings.viewBobbing ? "ON" : "OFF");
-        mButtons.push_back({cx + 10, 130, 300, 40, label, ACT_TOGGLE_BOB, true});
+        mButtons.push_back({cx + 20, 296, 380, 36, label, ACT_TOGGLE_BOB, true});
         snprintf(label, sizeof(label), "VSync: %s", settings.vsync ? "ON" : "OFF");
-        mButtons.push_back({cx - 310, 180, 300, 40, label, ACT_TOGGLE_VSYNC, true});
+        mButtons.push_back({cx - 400, 340, 380, 36, label, ACT_TOGGLE_VSYNC, true});
         snprintf(label, sizeof(label), "Fullscreen: %s", settings.fullscreen ? "ON" : "OFF");
-        mButtons.push_back({cx + 10, 180, 300, 40, label, ACT_TOGGLE_FS, true});
-        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_OPTIONS_DONE, true});
+        mButtons.push_back({cx + 20, 340, 380, 36, label, ACT_TOGGLE_FS, true});
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_DONE_VIDEO, true});
     } else if (screen == Screen::SoundOptions) {
-        DrawMenuFrame(ui, "Sound Settings");
-        mSliders.push_back({SL_SOUND, cx - 200, 80, 400, 40});
+        DrawMenuFrame(ui, "Music & Sounds");
+        for (int i = 0; i < 9; ++i) {
+            const float x = (i % 2 == 0) ? cx - 400 : cx + 20;
+            const float y = 76.0f + (i / 2) * 48.0f;
+            mSliders.push_back({SL_CAT_MASTER + i, x, y, 380, 36});
+        }
+        ui.DrawTextCentered("Master controls every category.", cx, 308, 2, 15, true,
+                            0.627f, 0.627f, 0.627f);
         mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_OPTIONS_DONE, true});
     } else if (screen == Screen::ControlsOptions) {
         DrawMenuFrame(ui, "Controls");
-        mSliders.push_back({SL_SENS, cx - 200, 80, 400, 40});
-        ui.DrawTextCentered("Mouse sensitivity", cx, 144, 2, 15, true, 0.627f, 0.627f, 0.627f);
-        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_OPTIONS_DONE, true});
+        mSliders.push_back({SL_SENS, cx - 400, 76, 380, 36});
+        snprintf(label, sizeof(label), "Invert Mouse: %s", settings.invertMouse ? "ON" : "OFF");
+        mButtons.push_back({cx + 20, 76, 380, 36, label, ACT_TOGGLE_INVERT, true});
+        mSliders.push_back({SL_SCROLL, cx - 400, 120, 380, 36});
+        snprintf(label, sizeof(label), "Sensitivity: %d%%",
+                 int(settings.sensitivity / 0.005f * 100 + 0.5f));
+        ui.DrawText(label, cx + 20, 128, 2, 15, true, 0.627f, 0.627f, 0.627f);
+        static const char* BINDS[] = {
+            "Forward", "Back", "Left", "Right", "Jump", "Sneak",
+            "Sprint", "Inventory", "Drop", "Chat", "Command", "Perspective"};
+        const int keyOf[BIND_COUNT] = {
+            settings.bindForward, settings.bindBack, settings.bindLeft, settings.bindRight,
+            settings.bindJump, settings.bindSneak, settings.bindSprint,
+            settings.bindInventory, settings.bindDrop, settings.bindChat,
+            settings.bindCommand, settings.bindPerspective};
+        for (int i = 0; i < BIND_COUNT; ++i) {
+            int conflicts = 0;
+            for (int j = 0; j < BIND_COUNT; ++j)
+                if (j != i && keyOf[j] == keyOf[i]) ++conflicts;
+            const float x = (i % 2 == 0) ? cx - 400 : cx + 20;
+            const float y = 172.0f + (i / 2) * 44.0f;
+            snprintf(label, sizeof(label), "%s: %s", BINDS[i],
+                     i == editingBind ? "> ... <" : KeyName(keyOf[i]));
+            Button b{x, y, 380, 36, label, ACT_BIND_BASE + i, true};
+            if (i == editingBind) { b.label = std::string("> ") + BINDS[i] + " <"; }
+            mButtons.push_back(b);
+            if (conflicts > 0 && i != editingBind)
+                ui.DrawText("!", x + 356, y + 10, 2, 15, false, 1, 0.25f, 0.25f);
+        }
+        mButtons.push_back({cx - 400, 452, 380, 40, "Reset Keys", ACT_NONE, false});
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_DONE_CONTROLS, true});
     } else if (screen == Screen::Profile) {
         DrawMenuFrame(ui, "Local Profile");
         ui.DrawTextCentered("Local name and bundled appearance only.", cx, 74, 2, 15, true);
@@ -766,7 +953,10 @@ static float SliderT(const Settings& s, int id) {
         case SL_SENS: return s.sensitivity / 0.005f;
         case SL_SOUND: return s.sound ? s.soundVolume : 0.0f;
         case SL_MUSIC: return s.musicVolume;
-        default: return s.brightness;
+        case SL_SCROLL: return s.scrollSensitivity / 2.0f;
+        default:
+            if (id >= SL_CAT_MASTER) return s.categoryVolume[std::min(8, id - SL_CAT_MASTER)];
+            return s.brightness;
     }
 }
 
@@ -779,7 +969,11 @@ static void SetSliderT(Settings& s, int id, float t) {
         case SL_SENS: s.sensitivity = t * 0.005f; break;
         case SL_SOUND: s.soundVolume = t; s.sound = t > 0.0f; break;
         case SL_MUSIC: s.musicVolume = t; break;
-        default: s.brightness = t; break;
+        case SL_SCROLL: s.scrollSensitivity = 0.2f + t * 1.8f; break;
+        default:
+            if (id >= SL_CAT_MASTER) s.categoryVolume[std::min(8, id - SL_CAT_MASTER)] = t;
+            else s.brightness = t;
+            break;
     }
 }
 
@@ -790,7 +984,18 @@ static void SliderLabel(const Settings& s, int id, char* out, size_t n) {
         case SL_SENS: snprintf(out, n, "Sensitivity: %d%%", int(s.sensitivity / 0.0025f * 100 + 0.5f)); break;
         case SL_SOUND: snprintf(out, n, "Master Volume: %d%%", s.sound ? int(s.soundVolume * 100 + 0.5f) : 0); break;
         case SL_MUSIC: snprintf(out, n, "Music: %d%%", int(s.musicVolume * 100 + 0.5f)); break;
-        default: snprintf(out, n, "Brightness: %d%%", int(s.brightness * 100 + 0.5f)); break;
+        case SL_SCROLL: snprintf(out, n, "Scroll Sensitivity: %d%%", int(s.scrollSensitivity * 100 + 0.5f)); break;
+        default:
+            if (id >= SL_CAT_MASTER) {
+                static const char* NAMES[] = {
+                    "Master", "Music", "Jukebox / Note Blocks", "Weather", "Blocks",
+                    "Hostile Creatures", "Friendly Creatures", "Players", "Ambient"};
+                const int i = std::min(8, id - SL_CAT_MASTER);
+                snprintf(out, n, "%s: %d%%", NAMES[i], int(s.categoryVolume[i] * 100 + 0.5f));
+            } else {
+                snprintf(out, n, "Brightness: %d%%", int(s.brightness * 100 + 0.5f));
+            }
+            break;
     }
 }
 
@@ -810,11 +1015,27 @@ void MenuSystem::DrawSlider(GuiRenderer& ui, const Slider& s, Settings& settings
     ui.DrawTextCentered(label, s.x + s.w * 0.5f, s.y + (s.h - 16) * 0.5f, 2, 15, true);
 }
 
+void MenuSystem::LoadWorldIcons(RenderContext& rc) {
+    for (GuiTexture& t : worldIcons)
+        if (t.srv) { t.srv->Release(); t.srv = nullptr; }
+    worldIcons.clear();
+    worldIcons.reserve(worlds.size());
+    for (const SavedWorldEntry& w : worlds) {
+        GuiTexture t;
+        if (w.iconW > 0 && w.iconH > 0 &&
+            size_t(w.iconW) * size_t(w.iconH) * 4 <= w.icon.size()) {
+            t.srv = CreateTextureSRV(rc, w.icon.data(), w.iconW, w.iconH);
+            if (t.srv) { t.w = w.iconW; t.h = w.iconH; }
+        }
+        worldIcons.push_back(t);
+    }
+}
+
 int MenuSystem::HitTest(int mouseX, int mouseY) const {
     if (mWorldListVisible && mouseX >= SCREEN_W * 0.5f - 400 && mouseX < SCREEN_W * 0.5f + 400) {
-        const int row = (mouseY - 84) / 104;
+        const int row = (mouseY - 76) / 104;
         const int index = worldPage * 5 + row;
-        if (mouseY >= 84 && row < 5 && mouseY < 84 + row * 104 + 92 && index < int(worlds.size()))
+        if (mouseY >= 76 && row < 5 && mouseY < 76 + row * 104 + 96 && index < int(worlds.size()))
             return ACT_WORLD_ROW + index;
     }
     for (const Button& b : mButtons) {

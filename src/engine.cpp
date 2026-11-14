@@ -9,6 +9,8 @@
 
 namespace potato {
 
+KeyBinds gBinds;
+
 void WorldClock::Set(uint64_t ticks) {
     mTicks = ticks;
     mFraction = mCompensation = 0;
@@ -265,12 +267,12 @@ void FlyCamera::Look(float dx, float dy) {
 void FlyCamera::Update(const InputState& in, float dt) {
     const float sy = sinf(yaw), cy = cosf(yaw);
     float mx = 0, my = 0, mz = 0;
-    if (in.keys['W']) { mx += sy; mz -= cy; }
-    if (in.keys['S']) { mx -= sy; mz += cy; }
-    if (in.keys['D']) { mx += cy; mz += sy; }
-    if (in.keys['A']) { mx -= cy; mz -= sy; }
-    if (in.keys[VK_SPACE]) my += 1.0f;
-    if (in.keys[VK_SHIFT]) my -= 1.0f;
+    if (in.keys[gBinds.forward]) { mx += sy; mz -= cy; }
+    if (in.keys[gBinds.back]) { mx -= sy; mz += cy; }
+    if (in.keys[gBinds.right]) { mx += cy; mz += sy; }
+    if (in.keys[gBinds.left]) { mx -= cy; mz -= sy; }
+    if (in.keys[gBinds.jump]) my += 1.0f;
+    if (in.keys[gBinds.sneak]) my -= 1.0f;
     const float len = sqrtf(mx * mx + my * my + mz * mz);
     if (len > 0.0f) {
         const float s = speed * dt / len;
@@ -300,14 +302,15 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
                         const std::function<uint8_t(int, int, int)>& getBlock) {
     const float sy = sinf(cam.yaw), cy = cosf(cam.yaw);
     float mx = 0, mz = 0;
-    if (in.keys['W']) { mx += sy; mz -= cy; }
-    if (in.keys['S']) { mx -= sy; mz += cy; }
-    if (in.keys['D']) { mx += cy; mz += sy; }
-    if (in.keys['A']) { mx -= cy; mz -= sy; }
+    if (in.keys[gBinds.forward]) { mx += sy; mz -= cy; }
+    if (in.keys[gBinds.back]) { mx -= sy; mz += cy; }
+    if (in.keys[gBinds.right]) { mx += cy; mz += sy; }
+    if (in.keys[gBinds.left]) { mx -= cy; mz -= sy; }
     const float len = sqrtf(mx * mx + mz * mz);
     if (len > 0.0f) { mx /= len; mz /= len; }
-    sneaking = !flying && in.keys[VK_SHIFT];
-    sprinting = !flying && !sneaking && (in.keys[VK_CONTROL] || sprintLatch) && in.keys['W'];
+    sneaking = !flying && in.keys[gBinds.sneak];
+    sprinting = !flying && !sneaking && (in.keys[gBinds.sprint] || sprintLatch) &&
+                in.keys[gBinds.forward];
     const float speed = flying ? 12.0f : (sneaking ? 1.31f : (sprinting ? 5.612f : walkSpeed));
     vx = mx * speed + impulseX;
     vz = mz * speed + impulseZ;
@@ -318,20 +321,20 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
     inWater = (BLOCK_FLAGS[feet] & BF_LIQUID) != 0;
 
     if (flying) {
-        vy = ((in.keys[VK_SPACE] ? 1.0f : 0.0f) - (in.keys[VK_SHIFT] ? 1.0f : 0.0f)) * speed;
+        vy = ((in.keys[gBinds.jump] ? 1.0f : 0.0f) - (in.keys[gBinds.sneak] ? 1.0f : 0.0f)) * speed;
     } else if (inWater) {
         vy -= 8.0f * dt;
         if (vy < -4.0f) vy = -4.0f;
-        if (in.keys[VK_SPACE]) vy = 4.0f;
+        if (in.keys[gBinds.jump]) vy = 4.0f;
     } else {
         vy -= 32.0f * dt;
         if (vy < -50.0f) vy = -50.0f;
-        if (onGround && in.keys[VK_SPACE]) { vy = 8.94f; onGround = false; }
+        if (onGround && in.keys[gBinds.jump]) { vy = 8.94f; onGround = false; }
     }
 
     // Elytra: holding space while airborne steers along the look vector.
     gliding = false;
-    if (elytraEquipped && !flying && !inWater && !onGround && in.keys[VK_SPACE] && vy < 1.0f) {
+    if (elytraEquipped && !flying && !inWater && !onGround && in.keys[gBinds.jump] && vy < 1.0f) {
         gliding = true;
         const float cp = cosf(cam.pitch);
         const float gx = sy * cp, gy = sinf(cam.pitch), gz = -cy * cp;

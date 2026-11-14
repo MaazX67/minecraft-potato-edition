@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <objbase.h>
+#include <shellapi.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -119,6 +120,8 @@ static WorldCreateInfo gCreate;
 static int gGameMode = 0; // 0 survival, 1 creative
 static bool gAllowCheats = false;
 static bool gKeepInventory = false;
+static bool gStructuresEnabled = true;
+static bool gBonusChestPending = false;
 static uint64_t gWorldSeed = 1337;
 static InventoryState gInventory;
 static bool gCraftTable = false;
@@ -149,6 +152,12 @@ static float gWeatherTimer = 2400.0f;
 static float gRainLevel = 0, gThunderLevel = 0;
 static float gRainSpawnTimer = 0;
 static bool gRuleDaylightCycle = true, gRuleMobSpawning = true, gRuleWeatherCycle = true;
+static bool gRuleMobGriefing = true, gRuleFireTick = true;
+static int gRuleRandomTick = 3;
+static std::string gEditName;
+static int gEditingBind = -1;
+static int gLastWorldClickIndex = -1;
+static float gLastWorldClickMs = -1000.0f;
 static PerlinNoise* gWeatherNoise = nullptr;
 
 static void SetScreen(HWND hwnd, Screen s);
@@ -174,7 +183,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             gFreezeTime = wp != 0;
             return 0;
         }
-        if (msg == WM_APP + 6 && gWorld && gSpawned && gWorld->Generator() == WorldGenerator::Climate) {
+        if (msg == WM_APP + 6 && gWorld && gSpawned &&
+            (gWorld->Generator() == WorldGenerator::Climate ||
+             gWorld->Generator() == WorldGenerator::LargeBiomes ||
+             gWorld->Generator() == WorldGenerator::Amplified)) {
             const int centerX = int(floorf(gBody.x)), centerZ = int(floorf(gBody.z));
             for (int dz = -48; dz <= 48; dz += 2) for (int dx = -48; dx <= 48; dx += 2) {
                 const int x = centerX + dx, z = centerZ + dz;
@@ -353,11 +365,22 @@ static int ResolveTile(const char* tex) {
     return t < 0 ? 0 : t;
 }
 
+static void SyncBinds() {
+    gBinds.forward = gSettings.bindForward;
+    gBinds.back = gSettings.bindBack;
+    gBinds.left = gSettings.bindLeft;
+    gBinds.right = gSettings.bindRight;
+    gBinds.jump = gSettings.bindJump;
+    gBinds.sneak = gSettings.bindSneak;
+    gBinds.sprint = gSettings.bindSprint;
+}
+
 static void ApplySettings() {
     gWorld->SetRenderDistance(gSettings.renderDistance);
     gCamera.sensitivity = gSettings.sensitivity;
     gSound.SetEnabled(gSettings.sound);
     gSound.SetVolume(gSettings.soundVolume);
+    SyncBinds();
     SetBrightness(gRC, gSettings.brightness);
 }
 
@@ -402,7 +425,18 @@ static bool SavePreferences() {
         {"sensitivity", gSettings.sensitivity}, {"sound", gSettings.sound},
         {"soundVolume", gSettings.soundVolume}, {"brightness", gSettings.brightness},
         {"viewBobbing", gSettings.viewBobbing}, {"vsync", gSettings.vsync},
-        {"fullscreen", gSettings.fullscreen}, {"difficulty", gSettings.difficulty}
+        {"fullscreen", gSettings.fullscreen}, {"difficulty", gSettings.difficulty},
+        {"fancyGraphics", gSettings.fancyGraphics}, {"smoothLighting", gSettings.smoothLighting},
+        {"maxFramerate", gSettings.maxFramerate}, {"guiScale", gSettings.guiScale},
+        {"clouds", gSettings.clouds}, {"particles", gSettings.particles},
+        {"entityShadows", gSettings.entityShadows}, {"invertMouse", gSettings.invertMouse},
+        {"scrollSensitivity", gSettings.scrollSensitivity},
+        {"musicVolume", gSettings.musicVolume},
+        {"categoryVolume", std::vector<float>(gSettings.categoryVolume, gSettings.categoryVolume + 9)},
+        {"binds", std::vector<int>{gSettings.bindForward, gSettings.bindBack, gSettings.bindLeft,
+                                   gSettings.bindRight, gSettings.bindJump, gSettings.bindSneak,
+                                   gSettings.bindSprint, gSettings.bindInventory, gSettings.bindDrop,
+                                   gSettings.bindChat, gSettings.bindCommand, gSettings.bindPerspective}}
     };
     const std::string pending = path + ".tmp";
     std::ofstream file(pending, std::ios::binary | std::ios::trunc);
@@ -434,8 +468,29 @@ static void LoadPreferences() {
         settings.vsync = data.value("vsync", false);
         settings.fullscreen = data.value("fullscreen", false);
         settings.difficulty = std::clamp(data.value("difficulty", 2), 0, 3);
+        settings.fancyGraphics = data.value("fancyGraphics", true);
+        settings.smoothLighting = data.value("smoothLighting", true);
+        settings.maxFramerate = std::clamp(data.value("maxFramerate", 120), 0, 260);
+        settings.guiScale = std::clamp(data.value("guiScale", 0), 0, 4);
+        settings.clouds = std::clamp(data.value("clouds", 2), 0, 2);
+        settings.particles = std::clamp(data.value("particles", 2), 0, 2);
+        settings.entityShadows = data.value("entityShadows", true);
+        settings.invertMouse = data.value("invertMouse", false);
+        settings.scrollSensitivity = std::clamp(data.value("scrollSensitivity", 1.0f), 0.2f, 2.0f);
+        settings.musicVolume = std::clamp(data.value("musicVolume", 0.5f), 0.0f, 1.0f);
+        if (data.contains("categoryVolume") && data["categoryVolume"].is_array())
+            for (int i = 0; i < 9 && i < int(data["categoryVolume"].size()); ++i)
+                settings.categoryVolume[i] = std::clamp(data["categoryVolume"][i].get<float>(), 0.0f, 1.0f);
+        if (data.contains("binds") && data["binds"].is_array() && data["binds"].size() == 12) {
+            int* binds[12] = {&settings.bindForward, &settings.bindBack, &settings.bindLeft,
+                              &settings.bindRight, &settings.bindJump, &settings.bindSneak,
+                              &settings.bindSprint, &settings.bindInventory, &settings.bindDrop,
+                              &settings.bindChat, &settings.bindCommand, &settings.bindPerspective};
+            for (int i = 0; i < 12; ++i) *binds[i] = std::clamp(data["binds"][i].get<int>(), 1, 255);
+        }
         gProfile = profile;
         gSettings = settings;
+        SyncBinds();
     } catch (const nlohmann::json::exception&) {
         return;
     }
@@ -472,15 +527,28 @@ static std::string NewSavePath() {
     return {};
 }
 
+static std::string FormatSavedTime(uint64_t ft) {
+    if (!ft) return "Never";
+    FILETIME fileTime{uint32_t(ft & 0xFFFFFFFFu), uint32_t(ft >> 32)};
+    FILETIME localTime;
+    SYSTEMTIME st;
+    if (!FileTimeToLocalFileTime(&fileTime, &localTime) || !FileTimeToSystemTime(&localTime, &st))
+        return "Unknown";
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d", st.wYear, st.wMonth, st.wDay,
+             st.wHour, st.wMinute);
+    return buf;
+}
+
 static void RefreshWorldList() {
     gMenu.worlds.clear();
     gMenu.selectedWorld = -1;
     gMenu.worldPage = 0;
     const std::string root = SavesDirectory();
-    if (root.empty()) return;
+    if (root.empty()) { gMenu.LoadWorldIcons(gRC); return; }
     WIN32_FIND_DATAA entry = {};
     HANDLE search = FindFirstFileA((root + "/world-*").c_str(), &entry);
-    if (search == INVALID_HANDLE_VALUE) return;
+    if (search == INVALID_HANDLE_VALUE) { gMenu.LoadWorldIcons(gRC); return; }
     do {
         if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
             (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
@@ -492,13 +560,28 @@ static void RefreshWorldList() {
             WorldGenerator generator;
             if ((format != 1 && format != 2 && format != 3) ||
                 !ParseGenerator(save.at("generator").get<std::string>(), generator)) continue;
-            const int mode = save.at("mode").get<int>();
-            const char* typeName = generator == WorldGenerator::Flat ? "Superflat"
-                : (generator == WorldGenerator::Legacy ? "Legacy" : "Default");
-            const std::string details = std::string(mode == 1 ? "Creative Mode" : "Survival Mode") +
-                ", " + typeName + ", Seed: " + std::to_string(save.at("seed").get<uint64_t>());
-            gMenu.worlds.push_back({path, save.at("name").get<std::string>(), details,
-                                   save.at("savedAt").get<uint64_t>()});
+            SavedWorldEntry e;
+            e.path = path;
+            e.name = save.at("name").get<std::string>();
+            e.folder = entry.cFileName;
+            e.savedAt = save.at("savedAt").get<uint64_t>();
+            e.savedText = FormatSavedTime(e.savedAt);
+            e.mode = save.value("mode", 0);
+            e.difficulty = save.value("difficulty", 2);
+            e.cheats = save.value("cheats", false);
+            e.seed = save.at("seed").get<uint64_t>();
+            e.generator = save.at("generator").get<std::string>();
+            e.details = std::string(e.mode == 1 ? "Creative Mode" : "Survival Mode") +
+                ", Seed: " + std::to_string(e.seed);
+            if (save.contains("icon") && save["icon"].is_binary()) {
+                const auto& iconBytes = save["icon"].get_binary();
+                e.iconW = save.value("iconW", 0);
+                e.iconH = save.value("iconH", 0);
+                if (e.iconW > 0 && e.iconH > 0 &&
+                    size_t(e.iconW) * size_t(e.iconH) * 4 == iconBytes.size())
+                    e.icon.assign(iconBytes.begin(), iconBytes.end());
+            }
+            gMenu.worlds.push_back(std::move(e));
         } catch (const nlohmann::json::exception&) {
             continue;
         }
@@ -508,9 +591,103 @@ static void RefreshWorldList() {
         return a.savedAt > b.savedAt;
     });
     if (!gMenu.worlds.empty()) gMenu.selectedWorld = 0;
+    gMenu.LoadWorldIcons(gRC);
 }
 
-static void ResetWorld(uint64_t seed, EditMap edits = {}, WorldGenerator generator = WorldGenerator::Climate) {
+static void ResetWorld(uint64_t seed, EditMap edits = {}, WorldGenerator generator = WorldGenerator::Climate);
+
+static void DeleteTree(const std::string& dir) {
+    WIN32_FIND_DATAA fd = {};
+    HANDLE h = FindFirstFileA((dir + "/*").c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+            const std::string p = dir + "/" + fd.cFileName;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) DeleteTree(p);
+            else DeleteFileA(p.c_str());
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    RemoveDirectoryA(dir.c_str());
+}
+
+static bool WriteWorldSaveJson(const std::string& path, const nlohmann::json& data) {
+    const auto bytes = nlohmann::json::to_msgpack(data);
+    const std::string pending = path + ".tmp";
+    std::ofstream file(pending, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+    file.close();
+    return !file.fail() && MoveFileExA(pending.c_str(), path.c_str(),
+                                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+}
+
+static void DeleteSelectedWorld() {
+    if (gMenu.selectedWorld < 0 || gMenu.selectedWorld >= int(gMenu.worlds.size())) return;
+    const std::string path = gMenu.worlds[gMenu.selectedWorld].path;
+    const size_t slash = path.find_last_of("/\\");
+    const std::string folder = slash == std::string::npos ? std::string() : path.substr(0, slash);
+    if (!folder.empty()) DeleteTree(folder);
+    RefreshWorldList();
+}
+
+static void RenameSelectedWorld(const std::string& newName) {
+    if (gMenu.selectedWorld < 0 || gMenu.selectedWorld >= int(gMenu.worlds.size())) return;
+    if (newName.empty()) return;
+    const std::string path = gMenu.worlds[gMenu.selectedWorld].path;
+    auto data = ReadWorldSave(path);
+    if (!data.is_object()) return;
+    data["name"] = newName;
+    WriteWorldSaveJson(path, data);
+    const int keep = gMenu.selectedWorld;
+    RefreshWorldList();
+    if (!gMenu.worlds.empty()) gMenu.selectedWorld = std::min(keep, int(gMenu.worlds.size()) - 1);
+}
+
+static void ResetSelectedWorldIcon() {
+    if (gMenu.selectedWorld < 0 || gMenu.selectedWorld >= int(gMenu.worlds.size())) return;
+    const std::string path = gMenu.worlds[gMenu.selectedWorld].path;
+    auto data = ReadWorldSave(path);
+    if (!data.is_object()) return;
+    data.erase("icon");
+    data.erase("iconW");
+    data.erase("iconH");
+    WriteWorldSaveJson(path, data);
+    const int keep = gMenu.selectedWorld;
+    RefreshWorldList();
+    if (!gMenu.worlds.empty()) gMenu.selectedWorld = std::min(keep, int(gMenu.worlds.size()) - 1);
+}
+
+static void RecreateSelectedWorld() {
+    if (gMenu.selectedWorld < 0 || gMenu.selectedWorld >= int(gMenu.worlds.size())) return;
+    const SavedWorldEntry& e = gMenu.worlds[gMenu.selectedWorld];
+    WorldGenerator generator = WorldGenerator::Climate;
+    ParseGenerator(e.generator, generator);
+    const std::string path = NewSavePath();
+    if (path.empty()) return;
+    gStructuresEnabled = true;
+    ResetWorld(e.seed, {}, generator);
+    gSavePath = path;
+    gWorldName = e.name + " (Re-Created)";
+    gGameMode = e.mode;
+    gAllowCheats = e.cheats;
+    gSettings.difficulty = e.difficulty;
+    gInventory = InventoryState{};
+    gCraftTable = false;
+    gHotbarSlot = 0;
+    if (gGameMode == 1) memcpy(gHotbar, HOTBAR_BLOCKS, sizeof(gHotbar));
+    else memset(gHotbar, 0, sizeof(gHotbar));
+    StartGame();
+}
+
+static void OpenSelectedWorldFolder() {
+    if (gMenu.selectedWorld < 0 || gMenu.selectedWorld >= int(gMenu.worlds.size())) return;
+    const std::string path = gMenu.worlds[gMenu.selectedWorld].path;
+    const size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos) return;
+    ShellExecuteA(nullptr, "open", path.substr(0, slash).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+static void ResetWorld(uint64_t seed, EditMap edits, WorldGenerator generator) {
     gWorldClock.Set(0);
     gZombies.clear();
     gMobSpawnTimer = 0;
@@ -523,6 +700,7 @@ static void ResetWorld(uint64_t seed, EditMap edits = {}, WorldGenerator generat
     delete gWorld;
     gWorldSeed = seed;
     gWorld = new World(seed, gSettings.renderDistance, generator);
+    gWorld->SetGenerateStructures(gStructuresEnabled);
     gWorld->SetBlockTiles(gTiles);
     gWorld->SetEdits(std::move(edits));
     gCraftTable = false;
@@ -541,6 +719,56 @@ static void ResetWorld(uint64_t seed, EditMap edits = {}, WorldGenerator generat
     gWeather = 0;
     gWeatherTicksLeft = 0;
     gRainLevel = gThunderLevel = 0;
+}
+
+// Java's 64x64 world icon: nearest-downsample of the live back buffer.
+static std::vector<uint8_t> CaptureWorldIcon(int& outW, int& outH) {
+    outW = outH = 0;
+    if (!gRC.device || !gRC.swapChain) return {};
+    ID3D10Texture2D* back = nullptr;
+    if (FAILED(gRC.swapChain->GetBuffer(0, __uuidof(ID3D10Texture2D),
+                                        reinterpret_cast<void**>(&back))) || !back) return {};
+    D3D10_TEXTURE2D_DESC desc{};
+    back->GetDesc(&desc);
+    D3D10_TEXTURE2D_DESC staging = desc;
+    staging.Usage = D3D10_USAGE_STAGING;
+    staging.BindFlags = 0;
+    staging.CPUAccessFlags = D3D10_CPU_ACCESS_READ;
+    staging.MipLevels = 1;
+    staging.ArraySize = 1;
+    staging.SampleDesc.Count = 1;
+    staging.SampleDesc.Quality = 0;
+    ID3D10Texture2D* copy = nullptr;
+    if (FAILED(gRC.device->CreateTexture2D(&staging, nullptr, &copy))) {
+        back->Release();
+        return {};
+    }
+    gRC.device->CopyResource(copy, back);
+    std::vector<uint8_t> pixels;
+    D3D10_MAPPED_TEXTURE2D mapped{};
+    if (SUCCEEDED(copy->Map(0, D3D10_MAP_READ, 0, &mapped))) {
+        outW = outH = 64;
+        pixels.resize(64 * 64 * 4);
+        const bool bgra = desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+                          desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+        for (int y = 0; y < 64; ++y) {
+            const int sy = int(size_t(y) * desc.Height / 64);
+            const uint8_t* row = static_cast<const uint8_t*>(mapped.pData) + size_t(sy) * mapped.RowPitch;
+            for (int x = 0; x < 64; ++x) {
+                const int sx = int(size_t(x) * desc.Width / 64);
+                const uint8_t* src = row + size_t(sx) * 4;
+                uint8_t* dst = pixels.data() + (size_t(y) * 64 + x) * 4;
+                dst[0] = bgra ? src[2] : src[0];
+                dst[1] = src[1];
+                dst[2] = bgra ? src[0] : src[2];
+                dst[3] = 255;
+            }
+        }
+        copy->Unmap(0);
+    }
+    copy->Release();
+    back->Release();
+    return pixels;
 }
 
 static bool SaveCurrentWorld() {
@@ -580,7 +808,9 @@ static bool SaveCurrentWorld() {
         {"inventoryOpen", gScreen == Screen::Inventory}, {"craftTable", gCraftTable},
         {"dimension", gDimension}, {"weather", gWeather}, {"weatherTicks", int(gWeatherTicksLeft)},
         {"doDaylightCycle", gRuleDaylightCycle}, {"doMobSpawning", gRuleMobSpawning},
-        {"doWeatherCycle", gRuleWeatherCycle},
+        {"doWeatherCycle", gRuleWeatherCycle}, {"mobGriefing", gRuleMobGriefing},
+        {"doFireTick", gRuleFireTick}, {"randomTickSpeed", gRuleRandomTick},
+        {"structures", gStructuresEnabled}, {"bonusChest", false},
         {"otherEdits", nlohmann::json::binary(EncodeEdits(gDimEdits[1 - gDimension]))},
         {"otherPos", {gDimPos[1 - gDimension][0], gDimPos[1 - gDimension][1], gDimPos[1 - gDimension][2]}},
         {"otherVisited", gDimVisited[1 - gDimension]},
@@ -591,7 +821,15 @@ static bool SaveCurrentWorld() {
         {"chests", chests},
         {"edits", nlohmann::json::binary(EncodeEdits(gWorld->SnapshotEdits()))}
     };
-    const auto bytes = nlohmann::json::to_msgpack(data);
+    nlohmann::json dataWithIcon = data;
+    int iconW = 0, iconH = 0;
+    std::vector<uint8_t> icon = CaptureWorldIcon(iconW, iconH);
+    if (!icon.empty()) {
+        dataWithIcon["iconW"] = iconW;
+        dataWithIcon["iconH"] = iconH;
+        dataWithIcon["icon"] = nlohmann::json::binary(icon);
+    }
+    const auto bytes = nlohmann::json::to_msgpack(dataWithIcon);
     if (bytes.size() > 64 * 1024 * 1024) return false;
     const std::string pending = gSavePath + ".tmp";
     std::ofstream file(pending, std::ios::binary | std::ios::trunc);
@@ -741,6 +979,11 @@ static bool LoadWorldSave(const std::string& path) {
         gRuleDaylightCycle = data.value("doDaylightCycle", true);
         gRuleMobSpawning = data.value("doMobSpawning", true);
         gRuleWeatherCycle = data.value("doWeatherCycle", true);
+        gRuleMobGriefing = data.value("mobGriefing", true);
+        gRuleFireTick = data.value("doFireTick", true);
+        gRuleRandomTick = std::clamp(data.value("randomTickSpeed", 3), 0, 20);
+        gStructuresEnabled = data.value("structures", true);
+        if (gWorld) gWorld->SetGenerateStructures(gStructuresEnabled);
         gInventory = inventory;
         gCraftTable = craftTable;
         if (data.contains("furnace")) {
@@ -808,10 +1051,115 @@ static void ProfileSkinChanged(const PlayerProfile& previous) {
 static void HandleMenuAction(int action) {
     if (action != ACT_NONE) gSound.Play(SND_CLICK);
     if (action >= ACT_WORLD_ROW && action - ACT_WORLD_ROW < int(gMenu.worlds.size())) {
-        gMenu.selectedWorld = action - ACT_WORLD_ROW;
+        const int index = action - ACT_WORLD_ROW;
+        const bool doubleClick = gLastWorldClickIndex == index &&
+                                 gNowMs - gLastWorldClickMs < 300.0f;
+        gLastWorldClickIndex = index;
+        gLastWorldClickMs = gNowMs;
+        gMenu.selectedWorld = index;
+        if (doubleClick) LoadWorldSave(gMenu.worlds[index].path);
+        return;
+    }
+    if (action >= ACT_BIND_BASE && action < ACT_BIND_BASE + BIND_COUNT) {
+        gEditingBind = action - ACT_BIND_BASE;
+        return;
+    }
+    if (action >= ACT_RULE_TOGGLE_BASE && action < ACT_RULE_TOGGLE_BASE + RULE_COUNT) {
+        gCreate.rules[action - ACT_RULE_TOGGLE_BASE] = !gCreate.rules[action - ACT_RULE_TOGGLE_BASE];
         return;
     }
     switch (action) {
+        case ACT_WORLD_EDIT:
+            if (gMenu.selectedWorld >= 0 && gMenu.selectedWorld < int(gMenu.worlds.size())) {
+                gEditName = gMenu.worlds[gMenu.selectedWorld].name;
+                SetScreen(gHwnd, Screen::EditWorld);
+            }
+            break;
+        case ACT_WORLD_DELETE:
+            if (gMenu.selectedWorld >= 0 && gMenu.selectedWorld < int(gMenu.worlds.size()))
+                SetScreen(gHwnd, Screen::ConfirmDelete);
+            break;
+        case ACT_CONFIRM_DELETE:
+            DeleteSelectedWorld();
+            SetScreen(gHwnd, Screen::SelectWorld);
+            break;
+        case ACT_CANCEL_DELETE:
+            SetScreen(gHwnd, Screen::SelectWorld);
+            break;
+        case ACT_EDIT_RENAME:
+            RenameSelectedWorld(gEditName);
+            gActionBar = "World renamed.";
+            gActionBarUntil = gNowMs + 3000;
+            break;
+        case ACT_EDIT_FOLDER:
+            OpenSelectedWorldFolder();
+            break;
+        case ACT_EDIT_RESET_ICON:
+            ResetSelectedWorldIcon();
+            gActionBar = "World icon reset.";
+            gActionBarUntil = gNowMs + 3000;
+            break;
+        case ACT_EDIT_DONE:
+            if (gMenu.selectedWorld >= 0 && gMenu.selectedWorld < int(gMenu.worlds.size()) &&
+                !gEditName.empty() && gEditName != gMenu.worlds[gMenu.selectedWorld].name)
+                RenameSelectedWorld(gEditName);
+            SetScreen(gHwnd, Screen::SelectWorld);
+            break;
+        case ACT_EDIT_CANCEL:
+            SetScreen(gHwnd, Screen::SelectWorld);
+            break;
+        case ACT_WORLD_RECREATE:
+            RecreateSelectedWorld();
+            break;
+        case ACT_GAMERULES:
+            SetScreen(gHwnd, Screen::GameRules);
+            break;
+        case ACT_GAMERULES_DONE:
+            SetScreen(gHwnd, Screen::CreateWorld);
+            break;
+        case ACT_TOGGLE_STRUCTURES:
+            gCreate.structures = !gCreate.structures;
+            break;
+        case ACT_TOGGLE_BONUS:
+            gCreate.bonusChest = !gCreate.bonusChest;
+            break;
+        case ACT_CYCLE_RULE_RANDOMTICK:
+            gCreate.randomTickSpeed = (gCreate.randomTickSpeed + 1) % 11;
+            break;
+        case ACT_DONE_VIDEO:
+        case ACT_DONE_CONTROLS:
+            SavePreferences();
+            SetScreen(gHwnd, Screen::Options);
+            break;
+        case ACT_TOGGLE_FANCY:
+            gSettings.fancyGraphics = !gSettings.fancyGraphics;
+            if (!gSettings.fancyGraphics) gSettings.smoothLighting = false;
+            break;
+        case ACT_TOGGLE_SMOOTH:
+            gSettings.smoothLighting = !gSettings.smoothLighting;
+            break;
+        case ACT_CYCLE_FPS: {
+            static const int FPS[] = {30, 60, 120, 144, 240, 0};
+            int idx = 2;
+            for (int i = 0; i < 6; ++i) if (FPS[i] == gSettings.maxFramerate) idx = i;
+            gSettings.maxFramerate = FPS[(idx + 1) % 6];
+            break;
+        }
+        case ACT_CYCLE_GUISCALE:
+            gSettings.guiScale = (gSettings.guiScale + 1) % 5;
+            break;
+        case ACT_CYCLE_CLOUDS:
+            gSettings.clouds = (gSettings.clouds + 1) % 3;
+            break;
+        case ACT_CYCLE_PARTICLES:
+            gSettings.particles = (gSettings.particles + 1) % 3;
+            break;
+        case ACT_TOGGLE_SHADOWS:
+            gSettings.entityShadows = !gSettings.entityShadows;
+            break;
+        case ACT_TOGGLE_INVERT:
+            gSettings.invertMouse = !gSettings.invertMouse;
+            break;
         case ACT_SINGLEPLAYER:
             RefreshWorldList();
             SetScreen(gHwnd, Screen::SelectWorld);
@@ -845,13 +1193,21 @@ static void HandleMenuAction(int action) {
                 gActionBarUntil = gNowMs + 5000;
                 break;
             }
+            gStructuresEnabled = gCreate.structures;
+            gRuleDaylightCycle = gCreate.rules[RULE_DAYLIGHT];
+            gRuleMobSpawning = gCreate.rules[RULE_MOBSPAWN];
+            gRuleWeatherCycle = gCreate.rules[RULE_WEATHER];
+            gRuleMobGriefing = gCreate.rules[RULE_MOBGRIEF];
+            gRuleFireTick = gCreate.rules[RULE_FIRETICK];
+            gRuleRandomTick = gCreate.randomTickSpeed;
             ResetWorld(ParseSeed(gCreate.seed), {}, gCreate.generator);
             gSavePath = path;
             gWorldName = gCreate.name;
             gGameMode = gCreate.gameMode & 1;
             gSettings.difficulty = gCreate.difficulty;
             gAllowCheats = gCreate.allowCheats;
-            gKeepInventory = gCreate.keepInventory;
+            gKeepInventory = gCreate.keepInventory || gCreate.rules[RULE_KEEPINV];
+            gBonusChestPending = gCreate.bonusChest;
             gInventory = InventoryState{};
             gCraftTable = false;
             gInventoryMessage.clear();
@@ -867,9 +1223,15 @@ static void HandleMenuAction(int action) {
                 SetScreen(gHwnd, Screen::SelectWorld);
             } else SetScreen(gHwnd, Screen::Title);
             break;
-        case ACT_CYCLE_WORLD_TYPE:
-            gCreate.generator = WorldGenerator((int(gCreate.generator) + 1) % 3);
+        case ACT_CYCLE_WORLD_TYPE: {
+            static const WorldGenerator ORDER[] = {
+                WorldGenerator::Climate, WorldGenerator::Flat,
+                WorldGenerator::LargeBiomes, WorldGenerator::Amplified};
+            int idx = 0;
+            for (int i = 0; i < 4; ++i) if (ORDER[i] == gCreate.generator) idx = i;
+            gCreate.generator = ORDER[(idx + 1) % 4];
             break;
+        }
         case ACT_CYCLE_GAMEMODE:
             gCreate.gameMode ^= 1;
             break;
@@ -1792,7 +2154,7 @@ static void DropMobLoot(const Mob& mob) {
 }
 
 static void HandleGameFrame(float dt) {
-    gCamera.Look(gInput.mouseDX, gInput.mouseDY);
+    gCamera.Look(gInput.mouseDX, gSettings.invertMouse ? -gInput.mouseDY : gInput.mouseDY);
     const float cp = cosf(gCamera.pitch);
     gCamera.fwdX = sinf(gCamera.yaw) * cp;
     gCamera.fwdY = sinf(gCamera.pitch);
@@ -1844,6 +2206,20 @@ static void HandleGameFrame(float dt) {
         }
         gFallStartY = gBody.y;
         gSpawned = true;
+        if (gBonusChestPending) {
+            gBonusChestPending = false;
+            const int bx = 10, bz = 8;
+            const int by = gWorld->SurfaceY(bx, bz);
+            if (by >= 0 && gGameMode == 0) {
+                gWorld->SetBlock(bx, by + 1, bz, BLOCK_CHEST);
+                ChestState& chest = gChests[ChestKey(bx, bz)];
+                chest = ChestState{};
+                chest.slots[0] = {ITEM_WOOD_PICKAXE, 1, 0};
+                chest.slots[1] = {ITEM_WOOD_AXE, 1, 0};
+                chest.slots[2] = {ITEM_STICK, 4, 0};
+                chest.slots[3] = {ITEM_COAL, 3, 0};
+            }
+        }
     }
 
     // Vanilla creative double-tap-space toggles flight; survival can never fly.
@@ -2052,7 +2428,7 @@ static void HandleGameFrame(float dt) {
     if (gInput.wheel != 0) {
         gHotbarSlot = (gHotbarSlot + (gInput.wheel > 0 ? -1 : 1) + 9) % 9;
     }
-    if (gInput.KeyPressed('E')) {
+    if (gInput.KeyPressed(gSettings.bindInventory)) {
         gCraftTable = false;
         gInventoryMessage.clear();
         ResetCreativeScroll();
@@ -2067,7 +2443,7 @@ static void HandleGameFrame(float dt) {
     }
     if (gInput.KeyPressed(VK_F1)) gHideHud = !gHideHud;
     if (gInput.KeyPressed(VK_F3)) gDebug = !gDebug;
-    if (gInput.KeyPressed(VK_F5)) gPerspective = (gPerspective + 1) % 3;
+    if (gInput.KeyPressed(gSettings.bindPerspective)) gPerspective = (gPerspective + 1) % 3;
     const float zoomTarget = gInput.keys['C'] ? 0.22f : 1.0f;
     gZoom += (zoomTarget - gZoom) * std::min(1.0f, dt * 18.0f);
 
@@ -2659,7 +3035,12 @@ static void DrawHand() {
     const float sideLen = sqrtf(sideX * sideX + sideZ * sideZ);
     sideX /= sideLen; sideZ /= sideLen;
     const float upX = -sideZ * armY, upY = sideZ * armX - sideX * armZ, upZ = sideX * armY;
-    const float shoulderX = 0.52f, shoulderY = -0.60f + bob * 0.010f, shoulderZ = -0.42f;
+    // Java renders the first-person arm near the bottom-right corner: the
+    // shoulder sits just outside the frame and the 12px arm reaches forward.
+    // Keep the whole rig small and close to Java's hand depth so it does not
+    // swallow the screen (old transform put a 0.25-block-thick arm at z=-0.42).
+    const float armScale = 0.62f;
+    const float shoulderX = 0.40f, shoulderY = -0.46f + bob * 0.010f, shoulderZ = -0.58f;
     const float x = 0, y = -12, z = -2, w = 4, h = 12, d = 4, u = 40, v = 16;
     const float corners[8][3] = {{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
         {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
@@ -2670,9 +3051,9 @@ static void DrawHand() {
     for (int face = 0; face < 6; ++face) {
         for (int index : triangles) {
             const float* p = corners[faces[face][index]];
-            const float lx = (p[0] - 2.0f) / 16.0f;
-            const float ly = (p[1] + 12.0f) / 16.0f;
-            const float lz = p[2] / 16.0f;
+            const float lx = (p[0] - 2.0f) / 16.0f * armScale;
+            const float ly = (p[1] + 12.0f) / 16.0f * armScale;
+            const float lz = p[2] / 16.0f * armScale;
             const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
             const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
             vertices.push_back({
@@ -2706,20 +3087,24 @@ static void DrawHand() {
             BuildExtrudedItemMesh(gItemPixels[held], local);
         }
         if (!local.empty() && local.size() <= 20000) {
-            // Java held-item display: 45 deg inward yaw, ~-30 deg pitch toward the
+            // Java held-item display: 45 deg inward yaw, slight pitch toward the
             // camera so the top and two sides of a block read at the tool angle.
-            const float ip = -0.52f - swing * 0.45f;
-            const float iy = 0.785f;
+            // Scale the model down and place it at hand depth; the old scale put
+            // a full 0.55-unit sprite 0.5 blocks from the eye, filling the view.
+            const float itemScale = isBlock ? 0.80f : 0.62f;
+            const float ip = -0.30f - swing * 0.45f;
+            const float iy = 0.72f;
             const float cp = cosf(ip), sp = sinf(ip);
             const float cy = cosf(iy), sy = sinf(iy);
             for (MeshVertex& v : local) {
-                const float rx = v.x * cy + v.z * sy;
-                const float rz = -v.x * sy + v.z * cy;
-                const float ry = v.y * cp - rz * sp;
-                const float rz2 = v.y * sp + rz * cp;
-                v.x = rx + 0.34f;
-                v.y = ry - 0.40f + swing * 0.10f + bob * 0.012f;
-                v.z = rz2 - 0.64f - swing * 0.10f;
+                const float sx = v.x * itemScale, syy = v.y * itemScale, sz = v.z * itemScale;
+                const float rx = sx * cy + sz * sy;
+                const float rz = -sx * sy + sz * cy;
+                const float ry = syy * cp - rz * sp;
+                const float rz2 = syy * sp + rz * cp;
+                v.x = rx + 0.30f;
+                v.y = ry - 0.38f + swing * 0.10f + bob * 0.012f;
+                v.z = rz2 - 0.72f - swing * 0.08f;
             }
             void* hd = nullptr;
             if (SUCCEEDED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &hd))) {
@@ -2822,7 +3207,8 @@ static void BuildLodMesh(float eyeX, float eyeZ, std::vector<MeshVertex>& out) {
 static void DrawLodTerrain(float eyeX, float eyeZ, const XMMATRIX& vp, const SkyState& sky) {
     if (!gWorld || gDimension != 0) return;
     const WorldGenerator gen = gWorld->Generator();
-    if (gen != WorldGenerator::Climate && gen != WorldGenerator::Flat) return;
+    if (gen != WorldGenerator::Climate && gen != WorldGenerator::Flat &&
+        gen != WorldGenerator::LargeBiomes && gen != WorldGenerator::Amplified) return;
     static std::vector<MeshVertex> verts;
     static float lastX = 1e9f, lastZ = 1e9f;
     static int lastRd = -1, lodCount = 0;
@@ -2855,7 +3241,9 @@ static void DrawLodTerrain(float eyeX, float eyeZ, const XMMATRIX& vp, const Sky
     gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
     const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
     gRC.device->IASetVertexBuffers(0, 1, &gLodVB, &stride, &offset);
+    gRC.device->RSSetState(gRC.rasterizerLod);
     gRC.device->Draw(UINT(lodCount), 0);
+    gRC.device->RSSetState(gRC.rasterizer);
 }
 
 static void DrawWorld() {
@@ -3131,7 +3519,8 @@ static void RenderFrame() {
                           SCREEN_W / 64.0f, SCREEN_H / 64.0f, 8);
         }
         gMenu.Draw(gGui, gScreen, gSettings, gCreate, gInput.typed,
-                   gInput.mouseX, gInput.mouseY, gInput.leftDown, gSplash, gTimeSec, gProfileDraft);
+                   gInput.mouseX, gInput.mouseY, gInput.leftDown, gSplash, gTimeSec, gProfileDraft,
+                   gEditName, gEditingBind);
         if (gMenu.ConsumeChanged()) ApplySettings();
         if (gNowMs < gActionBarUntil) {
             const float messageY = gScreen == Screen::CreateWorld ? SCREEN_H - 68.0f : SCREEN_H - 96.0f;
@@ -3372,6 +3761,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                      gScreen == Screen::SoundOptions || gScreen == Screen::ControlsOptions)
                 HandleMenuAction(ACT_OPTIONS_DONE);
             else if (gScreen == Screen::Profile) HandleMenuAction(ACT_PROFILE_CANCEL);
+            else if (gScreen == Screen::ConfirmDelete) HandleMenuAction(ACT_CANCEL_DELETE);
+            else if (gScreen == Screen::EditWorld) HandleMenuAction(ACT_EDIT_CANCEL);
+            else if (gScreen == Screen::GameRules) HandleMenuAction(ACT_GAMERULES_DONE);
             else if (gScreen == Screen::CreateWorld || gScreen == Screen::SelectWorld)
                 HandleMenuAction(ACT_CANCEL_CREATE);
         }
@@ -3394,6 +3786,31 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                 if (allowed && gProfileDraft.name.size() < 16) gProfileDraft.name += c;
             }
         }
+        if (gScreen == Screen::EditWorld) {
+            for (char c : gInput.typed) {
+                if (c == 13) { HandleMenuAction(ACT_EDIT_DONE); break; }
+                if (c == 8) { if (!gEditName.empty()) gEditName.pop_back(); }
+                else if (c >= 32 && c != 127 && gEditName.size() < 40) gEditName += c;
+            }
+        }
+        if (gScreen == Screen::ControlsOptions && gEditingBind >= 0) {
+            int pressed = 0;
+            for (int vk = 1; vk < 256; ++vk)
+                if (gInput.KeyPressed(vk)) { pressed = vk; break; }
+            if (pressed == VK_ESCAPE) {
+                gEditingBind = -1;
+            } else if (pressed) {
+                int* binds[BIND_COUNT] = {
+                    &gSettings.bindForward, &gSettings.bindBack, &gSettings.bindLeft,
+                    &gSettings.bindRight, &gSettings.bindJump, &gSettings.bindSneak,
+                    &gSettings.bindSprint, &gSettings.bindInventory, &gSettings.bindDrop,
+                    &gSettings.bindChat, &gSettings.bindCommand, &gSettings.bindPerspective};
+                if (gEditingBind >= 0 && gEditingBind < BIND_COUNT)
+                    *binds[gEditingBind] = pressed;
+                gEditingBind = -1;
+                SyncBinds();
+            }
+        }
         if (gScreen == Screen::CreateWorld && !gInput.typed.empty()) {
             for (char c : gInput.typed) {
                 if (c == 9) continue;
@@ -3408,9 +3825,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (gScreen == Screen::Game) {
             if (gChat.open) {
                 HandleChatInput();
-            } else if (gInput.KeyPressed('T')) {
+            } else if (gInput.KeyPressed(gSettings.bindChat)) {
                 OpenChat(false);
-            } else if (gInput.KeyPressed(VK_OEM_2)) {
+            } else if (gInput.KeyPressed(gSettings.bindCommand)) {
                 OpenChat(true);
             }
             if (gChat.open) {
@@ -3425,7 +3842,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                 HandleGameFrame(dt);
             }
         } else if (gScreen == Screen::Inventory) {
-            if (gInput.KeyPressed('E')) {
+            if (gInput.KeyPressed(gSettings.bindInventory)) {
                 if (gGameMode == 0 || gCraftTable) CloseInventory();
                 else CloseCreativeInventory();
             } else if (gGameMode == 0 || gCraftTable) {
@@ -3475,11 +3892,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                 }
             }
         } else if (gScreen == Screen::Furnace) {
-            if (gInput.KeyPressed('E')) CloseFurnace();
+            if (gInput.KeyPressed(gSettings.bindInventory)) CloseFurnace();
             else if (gInput.leftClick || gInput.rightClick)
                 HandleFurnaceClick(FurnaceHitTest(gInput.mouseX, gInput.mouseY), gInput.rightClick);
         } else if (gScreen == Screen::Chest) {
-            if (gInput.KeyPressed('E')) CloseChest();
+            if (gInput.KeyPressed(gSettings.bindInventory)) CloseChest();
             else if (gInput.leftClick || gInput.rightClick)
                 HandleChestClick(ChestHitTest(gInput.mouseX, gInput.mouseY), gInput.rightClick);
         } else if (gInput.leftClick) {
