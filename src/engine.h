@@ -358,10 +358,14 @@ public:
         float vx, vy, vz;
         float life, maxLife;
         bool bubble = false;
+        bool rain = false;
+        bool snow = false;
     };
 
     void SpawnCrit(float x, float y, float z);
     void SpawnBubbles(float x, float y, float z);
+    // One weather drop; snow drifts slowly, rain falls in fast streaks.
+    void SpawnRain(float x, float y, float z, bool snow);
     void Update(float dt);
     const std::vector<Particle>& List() const { return mParticles; }
 

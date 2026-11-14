@@ -1,6 +1,7 @@
 #include "assets.h"
 #include "engine.h"
 #include "registry.h"
+#include "commands.h"
 #include "world.h"
 #include "shader_embed.h"
 #include "json.hpp"
@@ -1219,6 +1220,164 @@ static void TestShiftClickParity() {
           "shift-click returns a crafting grid stack to storage");
 }
 
+class MockChatHost : public potato::CommandHost {
+public:
+    int mode = 0;
+    float px = 0, py = 64, pz = 0;
+    uint64_t ticks = 1000;
+    int weather = 0;
+    int weatherDuration = 0;
+    int kills = 3;
+    int cleared = 4;
+    int givenCount = 0;
+    int summoned = 0;
+    bool keepInventory = false;
+    std::string lastBiome;
+    int GameMode() const override { return mode; }
+    void SetGameMode(int value) override { mode = value; }
+    void PlayerPos(float& x, float& y, float& z) const override { x = px; y = py; z = pz; }
+    void Teleport(float x, float y, float z) override { px = x; py = y; pz = z; }
+    uint64_t TimeTicks() const override { return ticks; }
+    void SetTimeTicks(uint64_t value) override { ticks = value; }
+    uint32_t WorldSeed() const override { return 1337; }
+    void SetWeather(int value, int duration) override { weather = value; weatherDuration = duration; }
+    int Weather() const override { return weather; }
+    bool GiveItem(const std::string& item, int count, std::string& name) override {
+        if (item != "stone" && item != "minecraft:stone") return false;
+        name = "Stone";
+        givenCount = count;
+        return true;
+    }
+    bool LocateBiome(const std::string& biome, int& x, int& z, int& distance) override {
+        if (biome != "plains") return false;
+        lastBiome = biome;
+        x = 24; z = -40; distance = 61;
+        return true;
+    }
+    int Summon(const std::string& entity, int count) override {
+        if (entity != "zombie") return -1;
+        summoned += count;
+        return count;
+    }
+    int KillEntities(const std::string& target) override {
+        if (target != "player" && target != "@s" && target != "zombie" && target != "@e") return -1;
+        return kills;
+    }
+    int ClearInventory() override { return cleared; }
+    bool GetGameRule(const std::string& rule, std::string& value) const override {
+        if (rule != "keepInventory") return false;
+        value = keepInventory ? "true" : "false";
+        return true;
+    }
+    bool SetGameRule(const std::string& rule, const std::string& value) override {
+        if (rule != "keepInventory") return false;
+        keepInventory = value == "true";
+        return true;
+    }
+    std::string PlayerName() const override { return "Player"; }
+};
+
+static void TestChatCommands() {
+    MockChatHost host;
+    auto run = [&](const std::string& line) { return potato::ExecuteCommand(line, host); };
+    auto has = [](const std::string& text, const char* needle) {
+        return text.find(needle) != std::string::npos;
+    };
+
+    potato::CommandResult r = run("/gamemode creative");
+    CHECK(r.ok && !r.error && host.mode == 1, "gamemode switches the world to creative");
+    CHECK(!r.lines.empty() && has(r.lines[0], "Creative Mode"), "gamemode feedback matches Java");
+    run("/gamemode s");
+    CHECK(host.mode == 0, "gamemode accepts the s alias");
+    CHECK(run("/gamemode adventure").error, "unsupported game modes are rejected");
+
+    r = run("/give stone 3");
+    CHECK(r.ok && host.givenCount == 3, "give honours the amount argument");
+    CHECK(!r.lines.empty() && has(r.lines[0], "[Stone]"), "give names the item in brackets");
+    CHECK(run("/give stone").ok && host.givenCount == 1, "give defaults to one item");
+    CHECK(run("/give not_an_item").error, "unknown items are rejected");
+
+    r = run("/tp 10 64 -20");
+    CHECK(r.ok && host.px == 10.0f && host.py == 64.0f && host.pz == -20.0f, "tp applies absolute coordinates");
+    run("/tp ~5 ~ ~-2");
+    CHECK(host.px == 15.0f && host.py == 64.0f && host.pz == -22.0f, "tp resolves relative coordinates");
+    CHECK(run("/tp 1 2").error, "tp requires three coordinates");
+
+    run("/time set day");
+    CHECK(host.ticks == 1000, "time set day matches Java's 1000 ticks");
+    run("/time add 500");
+    CHECK(host.ticks == 1500, "time add advances the clock");
+    r = run("/time query daytime");
+    CHECK(r.ok && has(r.lines[0], "1500"), "time query reports the current tick");
+
+    r = run("/weather rain");
+    CHECK(host.weather == 1 && has(r.lines[0], "rainy weather"), "weather rain starts rain");
+    CHECK(host.weatherDuration == 0, "weather without seconds uses the Java default duration");
+    run("/weather thunder 60");
+    CHECK(host.weather == 2 && host.weatherDuration == 1200, "weather thunder converts seconds to ticks");
+    run("/weather clear");
+    CHECK(host.weather == 0, "weather clear stops precipitation");
+
+    r = run("/seed");
+    CHECK(r.ok && has(r.lines[0], "1337"), "seed reports the world seed");
+
+    r = run("/locate biome plains");
+    CHECK(r.ok && host.lastBiome == "plains" && has(r.lines[0], "61 blocks away"), "locate reports the found biome");
+    CHECK(run("/locate biome candyland").error, "unknown biomes are rejected");
+
+    r = run("/summon zombie 2");
+    CHECK(r.ok && host.summoned == 2 && has(r.lines[0], "Zombie"), "summon spawns zombies");
+    CHECK(run("/summon dragon").error, "unknown entities are rejected");
+
+    CHECK(run("/kill").ok && host.kills == 3, "kill targets the player by default");
+    r = run("/kill zombie");
+    CHECK(has(r.lines[0], "Killed 3 entities"), "kill reports the entity count");
+
+    r = run("/clear");
+    CHECK(r.ok && has(r.lines[0], "Removed 4 items"), "clear reports removed stacks");
+
+    r = run("/gamerule keepInventory true");
+    CHECK(r.ok && host.keepInventory, "gamerule applies a boolean value");
+    r = run("/gamerule keepInventory");
+    CHECK(r.ok && has(r.lines[0], "currently set to"), "gamerule queries without a value");
+    CHECK(run("/gamerule doFireTick true").error, "unknown gamerules are rejected");
+    CHECK(run("/gamerule keepInventory maybe").error, "invalid gamerule values are rejected");
+
+    CHECK(run("/nope").error, "unknown commands are rejected");
+    CHECK(run("/").error, "an empty command is rejected");
+
+    potato::ChatHistory history;
+    history.Push("first");
+    history.Push("second");
+    std::string out;
+    CHECK(history.Prev(out) && out == "second", "history walks back to the newest line");
+    CHECK(history.Prev(out) && out == "first", "history walks back further");
+    CHECK(!history.Prev(out), "history stops at the oldest line");
+    CHECK(history.Next(out) && out == "second", "history walks forward again");
+    CHECK(history.Next(out) && out.empty(), "history forward restores a blank line");
+    CHECK(!history.Next(out), "history forward stops past the newest line");
+
+    std::vector<std::string> options = potato::CommandCompletions("/gam");
+    CHECK(options.size() == 1 && options[0] == "/gamemode", "tab completes command names");
+    options = potato::CommandCompletions("/weather ");
+    CHECK(options.size() == 3, "tab offers every weather argument");
+    options = potato::CommandCompletions("/time set mid");
+    CHECK(options.size() == 1 && options[0] == "/time set midnight", "tab completes nested arguments");
+    options = potato::CommandCompletions("/give sto");
+    CHECK(!options.empty() && has(options[0], "stone"), "tab completes item ids");
+    CHECK(potato::CommonPrefix({"/gamemode creative", "/gamemode c"}) == "/gamemode c",
+          "common prefix keeps the shared text");
+
+    potato::ParticleSystem weather;
+    weather.SpawnRain(0, 30, 0, false);
+    weather.SpawnRain(1, 30, 0, true);
+    CHECK(weather.List().size() == 2 && weather.List()[0].rain && weather.List()[1].snow,
+          "weather spawns distinct rain and snow drops");
+    const float rainY = weather.List()[0].y;
+    weather.Update(0.1f);
+    CHECK(weather.List()[0].y < rainY, "rain falls over time");
+}
+
 int main() {
     TestShaders();
     TestSkyTimeline();
@@ -1236,6 +1395,7 @@ int main() {
     TestBubbleParticles();
     TestRegistryParsing();
     TestShiftClickParity();
+    TestChatCommands();
 
     // --- Perlin determinism and bounds ---
     PerlinNoise a(1337), b(1337), c(7);

@@ -184,6 +184,16 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint8_t* hotbar, int health, int hunger, int armorPoints,
              const std::string& actionBar, bool creative, const ItemSlot* stacks);
 
+// Chat log bottom-left above the hotbar. Closed: last ten lines fade out over
+// Java's ten-second window. Open: full recent log plus the input field.
+struct ChatEntry {
+    std::string text;
+    bool error = false;
+    float age = 0.0f;
+};
+void DrawChat(GuiRenderer& ui, const std::vector<ChatEntry>& entries, bool open,
+              const std::string& input, float timeSec);
+
 // Tabbed creative inventory (E in creative). The picker grid, player storage
 // rows and tab strip are drawn here; input helpers below map mouse positions
 // back onto tab ids, picker item ids and player slot indices.

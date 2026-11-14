@@ -879,6 +879,24 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
     }
 }
 
+void DrawChat(GuiRenderer& ui, const std::vector<ChatEntry>& entries, bool open,
+              const std::string& input, float timeSec) {
+    const float inputY = SCREEN_H - 96.0f;
+    float y = open ? inputY - 24.0f : SCREEN_H - 96.0f;
+    int shown = 0;
+    for (auto it = entries.rbegin(); it != entries.rend() && shown < 10; ++it, ++shown) {
+        if (!open && it->age > 10.0f) break;
+        float shade = 15.0f;
+        if (!open && it->age > 8.0f) shade = 15.0f * (1.0f - (it->age - 8.0f) * 0.5f);
+        if (shade < 1.0f) shade = 1.0f;
+        if (it->error) ui.DrawText(it->text, 4, y, 2, shade, true, 1.0f, 0.4f, 0.4f);
+        else ui.DrawText(it->text, 4, y, 2, shade, true);
+        y -= 20.0f;
+    }
+    if (open)
+        DrawTextField(ui, input, 4, inputY, 560, 26, true, timeSec);
+}
+
 // ---------------------------------------------------------------------------
 // Creative inventory: Java 26.3 tabs, search, picker grid and player inventory
 // ---------------------------------------------------------------------------

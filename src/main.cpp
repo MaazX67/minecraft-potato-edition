@@ -17,6 +17,7 @@
 #include "sound.h"
 #include "gui.h"
 #include "registry.h"
+#include "commands.h"
 #include "shader_embed.h"
 #include "json.hpp"
 
@@ -133,6 +134,21 @@ static WorldClock gWorldClock;
 static SkyTimeline gSkyTimeline;
 static bool gFreezeTime = false;
 static bool gScreenshotRequested = false;
+
+struct ChatUIState {
+    bool open = false;
+    std::string input;
+    std::vector<ChatEntry> entries;
+};
+static ChatUIState gChat;
+static ChatHistory gChatHistory;
+static int gWeather = 0;             // 0 clear, 1 rain, 2 thunder
+static float gWeatherTicksLeft = 0;  // command-set duration countdown
+static float gWeatherTimer = 2400.0f;
+static float gRainLevel = 0, gThunderLevel = 0;
+static float gRainSpawnTimer = 0;
+static bool gRuleDaylightCycle = true, gRuleMobSpawning = true, gRuleWeatherCycle = true;
+static PerlinNoise* gWeatherNoise = nullptr;
 
 static void SetScreen(HWND hwnd, Screen s);
 static void UpdateCursorCapture(HWND hwnd);
@@ -265,7 +281,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 static void UpdateCursorCapture(HWND hwnd) {
-    const bool capture = gScreen == Screen::Game && gFocused && !gAutomation;
+    const bool capture = gScreen == Screen::Game && gFocused && !gAutomation && !gChat.open;
     if (capture == gCursorCaptured) return;
     gCursorCaptured = capture;
     ShowCursor(capture ? FALSE : TRUE);
@@ -307,6 +323,12 @@ static void StartGame() {
     gResumePending = false;
     gResumeScreen = Screen::Game;
     gActionBar.clear();
+    gChat = ChatUIState{};
+    gChatHistory = ChatHistory{};
+    gWeather = 0;
+    gWeatherTicksLeft = 0;
+    gRainLevel = gThunderLevel = 0;
+    gWeatherTimer = 2400.0f;
     SetScreen(gHwnd, Screen::Game);
 }
 
@@ -512,6 +534,11 @@ static void ResetWorld(uint32_t seed, EditMap edits = {}, WorldGenerator generat
     gFurnace = {};
     gChests.clear();
     gChestKey = 0;
+    delete gWeatherNoise;
+    gWeatherNoise = nullptr; // lazily re-seeded from the new world seed
+    gWeather = 0;
+    gWeatherTicksLeft = 0;
+    gRainLevel = gThunderLevel = 0;
 }
 
 static bool SaveCurrentWorld() {
@@ -549,7 +576,9 @@ static bool SaveCurrentWorld() {
         {"armor", armor}, {"armorDamage", armorDamage},
         {"offhand", slot(gInventory.offhand)}, {"offhandDamage", gInventory.offhand.damage},
         {"inventoryOpen", gScreen == Screen::Inventory}, {"craftTable", gCraftTable},
-        {"dimension", gDimension},
+        {"dimension", gDimension}, {"weather", gWeather}, {"weatherTicks", int(gWeatherTicksLeft)},
+        {"doDaylightCycle", gRuleDaylightCycle}, {"doMobSpawning", gRuleMobSpawning},
+        {"doWeatherCycle", gRuleWeatherCycle},
         {"otherEdits", nlohmann::json::binary(EncodeEdits(gDimEdits[1 - gDimension]))},
         {"otherPos", {gDimPos[1 - gDimension][0], gDimPos[1 - gDimension][1], gDimPos[1 - gDimension][2]}},
         {"otherVisited", gDimVisited[1 - gDimension]},
@@ -705,6 +734,11 @@ static bool LoadWorldSave(const std::string& path) {
         gSettings.difficulty = difficulty;
         gAllowCheats = data.value("cheats", false);
         gKeepInventory = data.value("keepInventory", false);
+        gWeather = data.value("weather", 0);
+        gWeatherTicksLeft = float(data.value("weatherTicks", 0));
+        gRuleDaylightCycle = data.value("doDaylightCycle", true);
+        gRuleMobSpawning = data.value("doMobSpawning", true);
+        gRuleWeatherCycle = data.value("doWeatherCycle", true);
         gInventory = inventory;
         gCraftTable = craftTable;
         if (data.contains("furnace")) {
@@ -1482,6 +1516,253 @@ static void LightPortal(int hx, int hy, int hz, int nx, int nz) {
     gSound.PlayAt(SND_CLICK, float(hx), float(hy), float(hz), 0.8f, 0.7f);
 }
 
+// ---- Chat and slash commands ---------------------------------------------
+
+class GameCommandHost : public CommandHost {
+public:
+    int GameMode() const override { return gGameMode; }
+    void SetGameMode(int mode) override {
+        if (mode == gGameMode) return;
+        if (mode == 0) {
+            // Java keeps the items on a mode switch; the creative hotbar only
+            // stores ids, so rebuild real stacks for survival.
+            for (int i = 0; i < 9; ++i)
+                gInventory.slots[27 + i] = {gHotbar[i], gHotbar[i] == BLOCK_AIR ? 0 : ItemStackLimit(gHotbar[i])};
+            SyncHotbar();
+        } else {
+            for (int i = 0; i < 9; ++i)
+                gHotbar[i] = gInventory.slots[27 + i].Empty() ? BLOCK_AIR : gInventory.slots[27 + i].id;
+        }
+        gGameMode = mode;
+    }
+    void PlayerPos(float& x, float& y, float& z) const override { x = gBody.x; y = gBody.y; z = gBody.z; }
+    void Teleport(float x, float y, float z) override {
+        gBody.x = x; gBody.y = y; gBody.z = z;
+        gBody.vx = gBody.vy = gBody.vz = 0;
+        gFallStartY = y;
+        if (gWorld) gWorld->Update(x, z);
+    }
+    uint64_t TimeTicks() const override { return gWorldClock.Ticks(); }
+    void SetTimeTicks(uint64_t ticks) override { gWorldClock.Set(ticks); }
+    uint32_t WorldSeed() const override { return gWorldSeed; }
+    void SetWeather(int weather, int durationTicks) override {
+        gWeather = weather;
+        gWeatherTicksLeft = float(durationTicks > 0 ? durationTicks
+                                                    : (weather == 2 ? 3600 : (weather == 1 ? 12000 : 0)));
+        gWeatherTimer = gWeatherTicksLeft > 0 ? gWeatherTicksLeft : 2400.0f;
+    }
+    int Weather() const override { return gWeather; }
+    bool GiveItem(const std::string& item, int count, std::string& givenName) override {
+        const uint8_t id = ItemIdFromResourceName(item);
+        if (id == BLOCK_AIR) return false;
+        givenName = id == BLOCK_GRASS ? "Grass Block" : std::string();
+        if (givenName.empty()) {
+            std::string name = ResourceNameForItem(id);
+            const size_t colon = name.find(':');
+            if (colon != std::string::npos) name = name.substr(colon + 1);
+            for (char c : name) {
+                if (c == '_') givenName += ' ';
+                else if (givenName.empty() || givenName.back() == ' ')
+                    givenName += (c >= 'a' && c <= 'z') ? char(c - 32) : c;
+                else givenName += c;
+            }
+        }
+        gInventory.Add(id, count);
+        SyncHotbar();
+        return true;
+    }
+    bool LocateBiome(const std::string& biome, int& x, int& z, int& distance) override {
+        Biome want = Biome::Plains;
+        if (biome == "plains") want = Biome::Plains;
+        else if (biome == "forest") want = Biome::Forest;
+        else if (biome == "birch_forest") want = Biome::BirchForest;
+        else if (biome == "taiga") want = Biome::Taiga;
+        else if (biome == "desert") want = Biome::Desert;
+        else if (biome == "snowy_plains") want = Biome::Snowy;
+        else if (biome == "mountains") want = Biome::Mountains;
+        else if (biome == "river") want = Biome::River;
+        else if (biome == "ocean") want = Biome::Ocean;
+        else if (biome == "cherry_grove") want = Biome::CherryGrove;
+        else return false;
+        const PerlinNoise noise(gWorldSeed);
+        const int px = int(floorf(gBody.x)), pz = int(floorf(gBody.z));
+        for (int radius = 0; radius <= 512; radius += 12) {
+            for (int step = 0; step < 24; ++step) {
+                const float angle = float(step) * 0.2617994f;
+                const int sx = px + int(cosf(angle) * float(radius));
+                const int sz = pz + int(sinf(angle) * float(radius));
+                if (SampleTerrain(noise, sx, sz).biome != want) continue;
+                x = sx; z = sz;
+                distance = int(sqrtf(float((sx - px) * (sx - px) + (sz - pz) * (sz - pz))));
+                return true;
+            }
+        }
+        return false;
+    }
+    int Summon(const std::string& entity, int count) override {
+        if (entity != "zombie" && entity != "minecraft:zombie") return -1;
+        for (int i = 0; i < count; ++i) {
+            Zombie zombie;
+            zombie.body.x = gBody.x + float(i) * 0.9f;
+            zombie.body.y = gBody.y;
+            zombie.body.z = gBody.z + 0.5f;
+            gZombies.push_back(zombie);
+        }
+        return count;
+    }
+    int KillEntities(const std::string& target) override {
+        if (target == "player" || target == "@s") {
+            if (gSurvival.health <= 0) return 0;
+            gSurvival.health = 0;
+            return 1;
+        }
+        if (target == "zombie" || target == "@e") {
+            int killed = 0;
+            for (Zombie& zombie : gZombies)
+                if (zombie.health > 0) { zombie.health = 0; ++killed; }
+            return killed;
+        }
+        return -1;
+    }
+    int ClearInventory() override {
+        int removed = 0;
+        for (ItemSlot& slot : gInventory.slots) if (!slot.Empty()) { slot = {}; ++removed; }
+        for (ItemSlot& slot : gInventory.armor) if (!slot.Empty()) { slot = {}; ++removed; }
+        if (!gInventory.offhand.Empty()) { gInventory.offhand = {}; ++removed; }
+        if (!gInventory.cursor.Empty()) { gInventory.cursor = {}; ++removed; }
+        SyncHotbar();
+        return removed;
+    }
+    bool GetGameRule(const std::string& rule, std::string& value) const override {
+        bool current = false;
+        if (rule == "keepInventory") current = gKeepInventory;
+        else if (rule == "doDaylightCycle") current = gRuleDaylightCycle;
+        else if (rule == "doMobSpawning") current = gRuleMobSpawning;
+        else if (rule == "doWeatherCycle") current = gRuleWeatherCycle;
+        else return false;
+        value = current ? "true" : "false";
+        return true;
+    }
+    bool SetGameRule(const std::string& rule, const std::string& value) override {
+        const bool enabled = value == "true";
+        if (rule == "keepInventory") gKeepInventory = enabled;
+        else if (rule == "doDaylightCycle") gRuleDaylightCycle = enabled;
+        else if (rule == "doMobSpawning") gRuleMobSpawning = enabled;
+        else if (rule == "doWeatherCycle") gRuleWeatherCycle = enabled;
+        else return false;
+        return true;
+    }
+    std::string PlayerName() const override { return gProfile.name; }
+};
+static GameCommandHost gCommandHost;
+
+static void PushChat(const std::string& text, bool error) {
+    gChat.entries.push_back({text, error, 0.0f});
+    if (gChat.entries.size() > 100) gChat.entries.erase(gChat.entries.begin());
+}
+
+static void OpenChat(bool slash) {
+    gChat.open = true;
+    gChat.input = slash ? "/" : "";
+    gChatHistory.Reset();
+    UpdateCursorCapture(gHwnd);
+}
+
+static void CloseChat() {
+    gChat.open = false;
+    gChat.input.clear();
+    UpdateCursorCapture(gHwnd);
+}
+
+static void SubmitChat() {
+    const std::string line = gChat.input;
+    CloseChat();
+    if (line.empty()) return;
+    gChatHistory.Push(line);
+    if (line[0] == '/') {
+        const CommandResult result = ExecuteCommand(line, gCommandHost);
+        for (const std::string& text : result.lines) PushChat(text, result.error);
+    } else {
+        PushChat("<" + gProfile.name + "> " + line, false);
+    }
+}
+
+static void CompleteChat() {
+    const std::vector<std::string> options = CommandCompletions(gChat.input);
+    if (options.empty()) return;
+    gChat.input = CommonPrefix(options);
+    if (options.size() == 1) {
+        gChat.input += " ";
+    } else {
+        std::string line = "Options:";
+        for (size_t i = 0; i < options.size() && i < 8; ++i) line += " " + options[i];
+        PushChat(line, false);
+    }
+}
+
+static void HandleChatInput() {
+    for (char c : gInput.typed) {
+        if (c == 13) { SubmitChat(); return; }
+        if (c == 8) { if (!gChat.input.empty()) gChat.input.pop_back(); }
+        else if (c >= 32 && c < 127 && gChat.input.size() < 200) gChat.input += c;
+    }
+    if (gInput.KeyPressed(VK_TAB)) CompleteChat();
+    if (gInput.KeyPressed(VK_UP)) {
+        std::string line;
+        if (gChatHistory.Prev(line)) gChat.input = line;
+    }
+    if (gInput.KeyPressed(VK_DOWN)) {
+        std::string line;
+        if (gChatHistory.Next(line)) gChat.input = line;
+    }
+}
+
+static bool WeatherIsSnowy(int x, int z) {
+    if (!gWeatherNoise) gWeatherNoise = new PerlinNoise(gWorldSeed);
+    return SampleTerrain(*gWeatherNoise, x, z).temperature < 0.24f;
+}
+
+static void UpdateWeather(float dt) {
+    if (gFreezeTime) return;
+    const float rainTarget = gWeather != 0 ? 1.0f : 0.0f;
+    const float thunderTarget = gWeather == 2 ? 1.0f : 0.0f;
+    const float blend = std::min(1.0f, dt * 0.12f);
+    gRainLevel += (rainTarget - gRainLevel) * blend;
+    gThunderLevel += (thunderTarget - gThunderLevel) * blend;
+    if (gRainLevel < 0.001f) gRainLevel = 0;
+    if (gRainLevel > 0.999f) gRainLevel = 1;
+    if (gWeatherTicksLeft > 0) {
+        gWeatherTicksLeft -= dt * 20.0f;
+        if (gWeatherTicksLeft <= 0) {
+            gWeatherTicksLeft = 0;
+            gWeather = 0;
+            gWeatherTimer = 2400.0f;
+        }
+    } else if (gRuleWeatherCycle && !gAutomation) {
+        gWeatherTimer -= dt;
+        if (gWeatherTimer <= 0) {
+            // Occasional natural storm, deterministic from world time.
+            const bool storm = (gWorldClock.Ticks() % 7) == 3;
+            gWeather = storm ? 1 : 0;
+            gWeatherTicksLeft = storm ? 6000.0f : 0;
+            gWeatherTimer = storm ? 0 : 2400.0f;
+        }
+    }
+    if (gRainLevel <= 0.12f || gDimension != 0 || !gSpawned) {
+        gRainSpawnTimer = 0;
+        return;
+    }
+    gRainSpawnTimer += dt * 70.0f * gRainLevel;
+    const bool snow = WeatherIsSnowy(int(floorf(gCamera.x)), int(floorf(gCamera.z)));
+    while (gRainSpawnTimer >= 1.0f) {
+        gRainSpawnTimer -= 1.0f;
+        const float px = gCamera.x - 14.0f + float(rand() % 2800) * 0.01f;
+        const float pz = gCamera.z - 14.0f + float(rand() % 2800) * 0.01f;
+        const float py = gCamera.y + 7.0f + float(rand() % 500) * 0.01f;
+        gParticles.SpawnRain(px, py, pz, snow);
+    }
+}
+
 static void HandleGameFrame(float dt) {
     gCamera.Look(gInput.mouseDX, gInput.mouseDY);
     const float cp = cosf(gCamera.pitch);
@@ -1636,7 +1917,8 @@ static void HandleGameFrame(float dt) {
         const Zombie& z = gZombies[gWorldClock.Ticks() % gZombies.size()];
         gSound.PlayAt(SND_ZOMBIE_SAY, z.body.x, z.body.y, z.body.z);
     }
-    if (!gAutomation && gSettings.difficulty != 0 && gSkyTimeline.Sample(gWorldClock.Ticks()).stars > 0.1f) {
+    if (!gAutomation && gRuleMobSpawning && gSettings.difficulty != 0 &&
+        gSkyTimeline.Sample(gWorldClock.Ticks()).stars > 0.1f) {
         gMobSpawnTimer += dt;
         if (gMobSpawnTimer >= 4 && gZombies.size() < 12) {
             gMobSpawnTimer = 0;
@@ -2301,6 +2583,14 @@ static void DrawWorld() {
         sky.stars = 0.0f;
         fogDist *= 0.35f;
     }
+    if (gRainLevel > 0.001f || gThunderLevel > 0.001f) {
+        // Java darkens the sky and sun light while precipitation is visible.
+        const float dark = 1.0f - 0.22f * gRainLevel - 0.10f * gThunderLevel;
+        sky.skyColor.x *= dark; sky.skyColor.y *= dark; sky.skyColor.z *= dark;
+        sky.fogColor.x *= dark; sky.fogColor.y *= dark; sky.fogColor.z *= dark;
+        const float lightDim = 1.0f - 0.18f * gRainLevel - 0.06f * gThunderLevel;
+        sky.lightColor.x *= lightDim; sky.lightColor.y *= lightDim; sky.lightColor.z *= lightDim;
+    }
     const float waterTime = float(gWorldClock.Ticks() % 64u) / 64.0f;
     const XMMATRIX skyView = XMMatrixLookAtRH(XMVectorZero(),
         XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0), XMVectorSet(0, 1, 0, 0));
@@ -2353,7 +2643,9 @@ static void DrawWorld() {
     if (!parts.empty() && gParticleVB) {
         static MeshVertex critVerts[MAX_PARTICLES * 6];
         static MeshVertex bubbleVerts[MAX_PARTICLES * 6];
-        size_t cn = 0, bn = 0;
+        static MeshVertex rainVerts[MAX_PARTICLES * 6];
+        static MeshVertex snowVerts[MAX_PARTICLES * 6];
+        size_t cn = 0, bn = 0, rn = 0, sn = 0;
         auto quad = [](MeshVertex* dst, const ParticleSystem::Particle& p, float s,
                        float shade, float r, float g, float b) {
             const float rx = gCamera.rightX * s, rz = gCamera.rightZ * s;
@@ -2370,12 +2662,36 @@ static void DrawWorld() {
             };
             memcpy(dst, q, sizeof(q));
         };
+        auto streak = [](MeshVertex* dst, const ParticleSystem::Particle& p, float w, float h,
+                         float shade, float r, float g, float b) {
+            const float rx = gCamera.rightX * w, rz = gCamera.rightZ * w;
+            const float x0 = p.x - rx, z0 = p.z - rz;
+            const float x1 = p.x + rx, z1 = p.z + rz;
+            const float y0 = p.y - h, y1 = p.y + h;
+            const MeshVertex q[6] = {
+                {x0, y1, z0, 0, 0, 0, 0, shade, r, g, b},
+                {x1, y1, z1, 0, 0, 1, 0, shade, r, g, b},
+                {x1, y0, z1, 0, 0, 1, 1, shade, r, g, b},
+                {x0, y1, z0, 0, 0, 0, 0, shade, r, g, b},
+                {x1, y0, z1, 0, 0, 1, 1, shade, r, g, b},
+                {x0, y0, z0, 0, 0, 0, 1, shade, r, g, b},
+            };
+            memcpy(dst, q, sizeof(q));
+        };
         for (const ParticleSystem::Particle& p : parts) {
             const float fade = p.life / p.maxLife;
             if (p.bubble) {
                 if (!gBubbleSRV || bn + 6 > MAX_PARTICLES * 6) continue;
                 quad(bubbleVerts + bn, p, 0.05f, 15.0f * fade, 0.55f, 0.80f, 1.0f);
                 bn += 6;
+            } else if (p.rain) {
+                if (!gParticleSRV || rn + 6 > MAX_PARTICLES * 6) continue;
+                streak(rainVerts + rn, p, 0.012f, 0.45f, 11.0f * fade, 0.60f, 0.70f, 1.0f);
+                rn += 6;
+            } else if (p.snow) {
+                if (!gParticleSRV || sn + 6 > MAX_PARTICLES * 6) continue;
+                streak(snowVerts + sn, p, 0.035f, 0.035f, 14.0f * fade, 1.0f, 1.0f, 1.0f);
+                sn += 6;
             } else {
                 if (!gParticleSRV || cn + 6 > MAX_PARTICLES * 6) continue;
                 quad(critVerts + cn, p, 0.15f, 15.0f * fade, 1.0f, 1.0f, 1.0f);
@@ -2396,6 +2712,8 @@ static void DrawWorld() {
             gRC.device->IASetVertexBuffers(0, 1, &gParticleVB, &pstride, &poffset);
             gRC.device->Draw(UINT(count), 0);
         };
+        flush(gParticleSRV, rainVerts, rn);
+        flush(gParticleSRV, snowVerts, sn);
         flush(gParticleSRV, critVerts, cn);
         flush(gBubbleSRV, bubbleVerts, bn);
         gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
@@ -2470,6 +2788,7 @@ static void RenderFrame() {
                     gSurvival.health, gSurvival.hunger, gInventory.Defense(),
                     gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1,
                     gGameMode == 0 ? gInventory.slots + 27 : nullptr);
+        DrawChat(gGui, gChat.entries, gChat.open, gChat.input, gTimeSec);
         if (gDebug) DrawDebug();
     } else if (gScreen == Screen::Inventory) {
         if (gGameMode == 0 || gCraftTable)
@@ -2712,9 +3031,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         const float dt = clock.Tick();
         gNowMs = SystemTimeMs();
         gTimeSec += dt;
+        for (ChatEntry& entry : gChat.entries) entry.age += dt;
 
         if (gInput.KeyPressed(VK_ESCAPE)) {
-            if (gScreen == Screen::Game) SetScreen(hwnd, Screen::Pause);
+            if (gScreen == Screen::Game && gChat.open) CloseChat();
+            else if (gScreen == Screen::Game) SetScreen(hwnd, Screen::Pause);
             else if (gScreen == Screen::Pause) SetScreen(hwnd, Screen::Game);
             else if (gScreen == Screen::Inventory) {
                 if (gGameMode == 0 || gCraftTable) CloseInventory();
@@ -2760,7 +3081,24 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         }
 
         if (gScreen == Screen::Game) {
-            HandleGameFrame(dt);
+            if (gChat.open) {
+                HandleChatInput();
+            } else if (gInput.KeyPressed('T')) {
+                OpenChat(false);
+            } else if (gInput.KeyPressed(VK_OEM_2)) {
+                OpenChat(true);
+            }
+            if (gChat.open) {
+                // Java freezes movement and mouse look while chat has focus.
+                const InputState saved = gInput;
+                gInput = InputState{};
+                gInput.mouseX = saved.mouseX;
+                gInput.mouseY = saved.mouseY;
+                HandleGameFrame(dt);
+                gInput = saved;
+            } else {
+                HandleGameFrame(dt);
+            }
         } else if (gScreen == Screen::Inventory) {
             if (gInput.KeyPressed('E')) {
                 if (gGameMode == 0 || gCraftTable) CloseInventory();
@@ -2826,7 +3164,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (gSpawned && !gResumePending && !gFreezeTime &&
             (gScreen == Screen::Game || gScreen == Screen::Inventory ||
              gScreen == Screen::Furnace || gScreen == Screen::Chest || gScreen == Screen::Death)) {
-            gWorldClock.Advance(dt);
+            if (gRuleDaylightCycle) gWorldClock.Advance(dt);
+            UpdateWeather(dt);
             TickFurnace(dt);
         }
 
@@ -2861,6 +3200,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     SetScreen(hwnd, Screen::Title);
     if (!gAutomation) SavePreferences();
     delete gWorld;
+    delete gWeatherNoise;
+    gWeatherNoise = nullptr;
     gSound.Shutdown();
     gGui.Shutdown();
     SafeRelease(gParticleSRV);

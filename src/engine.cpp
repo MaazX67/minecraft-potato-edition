@@ -928,6 +928,22 @@ void ParticleSystem::SpawnBubbles(float x, float y, float z) {
     }
 }
 
+void ParticleSystem::SpawnRain(float x, float y, float z, bool snow) {
+    if (mParticles.size() >= MAX_PARTICLES) return;
+    Particle p;
+    p.x = x; p.y = y; p.z = z;
+    if (snow) {
+        p.vx = 0.35f; p.vy = -1.4f; p.vz = 0.15f;
+        p.maxLife = p.life = 2.4f;
+        p.snow = true;
+    } else {
+        p.vx = 0.5f; p.vy = -13.0f; p.vz = 0.2f;
+        p.maxLife = p.life = 0.9f;
+        p.rain = true;
+    }
+    mParticles.push_back(p);
+}
+
 void ParticleSystem::Update(float dt) {
     size_t w = 0;
     for (size_t i = 0; i < mParticles.size(); ++i) {
@@ -938,6 +954,11 @@ void ParticleSystem::Update(float dt) {
             p.vy = std::min(p.vy + 2.5f * dt, 1.6f);
             p.vx *= 0.96f;
             p.vz *= 0.96f;
+        } else if (p.rain) {
+            // Terminal velocity: rain does not keep accelerating.
+        } else if (p.snow) {
+            p.vx *= 0.99f;
+            p.vz *= 0.99f;
         } else {
             p.vy -= 9.8f * dt;
         }
