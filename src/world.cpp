@@ -638,11 +638,10 @@ void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t see
             }
         }
     }
-    if (structures) ApplyStructures(blocks, noise, seed, cx, cz, true);
 }
 
 void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz,
-                          bool largeBiomes = false, bool amplified = false, bool structures = true) {
+                          bool largeBiomes, bool amplified, bool structures) {
     memset(blocks, BLOCK_AIR, CHUNK_VOL * sizeof(uint8_t));
     const int originX = cx * CHUNK_X, originZ = cz * CHUNK_Z;
     TerrainColumn columns[CHUNK_X + 2][CHUNK_Z + 2];
