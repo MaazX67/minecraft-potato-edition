@@ -862,7 +862,7 @@ static void TestClimateGeneration() {
             const TerrainColumn a = SampleTerrain(noise, x, z), b = SampleTerrain(sameNoise, x, z), c = SampleTerrain(otherNoise, x, z);
             if (a.height < 5 || a.height > 210 || !std::isfinite(a.temperature) || !std::isfinite(a.humidity) ||
                 a.temperature < 0 || a.temperature > 1 || a.humidity < 0 || a.humidity > 1 ||
-                int(a.biome) < int(Biome::Plains) || int(a.biome) > int(Biome::Ocean) ||
+                int(a.biome) < int(Biome::Plains) || int(a.biome) > int(Biome::CherryGrove) ||
                 std::string(BiomeName(a.biome)) == "Unknown") bounded = false;
             if (a.height != b.height || a.biome != b.biome || a.temperature != b.temperature || a.humidity != b.humidity) deterministic = false;
             if (a.height != c.height || a.biome != c.biome || a.temperature != c.temperature || a.humidity != c.humidity) differs = true;
