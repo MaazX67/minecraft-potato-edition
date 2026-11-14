@@ -1537,6 +1537,58 @@ static void TestSeedsAndStructures() {
     CHECK(bricks > 0, "the fortress stamps nether bricks into its chunk");
 }
 
+static void TestRegistryParity() {
+    // Runs against the user's own 26.3 install. CI runners have no Minecraft
+    // jar, so the probe reports SKIP there instead of failing the build.
+    const std::string jarPath = DefaultClientJarPath();
+    if (jarPath.empty()) {
+        printf("PARITY-REGISTRY: SKIP (no client jar)\n");
+        return;
+    }
+    AssetStore store;
+    store.LoadIndex(DefaultAssetIndexPath());
+    if (!store.LoadJar(jarPath)) {
+        printf("PARITY-REGISTRY: SKIP (cannot open %s)\n", jarPath.c_str());
+        return;
+    }
+
+    const bool loaded = LoadRegistry(store);
+    const RegistryStats& stats = RegistryInfo();
+
+    // Sorted name -> id table; two ids sharing one resource name is a bug.
+    std::map<std::string, int> byName;
+    int duplicates = 0;
+    for (int id = 1; id < BLOCK_COUNT; ++id) {
+        const std::string name = ResourceNameForItem(uint8_t(id));
+        if (byName.count(name)) ++duplicates;
+        else byName[name] = id;
+    }
+    for (int id = BLOCK_COUNT; id < 256; ++id) {
+        if (!IsValidItem(id)) continue;
+        const std::string name = ResourceNameForItem(uint8_t(id));
+        if (name == "minecraft:unknown") continue;
+        if (byName.count(name)) ++duplicates;
+        else byName[name] = id;
+    }
+
+    uint32_t hash = 2166136261u; // FNV-1a over sorted "name\0id" pairs
+    for (const auto& entry : byName) {
+        for (unsigned char c : entry.first) { hash ^= c; hash *= 16777619u; }
+        hash ^= uint8_t(entry.second);
+        hash *= 16777619u;
+    }
+
+    printf("PARITY-REGISTRY: jar=%s blocks=%d items=%d recipes=%d loot=%d names=%zu dup=%d hash=%08x\n",
+           (loaded && stats.jarLoaded) ? "yes" : "no", stats.mappedBlockNames, stats.mappedItemNames,
+           stats.recipes, stats.lootTables, byName.size(), duplicates, hash);
+
+    CHECK(loaded && stats.jarLoaded, "jar registry loads on this machine");
+    CHECK(stats.mappedBlockNames >= 136, "jar registry keeps at least 136 mapped blocks");
+    CHECK(stats.mappedItemNames >= 66, "jar registry keeps at least 66 mapped items");
+    CHECK(stats.recipes >= 64, "jar registry keeps at least 64 recipes");
+    CHECK(duplicates == 0, "no two ids share one resource name");
+}
+
 int main() {
     TestShaders();
     TestSkyTimeline();
@@ -1558,6 +1610,7 @@ int main() {
     TestShiftClickParity();
     TestChatCommands();
     TestSeedsAndStructures();
+    TestRegistryParity();
 
     // --- Perlin determinism and bounds ---
     PerlinNoise a(1337), b(1337), c(7);

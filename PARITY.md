@@ -59,6 +59,11 @@ hardcoded subsets**, proven by a probe that counts and hashes the loaded registr
 
 - Probes live in `PotatoSelfTest.exe`. CI already runs that binary, so parity failures fail the build without any
   `.github/workflows` change (the token has no `workflow` scope).
+- The first probe is `PARITY-REGISTRY` (`TestRegistryParity` in `selftest.cpp`): it loads the user's 26.3 JAR,
+  prints `blocks/items/recipes/loot/names/dup/hash`, and fails below the v2.0.0 baseline or on a duplicate name.
+  On a CI runner there is no JAR, so it prints `SKIP` and the build stays green; the real gate runs on the
+  dev machine.
+- Probe format and golden rules: `docs/specs/golden.md`.
 - Golden values are hashes/counts committed to the repo. Oracle runs (vanilla reference) happen locally against the
   user's install using the launcher's bundled JRE at
   `%APPDATA%\Migurinth\meta\java_versions\zulu25.38.109-ca-jre25.0.5.0.3-win_x64`.
