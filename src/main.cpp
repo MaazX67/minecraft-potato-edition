@@ -163,6 +163,7 @@ static float gLastWorldClickMs = -1000.0f;
 static int gLastInvClickIndex = -1;
 static float gLastInvClickMs = -1000.0f;
 static float gScrollAccum = 0.0f;
+static int gDragSlot = -1; // slot most recently entered while left-dragging items
 static PerlinNoise* gWeatherNoise = nullptr;
 
 static void SetScreen(HWND hwnd, Screen s);
@@ -3914,10 +3915,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                 if (gGameMode == 0 || gCraftTable) CloseInventory();
                 else CloseCreativeInventory();
             } else if (gGameMode == 0 || gCraftTable) {
-                if (gInput.leftClick || gInput.rightClick)
-                    HandleInventoryClick(
-                        SurvivalInvHitTest(gInput.mouseX, gInput.mouseY, gCraftTable),
-                        gInput.rightClick);
+                const int hover = SurvivalInvHitTest(gInput.mouseX, gInput.mouseY, gCraftTable);
+                if (gInput.leftClick || gInput.rightClick) {
+                    HandleInventoryClick(hover, gInput.rightClick);
+                    gDragSlot = hover;
+                } else if (!gInput.leftDown) {
+                    gDragSlot = -1;
+                } else if (hover >= 0 && hover != gDragSlot) {
+                    // Java drag-swipe: entering a new slot with a held stack
+                    // places one item per slot instead of a full stack.
+                    gDragSlot = hover;
+                    if (!gInventory.cursor.Empty()) HandleInventoryClick(hover, true);
+                }
             } else {
                 // Java's CreativeModeInventoryScreen: tab strip on top, live
                 // search field, picker grid and player slots below the cursor.
@@ -3951,11 +3960,22 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                         const int hot = CreativeHotbarHitTest(gInput.mouseX, gInput.mouseY);
                         const int slot = CreativeSlotHitTest(gInput.mouseX, gInput.mouseY);
                         const int index = hot >= 0 ? 27 + hot : slot;
+                        gDragSlot = index;
                         if (index >= 0 && gInventory.Click(index, gInput.rightClick, false,
                                                            gInput.keys[VK_SHIFT])) {
                             SyncHotbar();
                             gSound.Play(SND_CLICK);
                         }
+                    }
+                } else if (!gInput.leftDown) {
+                    gDragSlot = -1;
+                } else if (gDragSlot >= 0) {
+                    const int hot = CreativeHotbarHitTest(gInput.mouseX, gInput.mouseY);
+                    const int slot = CreativeSlotHitTest(gInput.mouseX, gInput.mouseY);
+                    const int index = hot >= 0 ? 27 + hot : slot;
+                    if (index >= 0 && index != gDragSlot && !gInventory.cursor.Empty()) {
+                        gDragSlot = index;
+                        if (gInventory.Click(index, true, false, false)) SyncHotbar();
                     }
                 }
             }
