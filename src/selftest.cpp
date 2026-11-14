@@ -1358,10 +1358,16 @@ static void TestChatCommands() {
     CHECK(!history.Next(out), "history forward stops past the newest line");
 
     std::vector<std::string> options = potato::CommandCompletions("/gam");
-    CHECK(options.size() == 1 && options[0] == "/gamemode", "tab completes command names");
+    CHECK(options.size() == 2 && options[0] == "/gamemode" && options[1] == "/gamerule",
+          "shared prefixes list every matching command");
+    options = potato::CommandCompletions("/gamem");
+    CHECK(options.size() == 1 && options[0] == "/gamemode", "tab completes a unique command name");
     options = potato::CommandCompletions("/weather ");
     CHECK(options.size() == 3, "tab offers every weather argument");
     options = potato::CommandCompletions("/time set mid");
+    printf("  [diag] /time set mid -> %zu:", options.size());
+    for (const std::string& o : options) printf(" '%s'", o.c_str());
+    printf("\n");
     CHECK(options.size() == 1 && options[0] == "/time set midnight", "tab completes nested arguments");
     options = potato::CommandCompletions("/give sto");
     CHECK(!options.empty() && has(options[0], "stone"), "tab completes item ids");
