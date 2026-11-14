@@ -3598,11 +3598,6 @@ static void RenderFrame() {
         SaveScreenshot();
     }
     gRC.swapChain->Present(gSettings.vsync ? 1 : 0, 0);
-    if (gSettings.maxFramerate > 0) {
-        const auto budget = std::chrono::duration<double>(1.0 / double(gSettings.maxFramerate));
-        const auto elapsed = std::chrono::steady_clock::now() - frameStart;
-        if (elapsed < budget) std::this_thread::sleep_for(budget - elapsed);
-    }
 }
 
 static void LoadSplash() {
@@ -4000,6 +3995,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             fpsTimer = 0;
         }
         gInput.EndFrame();
+        if (gSettings.maxFramerate > 0) {
+            const auto budget = std::chrono::duration<double>(1.0 / double(gSettings.maxFramerate));
+            const auto elapsed = std::chrono::steady_clock::now() - frameStart;
+            if (elapsed < budget) std::this_thread::sleep_for(budget - elapsed);
+        }
     }
 
     if (!SaveCurrentWorld())
