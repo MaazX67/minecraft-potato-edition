@@ -622,18 +622,19 @@ static void DrawMenuFrame(GuiRenderer& ui, const char* title) {
 }
 
 static void DrawTextField(GuiRenderer& ui, const std::string& text, float x, float y,
-                          float w, float h, bool focused, float timeSec) {
+                          float w, float h, bool focused, float timeSec, float scale = 1.0f) {
+    const float s = scale;
     const float bc = focused ? 1.0f : 0.627f;
     ui.DrawQuad(&ui.texWhite, x, y, w, h, 0, 0, 1, 1, 15, bc, bc, bc);
-    ui.DrawQuad(&ui.texWhite, x + 2, y + 2, w - 4, h - 4, 0, 0, 1, 1, 15, 0, 0, 0);
+    ui.DrawQuad(&ui.texWhite, x + 2 * s, y + 2 * s, w - 4 * s, h - 4 * s, 0, 0, 1, 1, 15, 0, 0, 0);
     size_t start = 0;
-    while (start < text.size() && ui.TextWidth(text.substr(start), 2) > w - 24) ++start;
+    while (start < text.size() && ui.TextWidth(text.substr(start), 2 * s) > w - 24 * s) ++start;
     const std::string shown = text.substr(start);
-    const float ty = y + (h - 16) * 0.5f;
-    ui.DrawText(shown, x + 8, ty, 2, 15, false, 0.878f, 0.878f, 0.878f);
+    const float ty = y + (h - 16 * s) * 0.5f;
+    ui.DrawText(shown, x + 8 * s, ty, 2 * s, 15, false, 0.878f, 0.878f, 0.878f);
     if (focused && fmodf(timeSec * 2.0f, 1.0f) < 0.5f) {
-        const float cxPos = x + 8 + ui.TextWidth(shown, 2);
-        ui.DrawQuad(&ui.texWhite, cxPos, ty, 2, 16, 0, 0, 1, 1, 15, 0.816f, 0.816f, 0.816f);
+        const float cxPos = x + 8 * s + ui.TextWidth(shown, 2 * s);
+        ui.DrawQuad(&ui.texWhite, cxPos, ty, 2 * s, 16 * s, 0, 0, 1, 1, 15, 0.816f, 0.816f, 0.816f);
     }
 }
 
@@ -1051,101 +1052,115 @@ int MenuSystem::HitTest(int mouseX, int mouseY) const {
 // HUD
 // ---------------------------------------------------------------------------
 
-static void DrawItemIcon(GuiRenderer& ui, int id, float x, float y) {
+static void DrawItemIcon(GuiRenderer& ui, int id, float x, float y, float scale = 1.0f) {
     if (id <= BLOCK_AIR || !IsValidItem(id)) return;
     const GuiTexture& icon = ui.texItemIcon[id];
     if (!icon.srv || icon.w <= 0 || icon.h <= 0) return;
     const float frame = float(std::min(icon.w, icon.h));
-    ui.DrawQuad(&icon, x, y, 32, 32, 0, 0, frame / icon.w, frame / icon.h, 15);
+    ui.DrawQuad(&icon, x, y, 32 * scale, 32 * scale, 0, 0, frame / icon.w, frame / icon.h, 15);
 }
 
-static void DrawStackCount(GuiRenderer& ui, float x, float y, const ItemSlot& s) {
+static void DrawStackCount(GuiRenderer& ui, float x, float y, const ItemSlot& s,
+                           float scale = 1.0f) {
     if (s.Empty()) return;
     if (const ToolDef* tool = FindTool(s.id); tool && s.damage > 0) {
         const float remaining = 1.0f - float(s.damage) / tool->durability;
-        ui.DrawQuad(&ui.texWhite, x + 2, y + 26, 26, 4, 0, 0, 1, 1, 15, 0, 0, 0);
-        ui.DrawQuad(&ui.texWhite, x + 2, y + 26, 26 * remaining, 2, 0, 0, 1, 1, 15,
-                    1 - remaining, remaining, 0);
+        ui.DrawQuad(&ui.texWhite, x + 2 * scale, y + 26 * scale, 26 * scale, 4 * scale,
+                    0, 0, 1, 1, 15, 0, 0, 0);
+        ui.DrawQuad(&ui.texWhite, x + 2 * scale, y + 26 * scale, 26 * remaining * scale,
+                    2 * scale, 0, 0, 1, 1, 15, 1 - remaining, remaining, 0);
     }
     if (s.count <= 1) return;
     char n[12];
     snprintf(n, sizeof(n), "%d", s.count);
-    ui.DrawText(n, x + 32 - ui.TextWidth(n, 2), y + 18, 2, 15, true);
+    ui.DrawText(n, x + 32 * scale - ui.TextWidth(n, 2 * scale), y + 18 * scale,
+                2 * scale, 15, true);
 }
 
-void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar) {
+float GuiScaleFactor(int guiScale) {
+    if (guiScale <= 0) return 1.0f;
+    return std::clamp(float(guiScale) * 0.5f, 0.5f, 2.0f);
+}
+
+void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar, float scale) {
     const float cx = SCREEN_W * 0.5f;
-    const float hotbarX = cx - 182, hotbarY = SCREEN_H - 44.0f;
-    ui.DrawSprite(&ui.texHotbar, hotbarX, hotbarY, 2, 15);
-    ui.DrawSprite(&ui.texHotbarSel, hotbarX + selectedSlot * 40 - 2, hotbarY - 2, 2, 15);
+    const float hotbarX = cx - 182.0f * scale, hotbarY = SCREEN_H - 44.0f * scale;
+    ui.DrawSprite(&ui.texHotbar, hotbarX, hotbarY, 2 * scale, 15);
+    ui.DrawSprite(&ui.texHotbarSel, hotbarX + selectedSlot * 40 * scale - 2 * scale,
+                  hotbarY - 2 * scale, 2 * scale, 15);
     for (int i = 0; i < 9; ++i) {
-        DrawItemIcon(ui, hotbar[i], hotbarX + i * 40 + 4, hotbarY + 6);
+        DrawItemIcon(ui, hotbar[i], hotbarX + i * 40 * scale + 4 * scale,
+                     hotbarY + 6 * scale, scale);
     }
 }
 
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint8_t* hotbar, int health, int hunger, int armorPoints,
-             const std::string& actionBar, bool creative, const ItemSlot* stacks) {
+             const std::string& actionBar, bool creative, const ItemSlot* stacks,
+             float scale) {
+    const float s = scale;
     const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
-    ui.DrawSprite(&ui.texCrosshair, cx - 15, cy - 15, 2, 15);
+    ui.DrawSprite(&ui.texCrosshair, cx - 15 * s, cy - 15 * s, 2 * s, 15);
 
     // 1.9+ attack recharge indicator under the crosshair (hidden when full).
     // Creative has no attack cooldown, so the indicator never shows there.
     if (!creative && attackStrength < 1.0f) {
-        ui.DrawSprite(&ui.texAttackBg, cx - 16, cy + 22, 2, 15);
-        ui.DrawQuad(&ui.texAttackProgress, cx - 16, cy + 22, 32 * attackStrength, 8,
+        ui.DrawSprite(&ui.texAttackBg, cx - 16 * s, cy + 22 * s, 2 * s, 15);
+        ui.DrawQuad(&ui.texAttackProgress, cx - 16 * s, cy + 22 * s,
+                    32 * s * attackStrength, 8 * s,
                     0, 0, attackStrength, 1, 15);
     }
 
     if (!creative) {
-        const float rowY = SCREEN_H - 78.0f;
+        const float rowY = SCREEN_H - 78.0f * s;
         if (armorPoints > 0) {
             for (int i = 0; i < 10; ++i) {
-                const float ax = cx - 182 + i * 16;
-                ui.DrawSprite(&ui.texArmor[0], ax, rowY - 20, 2, 15);
-                if (armorPoints >= i * 2 + 2) ui.DrawSprite(&ui.texArmor[1], ax, rowY - 20, 2, 15);
-                else if (armorPoints == i * 2 + 1) ui.DrawSprite(&ui.texArmor[2], ax, rowY - 20, 2, 15);
+                const float ax = cx - 182 * s + i * 16 * s;
+                ui.DrawSprite(&ui.texArmor[0], ax, rowY - 20 * s, 2 * s, 15);
+                if (armorPoints >= i * 2 + 2) ui.DrawSprite(&ui.texArmor[1], ax, rowY - 20 * s, 2 * s, 15);
+                else if (armorPoints == i * 2 + 1) ui.DrawSprite(&ui.texArmor[2], ax, rowY - 20 * s, 2 * s, 15);
             }
         }
         for (int i = 0; i < 10; ++i) {
-            const float hx = cx - 182 + i * 16;
-            ui.DrawSprite(&ui.texHeart[0], hx, rowY, 2, 15);
-            if (health >= i * 2 + 2) ui.DrawSprite(&ui.texHeart[1], hx, rowY, 2, 15);
-            else if (health == i * 2 + 1) ui.DrawSprite(&ui.texHeart[2], hx, rowY, 2, 15);
-            const float fx = cx + 182 - 18 - i * 16;
-            ui.DrawSprite(&ui.texFood[0], fx, rowY, 2, 15);
-            if (hunger >= i * 2 + 2) ui.DrawSprite(&ui.texFood[1], fx, rowY, 2, 15);
-            else if (hunger == i * 2 + 1) ui.DrawSprite(&ui.texFood[2], fx, rowY, 2, 15);
+            const float hx = cx - 182 * s + i * 16 * s;
+            ui.DrawSprite(&ui.texHeart[0], hx, rowY, 2 * s, 15);
+            if (health >= i * 2 + 2) ui.DrawSprite(&ui.texHeart[1], hx, rowY, 2 * s, 15);
+            else if (health == i * 2 + 1) ui.DrawSprite(&ui.texHeart[2], hx, rowY, 2 * s, 15);
+            const float fx = cx + 182 * s - 18 * s - i * 16 * s;
+            ui.DrawSprite(&ui.texFood[0], fx, rowY, 2 * s, 15);
+            if (hunger >= i * 2 + 2) ui.DrawSprite(&ui.texFood[1], fx, rowY, 2 * s, 15);
+            else if (hunger == i * 2 + 1) ui.DrawSprite(&ui.texFood[2], fx, rowY, 2 * s, 15);
         }
     }
 
-    DrawHotbar(ui, selectedSlot, hotbar);
+    DrawHotbar(ui, selectedSlot, hotbar, s);
     if (stacks) {
-        const float hotbarX = cx - 182, hotbarY = SCREEN_H - 44.0f;
+        const float hotbarX = cx - 182 * s, hotbarY = SCREEN_H - 44.0f * s;
         for (int i = 0; i < 9; ++i)
-            DrawStackCount(ui, hotbarX + i * 40 + 4, hotbarY + 6, stacks[i]);
+            DrawStackCount(ui, hotbarX + i * 40 * s + 4 * s, hotbarY + 6 * s, stacks[i], s);
     }
     if (!actionBar.empty()) {
-        ui.DrawTextCentered(actionBar, cx, SCREEN_H - 112.0f, 2, 15, true);
+        ui.DrawTextCentered(actionBar, cx, SCREEN_H - 112.0f * s, 2 * s, 15, true);
     }
 }
 
 void DrawChat(GuiRenderer& ui, const std::vector<ChatEntry>& entries, bool open,
-              const std::string& input, float timeSec) {
-    const float inputY = SCREEN_H - 96.0f;
-    float y = open ? inputY - 24.0f : SCREEN_H - 96.0f;
+              const std::string& input, float timeSec, float scale) {
+    const float s = scale;
+    const float inputY = SCREEN_H - 96.0f * s;
+    float y = open ? inputY - 24.0f * s : SCREEN_H - 96.0f * s;
     int shown = 0;
     for (auto it = entries.rbegin(); it != entries.rend() && shown < 10; ++it, ++shown) {
         if (!open && it->age > 10.0f) break;
         float shade = 15.0f;
         if (!open && it->age > 8.0f) shade = 15.0f * (1.0f - (it->age - 8.0f) * 0.5f);
         if (shade < 1.0f) shade = 1.0f;
-        if (it->error) ui.DrawText(it->text, 4, y, 2, shade, true, 1.0f, 0.4f, 0.4f);
-        else ui.DrawText(it->text, 4, y, 2, shade, true);
-        y -= 20.0f;
+        if (it->error) ui.DrawText(it->text, 4 * s, y, 2 * s, shade, true, 1.0f, 0.4f, 0.4f);
+        else ui.DrawText(it->text, 4 * s, y, 2 * s, shade, true);
+        y -= 20.0f * s;
     }
     if (open)
-        DrawTextField(ui, input, 4, inputY, 560, 26, true, timeSec);
+        DrawTextField(ui, input, 4 * s, inputY, 560 * s, 26 * s, true, timeSec, s);
 }
 
 // ---------------------------------------------------------------------------

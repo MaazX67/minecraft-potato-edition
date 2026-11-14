@@ -245,10 +245,15 @@ private:
 // Default creative hotbar layout; the live hotbar is a mutable copy in main.
 extern const uint8_t HOTBAR_BLOCKS[9];
 
-void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar);
+// Java GUI scale 0=Auto, 1..4. The HUD was authored at the 2x sprite size, so
+// Auto maps to 1.0 and explicit values map to 0.5, 1.0, 1.5, 2.0.
+float GuiScaleFactor(int guiScale);
+
+void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint8_t* hotbar, float scale = 1.0f);
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint8_t* hotbar, int health, int hunger, int armorPoints,
-             const std::string& actionBar, bool creative, const ItemSlot* stacks);
+             const std::string& actionBar, bool creative, const ItemSlot* stacks,
+             float scale = 1.0f);
 
 // Chat log bottom-left above the hotbar. Closed: last ten lines fade out over
 // Java's ten-second window. Open: full recent log plus the input field.
@@ -258,7 +263,7 @@ struct ChatEntry {
     float age = 0.0f;
 };
 void DrawChat(GuiRenderer& ui, const std::vector<ChatEntry>& entries, bool open,
-              const std::string& input, float timeSec);
+              const std::string& input, float timeSec, float scale = 1.0f);
 
 // Tabbed creative inventory (E in creative). The picker grid, player storage
 // rows and tab strip are drawn here; input helpers below map mouse positions

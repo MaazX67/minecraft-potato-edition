@@ -3336,7 +3336,7 @@ static void DrawWorld() {
     const XMVECTOR at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
     const XMMATRIX view = XMMatrixLookAtRH(eye, at, XMVectorSet(0, 1, 0, 0));
     static float sFov = 70.0f;
-    const float targetFov = gSettings.fov * (gBody.sprinting ? 1.12f : 1.0f) * gZoom;
+    const float targetFov = gSettings.fov * (gBody.sprinting ? 1.15f : 1.0f) * gZoom;
     sFov += (targetFov - sFov) * 0.15f;
     const XMMATRIX proj = XMMatrixPerspectiveFovRH(
         sFov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 1000.0f);
@@ -3503,11 +3503,15 @@ static void DrawWorld() {
     if (gScreen == Screen::Game) { DrawBreakOverlay(); DrawBlockOutline(); }
 }
 
-static void DrawDebug() {
+static void DrawDebug(float scale) {
+    const float s = scale;
     char line[160];
-    gGui.DrawQuad(&gGui.texBlack, 2, 2, 360, 236, 0, 0, 1, 1, 15);
-    int y = 6;
-    auto row = [&](const char* s) { gGui.DrawText(s, 6, float(y), 2, 15, true); y += 20; };
+    gGui.DrawQuad(&gGui.texBlack, 2 * s, 2 * s, 360 * s, 236 * s, 0, 0, 1, 1, 15);
+    int y = int(6 * s);
+    auto row = [&](const char* text) {
+        gGui.DrawText(text, 6 * s, float(y), 2 * s, 15, true);
+        y += int(20 * s);
+    };
     row("Minecraft 26.3 (Java Edition)");
     snprintf(line, sizeof(line), "%.0f fps  (%d chunks, %zu gpu)", double(gFps),
              int(gWorld->ChunkCount()), gGpu.size());
@@ -3563,14 +3567,15 @@ static void RenderFrame() {
         0, float(SCREEN_W), float(SCREEN_H), 0, -1, 1);
     SetViewProj(gRC, ortho);
     gGui.BeginFrame();
+    const float uiScale = GuiScaleFactor(gSettings.guiScale);
     if (gScreen == Screen::Game) {
         if (!gHideHud)
             DrawHUD(gGui, gPlayer.attackCooldownProgress, gHotbarSlot, gHotbar,
                     gSurvival.health, gSurvival.hunger, gInventory.Defense(),
                     gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1,
-                    gGameMode == 0 ? gInventory.slots + 27 : nullptr);
-        DrawChat(gGui, gChat.entries, gChat.open, gChat.input, gTimeSec);
-        if (gDebug) DrawDebug();
+                    gGameMode == 0 ? gInventory.slots + 27 : nullptr, uiScale);
+        DrawChat(gGui, gChat.entries, gChat.open, gChat.input, gTimeSec, uiScale);
+        if (gDebug) DrawDebug(uiScale);
     } else if (gScreen == Screen::Inventory) {
         if (gGameMode == 0 || gCraftTable)
             DrawSurvivalInventory(gGui, gInventory, gCraftTable, gInput.mouseX,

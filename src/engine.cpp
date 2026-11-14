@@ -309,9 +309,11 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
     const float len = sqrtf(mx * mx + mz * mz);
     if (len > 0.0f) { mx /= len; mz /= len; }
     sneaking = !flying && in.keys[gBinds.sneak];
-    sprinting = !flying && !sneaking && (in.keys[gBinds.sprint] || sprintLatch) &&
+    // Java lets creative flight sprint too: 10.92 m/s walk, 21.78 m/s sprint.
+    sprinting = !sneaking && (in.keys[gBinds.sprint] || sprintLatch) &&
                 in.keys[gBinds.forward];
-    const float speed = flying ? 12.0f : (sneaking ? 1.31f : (sprinting ? 5.612f : walkSpeed));
+    const float speed = flying ? (sprinting ? 21.78f : 10.92f)
+                               : (sneaking ? 1.31f : (sprinting ? 5.612f : walkSpeed));
     vx = mx * speed + impulseX;
     vz = mz * speed + impulseZ;
     const float drag = expf(-8.0f * dt);
@@ -329,7 +331,15 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
     } else {
         vy -= 32.0f * dt;
         if (vy < -50.0f) vy = -50.0f;
-        if (onGround && in.keys[gBinds.jump]) { vy = 8.94f; onGround = false; }
+        if (onGround && in.keys[gBinds.jump]) {
+            vy = 8.94f;
+            onGround = false;
+            // Java adds 0.2 blocks/tick (~4 m/s) forward on a sprint jump.
+            if (sprinting) {
+                impulseX += mx * 4.0f;
+                impulseZ += mz * 4.0f;
+            }
+        }
     }
 
     // Elytra: holding space while airborne steers along the look vector.
