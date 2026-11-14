@@ -206,6 +206,17 @@ struct ItemSlot {
     bool Empty() const { return id == 0 || count <= 0; }
 };
 
+// One crafting recipe. cells hold an item id, 0 for an empty cell, or a
+// RecipeTag value (>= 0x100) for ingredient tags such as #minecraft:planks.
+// Built-in recipes are used until the jar registry loads Java's data files.
+struct CraftingRecipe {
+    int width = 0;
+    int height = 0;
+    uint16_t cells[9] = {};
+    ItemSlot result{};
+    bool shapeless = false;
+};
+
 struct InventoryState {
     ItemSlot slots[36];
     ItemSlot craft[9];
@@ -237,6 +248,16 @@ struct FurnaceState {
 struct ChestState {
     ItemSlot slots[27];
 };
+
+// Java 26.3 creative tabs, in menu order. Search is always last.
+enum CreativeTab {
+    CTAB_BUILDING, CTAB_COLORED, CTAB_NATURAL, CTAB_FUNCTIONAL, CTAB_REDSTONE,
+    CTAB_TOOLS, CTAB_COMBAT, CTAB_FOOD, CTAB_INGREDIENTS, CTAB_SEARCH, CTAB_COUNT
+};
+int ItemCreativeTab(uint8_t id);
+const char* CreativeTabName(int tab);
+uint8_t CreativeTabIcon(int tab);
+bool ItemMatchesSearch(uint8_t id, const std::string& query);
 
 struct SurvivalState {
     int health = 20, hunger = 20;

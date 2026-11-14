@@ -1,5 +1,6 @@
 #include "assets.h"
 #include "engine.h"
+#include "registry.h"
 #include "world.h"
 #include "shader_embed.h"
 #include "json.hpp"
@@ -1068,6 +1069,156 @@ static void TestBubbleParticles() {
     CHECK(gravity, "crit particles still accelerate downward under gravity");
 }
 
+// Java 26.3 resource parsing. The sample documents below are invented for the
+// test and mirror the schema only; no game data ships in the repository.
+static void TestRegistryParsing() {
+    CraftingRecipe shaped;
+    const std::string shapedJson = R"json({
+      "type": "minecraft:crafting_shaped", "category": "building",
+      "pattern": ["##", "##"],
+      "key": {"#": "minecraft:oak_planks"},
+      "result": {"id": "minecraft:crafting_table", "count": 1}
+    })json";
+    CHECK(ParseRecipeJson(shapedJson, shaped), "jar shaped recipe parses");
+    CHECK(shaped.width == 2 && shaped.height == 2 && !shaped.shapeless,
+          "shaped recipe keeps its pattern size");
+    CHECK(shaped.cells[0] == BLOCK_PLANKS && shaped.cells[1] == BLOCK_PLANKS &&
+          shaped.cells[3] == BLOCK_PLANKS && shaped.cells[4] == BLOCK_PLANKS &&
+          shaped.cells[2] == 0 && shaped.cells[5] == 0,
+          "shaped keys land in row-major cells with empty columns preserved");
+    CHECK(shaped.result.id == BLOCK_CRAFTING_TABLE && shaped.result.count == 1,
+          "shaped result maps the Java name onto the internal id");
+
+    CraftingRecipe shapeless;
+    const std::string shapelessJson = R"json({
+      "type": "minecraft:crafting_shapeless",
+      "ingredients": ["#minecraft:planks", {"item": "minecraft:stick"},
+                      [{"item": "minecraft:oak_sapling"}, {"item": "minecraft:stick"}]],
+      "result": {"id": "minecraft:chest", "count": 1}
+    })json";
+    CHECK(ParseRecipeJson(shapelessJson, shapeless), "jar shapeless recipe parses");
+    CHECK(shapeless.shapeless && shapeless.cells[0] == TAG_PLANKS &&
+          shapeless.cells[1] == ITEM_STICK && shapeless.cells[2] == ITEM_STICK,
+          "shapeless cells keep tag and first-usable alternative");
+    CHECK(shapeless.result.id == BLOCK_CHEST, "shapeless result resolves");
+
+    CraftingRecipe invalid;
+    CHECK(!ParseRecipeJson("not json", invalid), "malformed recipe text is rejected");
+    CHECK(!ParseRecipeJson(R"json({"type":"minecraft:crafting_shaped","pattern":["#"]})json",
+                           invalid),
+          "pattern without a key is rejected");
+
+    LootEntry loot;
+    bool hasItem = false;
+    const std::string lootJson = R"json({
+      "type": "minecraft:block",
+      "pools": [{
+        "rolls": 1,
+        "entries": [
+          {"type": "minecraft:item", "name": "minecraft:stone", "conditions": [
+            {"condition": "minecraft:match_tool", "predicate": {"enchantments": [
+              {"enchantment": "minecraft:silk_touch", "levels": {"min": 1}}]}}]},
+          {"type": "minecraft:item", "name": "minecraft:cobblestone",
+           "functions": [{"function": "minecraft:set_count", "count": {"min": 1, "max": 1}}]}
+        ]
+      }]
+    })json";
+    CHECK(ParseLootTableJson(lootJson, loot, hasItem), "jar loot table parses");
+    CHECK(hasItem && loot.item == BLOCK_COBBLE && loot.count == 1,
+          "silk-touch alternatives are skipped and the base drop wins");
+
+    LootEntry ranged;
+    CHECK(ParseLootTableJson(R"json({"type":"minecraft:block","pools":[{"rolls":1,
+      "entries":[{"type":"minecraft:item","name":"minecraft:raw_iron",
+                  "functions":[{"function":"minecraft:set_count","count":{"min":2,"max":3}}]}]}]})json",
+                             ranged, hasItem) &&
+          hasItem && ranged.item == ITEM_RAW_IRON && ranged.count == 2,
+          "set_count ranges use their minimum when fortune is unavailable");
+
+    LootEntry empty;
+    CHECK(ParseLootTableJson(R"json({"type":"minecraft:block","pools":[]})json", empty, hasItem) &&
+          !hasItem, "a table with no pools parses as an empty drop");
+    CHECK(!ParseLootTableJson("{", empty, hasItem), "malformed loot text is rejected");
+
+    CHECK(ItemIdFromResourceName("minecraft:oak_planks") == BLOCK_PLANKS &&
+          ItemIdFromResourceName("oak_log") == BLOCK_LOG &&
+          ItemIdFromResourceName("minecraft:grass_block") == BLOCK_GRASS &&
+          ItemIdFromResourceName("minecraft:iron_pickaxe") == ITEM_IRON_PICKAXE,
+          "resource names map onto the internal block and item ids");
+    CHECK(ResourceNameForItem(BLOCK_GRASS) == "minecraft:grass_block" &&
+          ResourceNameForItem(ITEM_DIAMOND) == "minecraft:diamond",
+          "internal ids round-trip to Java resource names");
+    CHECK(ItemIdFromResourceName("minecraft:not_a_real_block") == BLOCK_AIR,
+          "unknown resource names map to air");
+
+    CHECK(RecipeCellMatches(TAG_PLANKS, BLOCK_PLANKS) &&
+          RecipeCellMatches(TAG_PLANKS, BLOCK_SPRUCE_PLANKS) &&
+          !RecipeCellMatches(TAG_PLANKS, BLOCK_LOG),
+          "planks tag accepts every plank variant and nothing else");
+    CHECK(RecipeCellMatches(TAG_STONE_CRAFTING, BLOCK_COBBLE) &&
+          RecipeCellMatches(uint16_t(ITEM_STICK), ITEM_STICK) &&
+          !RecipeCellMatches(uint16_t(ITEM_STICK), BLOCK_PLANKS),
+          "exact id cells only match that id");
+
+    AssetStore emptyStore;
+    CHECK(!LoadRegistry(emptyStore) && !RegistryInfo().jarLoaded,
+          "registry load without a jar leaves the built-in fallback in place");
+
+    CHECK(ItemCreativeTab(ITEM_STICK) == CTAB_INGREDIENTS &&
+          ItemCreativeTab(ITEM_IRON_PICKAXE) == CTAB_TOOLS &&
+          ItemCreativeTab(ITEM_IRON_SWORD) == CTAB_COMBAT &&
+          ItemCreativeTab(BLOCK_RED_WOOL) == CTAB_COLORED &&
+          ItemCreativeTab(BLOCK_GRASS) == CTAB_NATURAL &&
+          ItemCreativeTab(BLOCK_STONE) == CTAB_BUILDING &&
+          ItemCreativeTab(BLOCK_TNT) == CTAB_REDSTONE &&
+          ItemCreativeTab(BLOCK_CRAFTING_TABLE) == CTAB_FUNCTIONAL,
+          "creative tabs classify blocks and items like Java");
+    CHECK(ItemMatchesSearch(BLOCK_DIAMOND_ORE, "diamond") &&
+          ItemMatchesSearch(BLOCK_RED_WOOL, "RED WOOL") &&
+          !ItemMatchesSearch(BLOCK_STONE, "diamond") &&
+          ItemMatchesSearch(BLOCK_STONE, ""),
+          "creative search is a case-insensitive substring with spaces as underscores");
+}
+
+static void TestShiftClickParity() {
+    InventoryState inv;
+    inv.slots[0] = {BLOCK_STONE, 32};
+    CHECK(inv.Click(0, false, false, true) && inv.slots[0].Empty(),
+          "shift-click moves a full storage stack");
+    bool inHotbar = false;
+    for (int i = 27; i < 36; ++i)
+        if (inv.slots[i].id == BLOCK_STONE && inv.slots[i].count == 32) inHotbar = true;
+    CHECK(inHotbar, "shift-clicked storage stack lands in the hotbar row");
+
+    inv = InventoryState{};
+    inv.slots[30] = {BLOCK_DIRT, 20};
+    CHECK(inv.Click(30, false, false, true) && inv.slots[30].Empty(),
+          "shift-click drains a hotbar stack");
+    bool inMain = false;
+    for (int i = 0; i < 27; ++i)
+        if (inv.slots[i].id == BLOCK_DIRT && inv.slots[i].count == 20) inMain = true;
+    CHECK(inMain, "shift-clicked hotbar stack lands in main storage");
+
+    inv = InventoryState{};
+    inv.slots[5] = {ITEM_IRON_HELMET, 1};
+    CHECK(inv.Click(5, false, false, true) && inv.armor[0].id == ITEM_IRON_HELMET &&
+          inv.slots[5].Empty(), "shift-click equips armor into its matching slot");
+
+    inv = InventoryState{};
+    inv.craft[0] = {BLOCK_LOG, 1};
+    CHECK(inv.Click(45, false, false, true) && inv.craft[0].Empty(),
+          "shift-click on the craft result consumes the grid");
+    bool planks = false;
+    for (int i = 0; i < 36; ++i)
+        if (inv.slots[i].id == BLOCK_PLANKS && inv.slots[i].count == 4) planks = true;
+    CHECK(planks, "shift-clicked craft result lands in the inventory");
+
+    inv = InventoryState{};
+    inv.craft[4] = {BLOCK_PLANKS, 6};
+    CHECK(inv.Click(40, false, false, true) && inv.craft[4].Empty(),
+          "shift-click returns a crafting grid stack to storage");
+}
+
 int main() {
     TestShaders();
     TestSkyTimeline();
@@ -1083,6 +1234,8 @@ int main() {
     TestWaterFrames();
     TestWaterShaderPass();
     TestBubbleParticles();
+    TestRegistryParsing();
+    TestShiftClickParity();
 
     // --- Perlin determinism and bounds ---
     PerlinNoise a(1337), b(1337), c(7);

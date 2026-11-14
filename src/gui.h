@@ -184,12 +184,23 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint8_t* hotbar, int health, int hunger, int armorPoints,
              const std::string& actionBar, bool creative, const ItemSlot* stacks);
 
-// Creative block picker (E). Returns the block id under the cursor, or -1.
+// Tabbed creative inventory (E in creative). The picker grid, player storage
+// rows and tab strip are drawn here; input helpers below map mouse positions
+// back onto tab ids, picker item ids and player slot indices.
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
-                   const uint8_t* hotbar);
-int InventoryHitTest(int mouseX, int mouseY);
+                   const uint8_t* hotbar, const InventoryState& inv);
+int InventoryHitTest(int mouseX, int mouseY);      // picker item id, or -1
+int CreativeSlotHitTest(int mouseX, int mouseY);   // player slot 0..26, or -1
+int CreativeHotbarHitTest(int mouseX, int mouseY); // hotbar slot 0..8, or -1
+int CreativeTabHitTest(int mouseX, int mouseY);    // tab enum, or -1
+bool CreativeSearchFieldHitTest(int mouseX, int mouseY);
 void ScrollCreativeInventory(int deltaRows);
 void ResetCreativeScroll();
+void SetCreativeTab(int tab);
+int CreativeTab();
+void CreativeSearchAppend(char c);
+void CreativeSearchBackspace();
+const std::string& CreativeSearchQuery();
 int FurnaceHitTest(int mouseX, int mouseY);
 void DrawFurnace(GuiRenderer& ui, const FurnaceState& f, const InventoryState& inv,
                  int mouseX, int mouseY);

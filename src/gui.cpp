@@ -880,58 +880,137 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
 }
 
 // ---------------------------------------------------------------------------
-// Creative inventory picker
+// Creative inventory: Java 26.3 tabs, search, picker grid and player inventory
 // ---------------------------------------------------------------------------
 
 namespace {
 constexpr int INV_COLS = 9;
 constexpr int INV_CELL = 40;
-constexpr int INV_VIS_ROWS = 9;
+constexpr int INV_PICK_ROWS = 5;
 constexpr float INV_PAD = 12;
 constexpr float INV_W = INV_COLS * INV_CELL + INV_PAD * 2;
-constexpr float INV_TITLE_H = 40;
-constexpr float INV_HINT_H = 36;
-constexpr float INV_H = INV_TITLE_H + INV_VIS_ROWS * INV_CELL + INV_HINT_H;
+constexpr float INV_HEAD_H = 44;
+constexpr float INV_PICK_H = INV_PICK_ROWS * INV_CELL;
+constexpr float INV_GAP = 10;
+constexpr float INV_INV_H = 3 * INV_CELL;
+constexpr float INV_H = INV_HEAD_H + INV_PICK_H + INV_GAP + INV_INV_H + 10;
 constexpr float INV_X = (SCREEN_W - INV_W) * 0.5f;
-constexpr float INV_Y = (SCREEN_H - INV_H) * 0.5f - 20;
+constexpr float INV_Y = (SCREEN_H - INV_H) * 0.5f - 30;
 constexpr float INV_GX = INV_X + INV_PAD;
-constexpr float INV_GY = INV_Y + INV_TITLE_H;
-constexpr float INV_GRID_H = INV_VIS_ROWS * INV_CELL;
+constexpr float INV_GY = INV_Y + INV_HEAD_H;
+constexpr float INV_GRID_H = INV_PICK_H;
+constexpr float INV_INV_Y = INV_GY + INV_PICK_H + INV_GAP;
+constexpr float TAB_W = 36;
+constexpr float TAB_H = 28;
+constexpr float TAB_GAP = 2;
+constexpr float TAB_Y = INV_Y - TAB_H;
+constexpr float SEARCH_H = 28;
 
 int gCreativeScroll = 0;
-
-const std::vector<uint8_t>& CreativeItems() {
-    static const std::vector<uint8_t> items = [] {
-        std::vector<uint8_t> result;
-        for (int i = 1; i < 256; ++i) if (IsValidItem(i)) result.push_back(uint8_t(i));
-        return result;
-    }();
-    return items;
-}
-
-int CreativeTotalRows() {
-    return (int(CreativeItems().size()) + INV_COLS - 1) / INV_COLS;
-}
+int gCreativeTab = CTAB_BUILDING;
+std::string gCreativeSearch;
+std::vector<uint8_t> gCreativeList;
+bool gCreativeListDirty = true;
 
 int CreativeMaxScroll() {
-    const int extra = CreativeTotalRows() - INV_VIS_ROWS;
+    const int rows = (int(gCreativeList.size()) + INV_COLS - 1) / INV_COLS;
+    const int extra = rows - INV_PICK_ROWS;
     return extra > 0 ? extra : 0;
+}
+
+void RebuildCreativeList() {
+    gCreativeList.clear();
+    for (int i = 1; i < 256; ++i) {
+        const uint8_t id = uint8_t(i);
+        if (!IsValidItem(id)) continue;
+        if (gCreativeTab == CTAB_SEARCH) {
+            if (!ItemMatchesSearch(id, gCreativeSearch)) continue;
+        } else if (ItemCreativeTab(id) != gCreativeTab) {
+            continue;
+        }
+        gCreativeList.push_back(id);
+    }
+    gCreativeListDirty = false;
+    if (gCreativeScroll > CreativeMaxScroll()) gCreativeScroll = CreativeMaxScroll();
+    if (gCreativeScroll < 0) gCreativeScroll = 0;
+}
+
+const std::vector<uint8_t>& CreativeItems() {
+    if (gCreativeListDirty) RebuildCreativeList();
+    return gCreativeList;
 }
 
 void CellRect(int i, float& x, float& y) {
     x = INV_GX + (i % INV_COLS) * INV_CELL;
     y = INV_GY + (i / INV_COLS - gCreativeScroll) * INV_CELL;
 }
+
+void TabRect(int tab, float& x, float& y) {
+    x = INV_X + TAB_GAP + tab * (TAB_W + TAB_GAP);
+    y = TAB_Y;
+}
+
+void SlotRect(int index, float& x, float& y) {
+    x = INV_GX + (index % INV_COLS) * INV_CELL;
+    y = INV_INV_Y + (index / INV_COLS) * INV_CELL;
+}
+
+void DrawScaledIcon(GuiRenderer& ui, int id, float x, float y, float size) {
+    if (id <= BLOCK_AIR || !IsValidItem(id)) return;
+    const GuiTexture& icon = ui.texItemIcon[id];
+    if (!icon.srv || icon.w <= 0 || icon.h <= 0) return;
+    const float frame = float(std::min(icon.w, icon.h));
+    ui.DrawQuad(&icon, x, y, size, size, 0, 0, frame / icon.w, frame / icon.h, 15);
+}
+
+void DrawSlot(GuiRenderer& ui, float x, float y, bool hovered) {
+    ui.DrawQuad(&ui.texWhite, x + 1, y + 1, INV_CELL - 2, INV_CELL - 2, 0, 0, 1, 1, 15, 0.55f, 0.55f, 0.55f);
+    ui.DrawQuad(&ui.texWhite, x + 1, y + 1, INV_CELL - 2, 1, 0, 0, 1, 1, 15, 0.30f, 0.30f, 0.30f);
+    ui.DrawQuad(&ui.texWhite, x + 1, y + 1, 1, INV_CELL - 2, 0, 0, 1, 1, 15, 0.30f, 0.30f, 0.30f);
+    ui.DrawQuad(&ui.texWhite, x + 1, y + INV_CELL - 2, INV_CELL - 2, 1, 0, 0, 1, 1, 15, 0.80f, 0.80f, 0.80f);
+    if (hovered) ui.DrawQuad(&ui.texHotbarSel, x, y, INV_CELL, INV_CELL, 0, 0, 1, 1, 15);
+}
 } // namespace
 
 void ScrollCreativeInventory(int deltaRows) {
+    CreativeItems();
     gCreativeScroll += deltaRows;
     if (gCreativeScroll < 0) gCreativeScroll = 0;
     const int maxScroll = CreativeMaxScroll();
     if (gCreativeScroll > maxScroll) gCreativeScroll = maxScroll;
 }
 
-void ResetCreativeScroll() { gCreativeScroll = 0; }
+void ResetCreativeScroll() {
+    gCreativeScroll = 0;
+    gCreativeTab = CTAB_BUILDING;
+    gCreativeSearch.clear();
+    gCreativeListDirty = true;
+}
+
+void SetCreativeTab(int tab) {
+    if (tab < 0 || tab >= CTAB_COUNT || tab == gCreativeTab) return;
+    gCreativeTab = tab;
+    gCreativeScroll = 0;
+    if (tab == CTAB_SEARCH) gCreativeSearch.clear();
+    gCreativeListDirty = true;
+}
+
+int CreativeTab() { return gCreativeTab; }
+
+void CreativeSearchAppend(char c) {
+    if (c < 32 || c > 126 || gCreativeSearch.size() >= 32) return;
+    gCreativeSearch += c;
+    gCreativeScroll = 0;
+    gCreativeListDirty = true;
+}
+
+void CreativeSearchBackspace() {
+    if (gCreativeSearch.empty()) return;
+    gCreativeSearch.pop_back();
+    gCreativeListDirty = true;
+}
+
+const std::string& CreativeSearchQuery() { return gCreativeSearch; }
 
 int InventoryHitTest(int mouseX, int mouseY) {
     const float rx = mouseX - INV_GX, ry = mouseY - INV_GY;
@@ -944,8 +1023,50 @@ int InventoryHitTest(int mouseX, int mouseY) {
     return items[index];
 }
 
-void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, const uint8_t* hotbar) {
+int CreativeSlotHitTest(int mouseX, int mouseY) {
+    const float rx = mouseX - INV_GX, ry = mouseY - INV_INV_Y;
+    if (rx < 0 || ry < 0 || rx >= INV_COLS * INV_CELL || ry >= INV_INV_H) return -1;
+    return (int(ry) / INV_CELL) * INV_COLS + int(rx) / INV_CELL;
+}
+
+int CreativeHotbarHitTest(int mouseX, int mouseY) {
+    const float hotbarX = SCREEN_W * 0.5f - 182, hotbarY = SCREEN_H - 44.0f;
+    const float rx = mouseX - hotbarX, ry = mouseY - hotbarY;
+    if (rx < 0 || ry < 0 || rx >= 9 * 40 || ry >= 40) return -1;
+    return int(rx) / 40;
+}
+
+int CreativeTabHitTest(int mouseX, int mouseY) {
+    if (mouseY < TAB_Y || mouseY >= TAB_Y + TAB_H) return -1;
+    for (int tab = 0; tab < CTAB_COUNT; ++tab) {
+        float x, y;
+        TabRect(tab, x, y);
+        if (mouseX >= x && mouseX < x + TAB_W) return tab;
+    }
+    return -1;
+}
+
+bool CreativeSearchFieldHitTest(int mouseX, int mouseY) {
+    if (gCreativeTab != CTAB_SEARCH) return false;
+    return mouseX >= INV_X + INV_PAD && mouseX < INV_X + INV_W - INV_PAD &&
+           mouseY >= INV_Y + 8 && mouseY < INV_Y + 8 + SEARCH_H;
+}
+
+void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot,
+                   const uint8_t* hotbar, const InventoryState& inv) {
     ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+
+    // Tabs sit above the panel, as in Java's CreativeModeInventoryScreen.
+    for (int tab = 0; tab < CTAB_COUNT; ++tab) {
+        float x, y;
+        TabRect(tab, x, y);
+        const bool selected = tab == gCreativeTab;
+        const bool hover = CreativeTabHitTest(mouseX, mouseY) == tab;
+        const GuiTexture* tex = selected ? (hover ? &ui.texTabSelectedHi : &ui.texTabSelected)
+                                         : (hover ? &ui.texTabHi : &ui.texTab);
+        ui.DrawNineSlice(tex, x, y, TAB_W, TAB_H, 2, 15);
+        DrawScaledIcon(ui, CreativeTabIcon(tab), x + 4, y + 2, TAB_W - 8);
+    }
 
     // Beveled gray panel (light top/left, dark bottom/right).
     ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, INV_W, INV_H, 0, 0, 1, 1, 15, 0.78f, 0.78f, 0.78f);
@@ -953,39 +1074,55 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, co
     ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 1, 1, 1);
     ui.DrawQuad(&ui.texWhite, INV_X, INV_Y + INV_H - 2, INV_W, 2, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
     ui.DrawQuad(&ui.texWhite, INV_X + INV_W - 2, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
-    ui.DrawText("Creative Inventory", INV_X + INV_PAD, INV_Y + 12, 2, 15, false, 0.25f, 0.25f, 0.25f);
+
+    if (gCreativeTab == CTAB_SEARCH) {
+        DrawTextField(ui, gCreativeSearch, INV_X + INV_PAD, INV_Y + 8,
+                      INV_W - INV_PAD * 2, SEARCH_H, true, 0.0f);
+    } else {
+        ui.DrawText(CreativeTabName(gCreativeTab), INV_X + INV_PAD, INV_Y + 14, 2, 15,
+                    false, 0.25f, 0.25f, 0.25f);
+    }
 
     const std::vector<uint8_t>& items = CreativeItems();
     const int total = int(items.size());
     const int first = gCreativeScroll * INV_COLS;
-    const int last = std::min(total, first + INV_VIS_ROWS * INV_COLS);
+    const int last = std::min(total, first + INV_PICK_ROWS * INV_COLS);
     const int hovered = InventoryHitTest(mouseX, mouseY);
     for (int i = first; i < last; ++i) {
         const uint8_t b = items[i];
         float x, y;
         CellRect(i, x, y);
-        ui.DrawQuad(&ui.texWhite, x + 2, y + 2, INV_CELL - 4, INV_CELL - 4, 0, 0, 1, 1, 15, 0.55f, 0.55f, 0.55f);
-        ui.DrawQuad(&ui.texWhite, x + 2, y + 2, INV_CELL - 4, 1, 0, 0, 1, 1, 15, 0.35f, 0.35f, 0.35f);
-        ui.DrawQuad(&ui.texWhite, x + 2, y + 2, 1, INV_CELL - 4, 0, 0, 1, 1, 15, 0.35f, 0.35f, 0.35f);
-        if (b == hovered)
-            ui.DrawQuad(&ui.texHotbarSel, x, y, INV_CELL, INV_CELL, 0, 0, 1, 1, 15);
+        DrawSlot(ui, x, y, b == hovered);
         DrawItemIcon(ui, b, x + 4, y + 4);
     }
 
-    const float sbX = INV_X + INV_W - 8;
+    const float sbX = INV_X + INV_W - 10;
     ui.DrawQuad(&ui.texWhite, sbX, INV_GY, 4, INV_GRID_H, 0, 0, 1, 1, 15, 0.4f, 0.4f, 0.4f);
-    const int totalRows = CreativeTotalRows();
-    if (totalRows > INV_VIS_ROWS) {
-        const float thumbH = std::max(16.0f, INV_GRID_H * INV_VIS_ROWS / totalRows);
+    const int totalRows = (total + INV_COLS - 1) / INV_COLS;
+    if (totalRows > INV_PICK_ROWS) {
+        const float thumbH = std::max(16.0f, INV_GRID_H * INV_PICK_ROWS / totalRows);
         const float thumbY = INV_GY + (INV_GRID_H - thumbH) * gCreativeScroll / CreativeMaxScroll();
         ui.DrawQuad(&ui.texWhite, sbX, thumbY, 4, thumbH, 0, 0, 1, 1, 15, 0.85f, 0.85f, 0.85f);
     }
 
-    ui.DrawText("Click an item to select it", INV_X + INV_PAD, INV_Y + INV_H - 26, 2, 15, false, 0.3f, 0.3f, 0.3f);
+    // Player inventory (main rows; the hotbar row is drawn at the screen bottom).
+    const int hoveredSlot = CreativeSlotHitTest(mouseX, mouseY);
+    for (int i = 0; i < 27; ++i) {
+        float x, y;
+        SlotRect(i, x, y);
+        DrawSlot(ui, x, y, i == hoveredSlot);
+        DrawItemIcon(ui, inv.slots[i].id, x + 4, y + 4);
+        DrawStackCount(ui, x + 4, y + 4, inv.slots[i]);
+    }
+
     char pageBuf[32];
-    std::snprintf(pageBuf, sizeof(pageBuf), "%d/%d", gCreativeScroll + 1, std::max(1, totalRows - INV_VIS_ROWS + 1));
+    std::snprintf(pageBuf, sizeof(pageBuf), "%d/%d", gCreativeScroll + 1,
+                  std::max(1, totalRows - INV_PICK_ROWS + 1));
     const float pw = ui.TextWidth(pageBuf, 2);
-    ui.DrawText(pageBuf, INV_X + INV_W - INV_PAD - pw, INV_Y + INV_H - 26, 2, 15, false, 0.3f, 0.3f, 0.3f);
+    ui.DrawText(pageBuf, INV_X + INV_W - INV_PAD - pw, INV_Y + INV_H - 20, 2, 15, false,
+                0.3f, 0.3f, 0.3f);
+    ui.DrawText("Shift-click sends a stack to your inventory",
+                INV_X + INV_PAD, INV_Y + INV_H - 20, 2, 15, false, 0.3f, 0.3f, 0.3f);
 
     if (hovered > 0) {
         std::string name = ItemName(uint8_t(hovered));
@@ -996,6 +1133,22 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, int selectedSlot, co
         if (ty < 4) ty = 4;
         ui.DrawQuad(&ui.texBlack, tx - 6, ty - 6, tw + 12, 28, 0, 0, 1, 1, 15, 0.1f, 0.05f, 0.2f);
         ui.DrawText(name, tx, ty, 2, 15, true);
+    }
+
+    const int hovering = CreativeTabHitTest(mouseX, mouseY);
+    if (hovering >= 0) {
+        const std::string name = CreativeTabName(hovering);
+        const float tw = ui.TextWidth(name, 2);
+        float tx = mouseX + 16, ty = mouseY - 20;
+        if (tx + tw + 12 > SCREEN_W) tx = SCREEN_W - tw - 12;
+        if (ty < 4) ty = 4;
+        ui.DrawQuad(&ui.texBlack, tx - 6, ty - 6, tw + 12, 28, 0, 0, 1, 1, 15, 0.1f, 0.05f, 0.2f);
+        ui.DrawText(name, tx, ty, 2, 15, true);
+    }
+
+    if (!inv.cursor.Empty()) {
+        DrawItemIcon(ui, inv.cursor.id, mouseX - 16, mouseY - 16);
+        DrawStackCount(ui, mouseX - 16, mouseY - 16, inv.cursor);
     }
 
     DrawHotbar(ui, selectedSlot, hotbar);

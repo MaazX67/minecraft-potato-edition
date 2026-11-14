@@ -23,7 +23,7 @@ configure_file(src/shader_embed.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/shade
 # CPU-only core: world gen, greedy meshing, asset/atlas logic, combat math,
 # ring queue, particles. No D3D dependency, so the headless selftest links it
 # without a graphics device.
-add_library(potato_core STATIC src/world.cpp src/assets.cpp src/engine.cpp)
+add_library(potato_core STATIC src/world.cpp src/assets.cpp src/engine.cpp src/registry.cpp)
 target_include_directories(potato_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(potato_core SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 

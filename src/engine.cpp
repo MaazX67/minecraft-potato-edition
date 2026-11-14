@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "assets.h"
+#include "registry.h"
 #include "json.hpp"
 #include <algorithm>
 #include <limits>
@@ -502,6 +503,9 @@ float MiningSeconds(uint8_t b, uint8_t item, bool onGround, bool underwater) {
 
 ItemSlot BlockDrops(uint8_t b, uint8_t item) {
     if (!CanHarvest(b, item)) return {};
+    LootEntry loot;
+    if (LootDropForBlock(b, loot))
+        return loot.item == BLOCK_AIR ? ItemSlot{} : ItemSlot{loot.item, loot.count};
     switch (b) {
         case BLOCK_STONE: return {BLOCK_COBBLE, 1};
         case BLOCK_GRASS: return {BLOCK_DIRT, 1};
@@ -563,13 +567,8 @@ ItemSlot ToolRecipe(const ItemSlot* craft, int row, int col, int width, int heig
     return {};
 }
 
-struct Recipe {
-    int width, height;
-    uint8_t cells[9];
-    ItemSlot result;
-};
-
-const Recipe RECIPES[] = {
+// Built-in fallback used until the jar registry supplies Java's data files.
+const CraftingRecipe RECIPES[] = {
     {1, 1, {BLOCK_LOG}, {BLOCK_PLANKS, 4}},
     {1, 1, {BLOCK_SPRUCE_LOG}, {BLOCK_SPRUCE_PLANKS, 4}},
     {1, 1, {BLOCK_BIRCH_LOG}, {BLOCK_BIRCH_PLANKS, 4}},
@@ -580,6 +579,41 @@ const Recipe RECIPES[] = {
     {3, 3, {BLOCK_COBBLE, BLOCK_COBBLE, BLOCK_COBBLE, BLOCK_COBBLE, 0,
             BLOCK_COBBLE, BLOCK_COBBLE, BLOCK_COBBLE, BLOCK_COBBLE}, {BLOCK_FURNACE, 1}},
 };
+
+bool MatchesShaped(const ItemSlot* craft, const CraftingRecipe& recipe,
+                   int minRow, int minCol, int width, int height) {
+    if (recipe.width != width || recipe.height != height) return false;
+    for (int r = 0; r < height; ++r) {
+        for (int c = 0; c < width; ++c) {
+            const ItemSlot& slot = craft[(minRow + r) * 3 + minCol + c];
+            const uint8_t actual = slot.Empty() ? uint8_t(BLOCK_AIR) : slot.id;
+            const uint16_t expected = recipe.cells[r * 3 + c];
+            if (expected == 0 ? actual != BLOCK_AIR : !RecipeCellMatches(expected, actual)) return false;
+        }
+    }
+    return true;
+}
+
+bool MatchesShapeless(const ItemSlot* craft, const CraftingRecipe& recipe, int used) {
+    int wanted = 0;
+    for (int i = 0; i < 9; ++i) if (recipe.cells[i]) ++wanted;
+    if (wanted != used) return false;
+    bool taken[9] = {};
+    for (int i = 0; i < 9; ++i) {
+        if (craft[i].Empty()) continue;
+        bool matched = false;
+        for (int j = 0; j < 9; ++j) {
+            if (taken[j] || !recipe.cells[j]) continue;
+            if (RecipeCellMatches(recipe.cells[j], craft[i].id)) {
+                taken[j] = true;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) return false;
+    }
+    return true;
+}
 
 bool IsCraftCell(int index, bool table) {
     return table || (index % 3 < 2 && index / 3 < 2);
@@ -627,10 +661,11 @@ int InventoryState::Add(uint8_t id, int count, uint16_t damage) {
 }
 
 ItemSlot InventoryState::Result(bool table) const {
-    int minRow = 3, maxRow = -1, minCol = 3, maxCol = -1;
+    int minRow = 3, maxRow = -1, minCol = 3, maxCol = -1, used = 0;
     for (int i = 0; i < 9; ++i) {
         if (craft[i].Empty()) continue;
         if (!IsCraftCell(i, table)) return {};
+        ++used;
         minRow = std::min(minRow, i / 3); maxRow = std::max(maxRow, i / 3);
         minCol = std::min(minCol, i % 3); maxCol = std::max(maxCol, i % 3);
     }
@@ -640,14 +675,23 @@ ItemSlot InventoryState::Result(bool table) const {
         const ItemSlot tool = ToolRecipe(craft, minRow, minCol, width, height);
         if (!tool.Empty()) return tool;
     }
-    for (const Recipe& recipe : RECIPES) {
+    const std::vector<CraftingRecipe>& jar = RegistryRecipes();
+    if (!jar.empty()) {
+        for (const CraftingRecipe& recipe : jar) {
+            if (recipe.shapeless ? MatchesShapeless(craft, recipe, used)
+                                 : MatchesShaped(craft, recipe, minRow, minCol, width, height))
+                return recipe.result;
+        }
+        return {};
+    }
+    for (const CraftingRecipe& recipe : RECIPES) {
         if (width != recipe.width || height != recipe.height) continue;
         bool matches = true;
         for (int r = 0; r < height; ++r) {
             for (int c = 0; c < width; ++c) {
                 const ItemSlot& slot = craft[(minRow + r) * 3 + minCol + c];
                 const uint8_t actual = slot.Empty() ? uint8_t(BLOCK_AIR) : slot.id;
-                const uint8_t expected = recipe.cells[r * width + c];
+                const uint8_t expected = uint8_t(recipe.cells[r * width + c]);
                 const bool plankTag = (recipe.result.id == BLOCK_CRAFTING_TABLE || recipe.result.id == ITEM_STICK) && IsPlank(actual);
                 if (actual != expected && !plankTag) matches = false;
             }

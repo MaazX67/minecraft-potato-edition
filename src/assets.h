@@ -62,8 +62,13 @@ class AssetStore {
 public:
     bool LoadIndex(const std::string& indexPath);
     bool LoadJar(const std::string& jarPath) { return mJar.Open(jarPath); }
+    bool HasJar() const { return mJar.EntryCount() > 0; }
     bool ReadFile(const std::string& name, std::vector<uint8_t>& out) const;
     std::vector<std::string> ListPrefix(const std::string& prefix) const;
+    // Raw archive access for data/ entries (recipes, loot tables), which are
+    // not under assets/ and therefore invisible to ReadFile/ListPrefix.
+    bool ReadJarEntry(const std::string& path, std::vector<uint8_t>& out) const { return mJar.Read(path, out); }
+    std::vector<std::string> ListJarPrefix(const std::string& prefix) const;
     size_t EntryCount() const { return mObjects.size() + mJar.EntryCount(); }
 
 private:

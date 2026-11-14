@@ -16,6 +16,7 @@
 #include "world.h"
 #include "sound.h"
 #include "gui.h"
+#include "registry.h"
 #include "shader_embed.h"
 #include "json.hpp"
 
@@ -1197,6 +1198,15 @@ static void SyncHotbar() {
     }
 }
 
+static void CloseCreativeInventory() {
+    // Creative picker stacks are unlimited, so a held cursor stack is simply
+    // discarded instead of blocking the close like the survival bag.
+    gInventory.cursor = ItemSlot{};
+    gInventoryMessage.clear();
+    SyncHotbar();
+    SetScreen(gHwnd, Screen::Game);
+}
+
 static void CloseInventory() {
     if (!gInventory.Close()) {
         gInventoryMessage = "Make room for the cursor and crafting items before closing.";
@@ -1697,6 +1707,12 @@ static void HandleGameFrame(float dt) {
         gCraftTable = false;
         gInventoryMessage.clear();
         ResetCreativeScroll();
+        if (gGameMode == 1) {
+            // Creative keeps the hotbar in gHotbar; mirror it so the storage
+            // rows and hotbar row in the tabbed screen stay consistent.
+            for (int i = 0; i < 9; ++i)
+                gInventory.slots[27 + i] = {gHotbar[i], gHotbar[i] == BLOCK_AIR ? 0 : ItemStackLimit(gHotbar[i])};
+        }
         SetScreen(gHwnd, Screen::Inventory);
         return;
     }
@@ -2391,7 +2407,7 @@ static void DrawWorld() {
 
 static void DrawDebug() {
     char line[160];
-    gGui.DrawQuad(&gGui.texBlack, 2, 2, 360, 196, 0, 0, 1, 1, 15);
+    gGui.DrawQuad(&gGui.texBlack, 2, 2, 360, 236, 0, 0, 1, 1, 15);
     int y = 6;
     auto row = [&](const char* s) { gGui.DrawText(s, 6, float(y), 2, 15, true); y += 20; };
     row("Minecraft 26.3 (Java Edition)");
@@ -2412,6 +2428,12 @@ static void DrawDebug() {
     snprintf(line, sizeof(line), "Mode: %s  Seed: %u", gGameMode ? "Creative" : "Survival", gWorldSeed);
     row(line);
     snprintf(line, sizeof(line), "Local player: %s  Assets: Java %s", gProfile.name.c_str(), gAssetVersion.c_str());
+    row(line);
+    const RegistryStats& reg = RegistryInfo();
+    snprintf(line, sizeof(line), "Registry: %s  %d recipes  %d loot tables",
+             reg.jarLoaded ? "jar" : "built-in", reg.recipes, reg.lootTables);
+    row(line);
+    snprintf(line, sizeof(line), "Names: %d blocks  %d items", reg.mappedBlockNames, reg.mappedItemNames);
     row(line);
     if (gHaveTarget) {
         const uint8_t tb = gWorld->GetBlock(gTargetX, gTargetY, gTargetZ);
@@ -2454,7 +2476,7 @@ static void RenderFrame() {
             DrawSurvivalInventory(gGui, gInventory, gCraftTable, gInput.mouseX,
                                   gInput.mouseY, gInventoryMessage);
         else
-            DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gHotbarSlot, gHotbar);
+            DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gHotbarSlot, gHotbar, gInventory);
     } else if (gScreen == Screen::Furnace) {
         DrawFurnace(gGui, gFurnace, gInventory, gInput.mouseX, gInput.mouseY);
     } else if (gScreen == Screen::Chest) {
@@ -2554,6 +2576,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (!parsed.empty()) jarPath = parsed;
     }
     const bool jarOk = !jarPath.empty() && gStore.LoadJar(jarPath);
+    const bool registryOk = jarOk && LoadRegistry(gStore);
+    if (jarOk && !registryOk) {
+        gActionBar = "Recipe and loot data could not be read from the client jar.";
+        gActionBarUntil = SystemTimeMs() + 6000;
+    }
     if (jarOk) {
         ZipArchive versionArchive;
         std::vector<uint8_t> versionBytes;
@@ -2737,20 +2764,50 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         } else if (gScreen == Screen::Inventory) {
             if (gInput.KeyPressed('E')) {
                 if (gGameMode == 0 || gCraftTable) CloseInventory();
-                else SetScreen(hwnd, Screen::Game);
+                else CloseCreativeInventory();
             } else if (gGameMode == 0 || gCraftTable) {
                 if (gInput.leftClick || gInput.rightClick)
                     HandleInventoryClick(
                         SurvivalInvHitTest(gInput.mouseX, gInput.mouseY, gCraftTable),
                         gInput.rightClick);
             } else {
+                // Java's CreativeModeInventoryScreen: tab strip on top, live
+                // search field, picker grid and player slots below the cursor.
+                if (CreativeTab() == CTAB_SEARCH)
+                    for (char c : gInput.typed) {
+                        if (c == 8) CreativeSearchBackspace();
+                        else CreativeSearchAppend(c);
+                    }
                 if (gInput.wheel != 0)
                     ScrollCreativeInventory(gInput.wheel > 0 ? -1 : 1);
-                if (gInput.leftClick) {
-                    const int b = InventoryHitTest(gInput.mouseX, gInput.mouseY);
-                    if (b > 0) {
-                        gHotbar[gHotbarSlot] = uint8_t(b);
+                if (gInput.leftClick || gInput.rightClick) {
+                    const int tab = CreativeTabHitTest(gInput.mouseX, gInput.mouseY);
+                    if (tab >= 0) {
+                        SetCreativeTab(tab);
                         gSound.Play(SND_CLICK);
+                    } else if (CreativeSearchFieldHitTest(gInput.mouseX, gInput.mouseY)) {
+                        // The search box is always focused while its tab is open.
+                    } else if (const int b = InventoryHitTest(gInput.mouseX, gInput.mouseY); b > 0) {
+                        const uint8_t id = uint8_t(b);
+                        const int limit = ItemStackLimit(id);
+                        if (gInput.keys[VK_SHIFT]) {
+                            gInventory.Add(id, limit);
+                            SyncHotbar();
+                        } else {
+                            // Java's creative picker fills the cursor with a
+                            // full stack on either button.
+                            gInventory.cursor = {id, limit, 0};
+                        }
+                        gSound.Play(SND_CLICK);
+                    } else {
+                        const int hot = CreativeHotbarHitTest(gInput.mouseX, gInput.mouseY);
+                        const int slot = CreativeSlotHitTest(gInput.mouseX, gInput.mouseY);
+                        const int index = hot >= 0 ? 27 + hot : slot;
+                        if (index >= 0 && gInventory.Click(index, gInput.rightClick, false,
+                                                           gInput.keys[VK_SHIFT])) {
+                            SyncHotbar();
+                            gSound.Play(SND_CLICK);
+                        }
                     }
                 }
             }

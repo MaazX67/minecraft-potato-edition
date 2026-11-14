@@ -227,6 +227,14 @@ bool AssetStore::ReadFile(const std::string& name, std::vector<uint8_t>& out) co
     return mJar.Read("assets/" + name, out);
 }
 
+std::vector<std::string> AssetStore::ListJarPrefix(const std::string& prefix) const {
+    std::vector<std::string> names;
+    for (const std::string& name : mJar.List()) {
+        if (name.compare(0, prefix.size(), prefix) == 0) names.push_back(name);
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
 std::vector<std::string> AssetStore::ListPrefix(const std::string& prefix) const {
     std::vector<std::string> names;
     for (const auto& kv : mObjects) {
