@@ -3,12 +3,14 @@
 #include <objbase.h>
 #include <shellapi.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 #include "engine.h"
@@ -160,6 +162,7 @@ static int gLastWorldClickIndex = -1;
 static float gLastWorldClickMs = -1000.0f;
 static int gLastInvClickIndex = -1;
 static float gLastInvClickMs = -1000.0f;
+static float gScrollAccum = 0.0f;
 static PerlinNoise* gWeatherNoise = nullptr;
 
 static void SetScreen(HWND hwnd, Screen s);
@@ -2134,7 +2137,8 @@ static void UpdateWeather(float dt) {
         gRainSpawnTimer = 0;
         return;
     }
-    gRainSpawnTimer += dt * 70.0f * gRainLevel;
+    const float particleScale = gSettings.particles == 0 ? 0.0f : (gSettings.particles == 1 ? 0.5f : 1.0f);
+    gRainSpawnTimer += dt * 70.0f * gRainLevel * particleScale;
     const bool snow = WeatherIsSnowy(int(floorf(gCamera.x)), int(floorf(gCamera.z)));
     while (gRainSpawnTimer >= 1.0f) {
         gRainSpawnTimer -= 1.0f;
@@ -2433,7 +2437,12 @@ static void HandleGameFrame(float dt) {
         if (gInput.KeyPressed('1' + i)) gHotbarSlot = i;
     }
     if (gInput.wheel != 0) {
-        gHotbarSlot = (gHotbarSlot + (gInput.wheel > 0 ? -1 : 1) + 9) % 9;
+        // Java's scroll sensitivity scales the wheel delta, which then
+        // accumulates until it crosses a whole slot.
+        gScrollAccum -= gInput.wheel * gSettings.scrollSensitivity;
+        while (gScrollAccum >= 1.0f) { gHotbarSlot = (gHotbarSlot + 1) % 9; gScrollAccum -= 1.0f; }
+        while (gScrollAccum <= -1.0f) { gHotbarSlot = (gHotbarSlot + 8) % 9; gScrollAccum += 1.0f; }
+        gScrollAccum = std::clamp(gScrollAccum, -1.0f, 1.0f);
     }
     if (gInput.KeyPressed(gSettings.bindInventory)) {
         gCraftTable = false;
@@ -2900,7 +2909,8 @@ static void DrawZombies() {
 // east at 0.03 blocks/tick. The point sampler uses CLAMP, so the plane is
 // built from 2x2 aligned texture-repeat quads around the eye.
 static void DrawClouds(float eyeX, float eyeY, float eyeZ) {
-    if (gDimension != 0 || !gGui.texClouds.srv || !gZombieVB || eyeY < 0.0f) return;
+    if (gSettings.clouds == 0 || gDimension != 0 || !gGui.texClouds.srv || !gZombieVB ||
+        eyeY < 0.0f) return;
     const float span = 3072.0f;
     const double ticks = double(gWorldClock.Ticks()) + double(gWorldClock.Fraction());
     const float drift = float(fmod(ticks * 0.03, double(span)));
@@ -2917,7 +2927,8 @@ static void DrawClouds(float eyeX, float eyeY, float eyeZ) {
             const float corners[4][2] = {{x0, z0}, {x1, z0}, {x1, z1}, {x0, z1}};
             const float uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
             const int order[6] = {0, 1, 2, 0, 2, 3};
-            for (int face = 0; face < 2; ++face) {
+            const int layers = gSettings.clouds == 1 ? 1 : 2; // Fast = flat top only
+            for (int face = 0; face < layers; ++face) {
                 const float y = face == 0 ? top : bottom;
                 const float shade = face == 0 ? 15.0f : 13.0f;
                 for (int k : order) {
@@ -2938,6 +2949,52 @@ static void DrawClouds(float eyeX, float eyeY, float eyeZ) {
     gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
     gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
     gRC.device->Draw(UINT(vertices.size()), 0);
+}
+
+// Java renders a soft circular shadow under living entities. A simple dark
+// quad projected onto the first solid block below the entity gives the same
+// grounding cue with one draw call for every mob and the third-person player.
+static void DrawEntityShadows() {
+    if (!gSettings.entityShadows || !gWorld || !gZombieVB || !gGui.texWhite.srv) return;
+    struct Shadow { float x, y, z, r; };
+    static std::vector<Shadow> list;
+    list.clear();
+    for (const Zombie& z : gZombies) {
+        if (z.health > 0) list.push_back({z.body.x + 0.5f, z.body.y, z.body.z + 0.5f, 0.45f});
+    }
+    if (gPerspective != 0) list.push_back({gBody.x, gBody.y, gBody.z, 0.45f});
+    static std::vector<MeshVertex> verts;
+    verts.clear();
+    for (const Shadow& s : list) {
+        int gy = -1;
+        for (int y = int(floorf(s.y)) + 1; y > int(floorf(s.y)) - 8; --y) {
+            const uint8_t b = gWorld->GetBlock(int(floorf(s.x)), y, int(floorf(s.z)));
+            if (b != BLOCK_AIR && !(BLOCK_FLAGS[b] & BF_LIQUID)) { gy = y; break; }
+        }
+        if (gy < 0) continue;
+        const float y = float(gy + 1) + 0.02f;
+        const float r = s.r;
+        verts.push_back({s.x - r, y, s.z - r, 0, 0, 0, 0, 15, 0.10f, 0.10f, 0.10f});
+        verts.push_back({s.x + r, y, s.z - r, 0, 0, 1, 0, 15, 0.10f, 0.10f, 0.10f});
+        verts.push_back({s.x + r, y, s.z + r, 0, 0, 1, 1, 15, 0.10f, 0.10f, 0.10f});
+        verts.push_back({s.x - r, y, s.z - r, 0, 0, 0, 0, 15, 0.10f, 0.10f, 0.10f});
+        verts.push_back({s.x + r, y, s.z + r, 0, 0, 1, 1, 15, 0.10f, 0.10f, 0.10f});
+        verts.push_back({s.x - r, y, s.z + r, 0, 0, 0, 1, 15, 0.10f, 0.10f, 0.10f});
+    }
+    if (verts.empty()) return;
+    void* data = nullptr;
+    if (FAILED(gZombieVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+    memcpy(data, verts.data(), verts.size() * sizeof(MeshVertex));
+    gZombieVB->Unmap();
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->PSSetShader(gRC.psEntity);
+    gRC.device->PSSetShaderResources(0, 1, &gGui.texWhite.srv);
+    gRC.device->IASetVertexBuffers(0, 1, &gZombieVB, &stride, &offset);
+    gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+    gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
+    gRC.device->Draw(UINT(verts.size()), 0);
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
 }
 
 static void DrawPlayer() {
@@ -3334,6 +3391,7 @@ static void DrawWorld() {
         gRC.device->IASetIndexBuffer(gc.ib, DXGI_FORMAT_R32_UINT, 0);
         gRC.device->DrawIndexed(gc.opaqueIndexCount, 0, 0);
     }
+    DrawEntityShadows();
     DrawZombies();
     DrawPlayer();
     DrawHand();
@@ -3540,6 +3598,11 @@ static void RenderFrame() {
         SaveScreenshot();
     }
     gRC.swapChain->Present(gSettings.vsync ? 1 : 0, 0);
+    if (gSettings.maxFramerate > 0) {
+        const auto budget = std::chrono::duration<double>(1.0 / double(gSettings.maxFramerate));
+        const auto elapsed = std::chrono::steady_clock::now() - frameStart;
+        if (elapsed < budget) std::this_thread::sleep_for(budget - elapsed);
+    }
 }
 
 static void LoadSplash() {
@@ -3749,6 +3812,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         }
         if (!gRunning) break;
 
+        const auto frameStart = std::chrono::steady_clock::now();
         const float dt = clock.Tick();
         gNowMs = SystemTimeMs();
         gTimeSec += dt;
