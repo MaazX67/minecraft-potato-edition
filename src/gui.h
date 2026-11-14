@@ -93,6 +93,8 @@ public:
     GuiTexture texItemIcon[256];
     GuiTexture texDestroy[10];
     GuiTexture texZombie;
+    GuiTexture texMob[int(MobType::Count)];
+    GuiTexture texClouds;
 
 private:
     struct Batch {

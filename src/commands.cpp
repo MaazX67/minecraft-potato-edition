@@ -155,9 +155,10 @@ std::vector<std::string> ArgOptions(const std::string& cmd, size_t pos,
     } else if (cmd == "gamerule" && pos == 1 && !done.empty() && IsGameRule(done[0])) {
         out = {"true", "false"};
     } else if (cmd == "summon" && pos == 0) {
-        out = {"zombie"};
+        for (int i = 0; i < int(MobType::Count); ++i) out.push_back(MobId(MobType(i)));
     } else if (cmd == "kill" && pos == 0) {
-        out = {"player", "zombie", "@e"};
+        out = {"player", "@e"};
+        for (int i = 0; i < int(MobType::Count); ++i) out.push_back(MobId(MobType(i)));
     } else if (cmd == "locate" && pos == 0) {
         out = {"biome", "structure"};
     } else if (cmd == "locate" && pos == 1 && !done.empty() && Lower(done[0]) == "biome") {
@@ -298,9 +299,10 @@ CommandResult ExecuteCommand(const std::string& line, CommandHost& host) {
         if (tokens.size() > 1 && (!ParseInt(tokens[1], count) || count < 1 || count > 64))
             return Usage("/summon <entity> [count]");
         const std::string entity = Lower(tokens[0]);
-        if (host.Summon(entity, int(count)) < 0)
+        std::string spawnedName;
+        if (host.Summon(entity, int(count), spawnedName) < 0)
             return Err("Unknown entity '" + tokens[0] + "'");
-        return Ok("Summoned new Zombie");
+        return Ok("Summoned new " + spawnedName);
     }
     if (cmd == "kill") {
         const std::string target = tokens.empty() ? "player" : Lower(tokens[0]);

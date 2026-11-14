@@ -101,6 +101,7 @@ static bool gRunning = true;
 static bool gDebug = false;
 static bool gHideHud = false;
 static int gPerspective = 0; // 0 first person, 1 third person back, 2 third person front
+static float gZoom = 1.0f;    // C-key spyglass-style zoom factor
 static bool gFlyHook = false;
 static bool gSpawned = false;
 static float gFallStartY = 0;
@@ -1115,13 +1116,15 @@ static void SaveTestState(const char* screenshot) {
         {"soundsPlayed", gSound.Played()}, {"stoneSounds", gSound.Variants(SND_STONE)},
         {"cracksLoaded", gGui.texDestroy[0].srv != nullptr},
         {"toolTexturesLoaded", gGui.texItemIcon[ITEM_WOOD_PICKAXE].srv != nullptr},
-        {"zombieTextureLoaded", gGui.texZombie.srv != nullptr}, {"zombieBufferLoaded", gZombieVB != nullptr},
+        {"zombieTextureLoaded", gGui.texMob[int(MobType::Zombie)].srv != nullptr},
+        {"mobTexturesLoaded", [&] { int n = 0; for (const GuiTexture& t : gGui.texMob) n += t.srv != nullptr; return n; }()},
+        {"zombieBufferLoaded", gZombieVB != nullptr},
         {"combatHits", gCombatHits}, {"criticalHits", gCriticalHits}, {"zombieKills", gZombieKills},
         {"attackStrength", gCooldown.Strength(gNowMs)}, {"onGround", gBody.onGround}, {"verticalSpeed", gBody.vy}
     };
     state["zombies"] = nlohmann::json::array();
     for (const Zombie& zombie : gZombies)
-        state["zombies"].push_back({{"health", zombie.health},
+        state["zombies"].push_back({{"type", MobId(zombie.type)}, {"health", zombie.health},
             {"position", {zombie.body.x, zombie.body.y, zombie.body.z}}, {"hurtTime", zombie.resistance.remaining}});
     state["slots"] = nlohmann::json::array();
     for (const auto& slot : gInventory.slots) state["slots"].push_back(slotJson(slot));
@@ -1606,14 +1609,17 @@ public:
         }
         return false;
     }
-    int Summon(const std::string& entity, int count) override {
-        if (entity != "zombie" && entity != "minecraft:zombie") return -1;
+    int Summon(const std::string& entity, int count, std::string& spawnedName) override {
+        MobType type;
+        if (!ParseMobId(entity, type)) return -1;
+        spawnedName = MobName(type);
         for (int i = 0; i < count; ++i) {
-            Zombie zombie;
-            zombie.body.x = gBody.x + float(i) * 0.9f;
-            zombie.body.y = gBody.y;
-            zombie.body.z = gBody.z + 0.5f;
-            gZombies.push_back(zombie);
+            Mob mob;
+            mob.SetType(type);
+            mob.body.x = gBody.x + float(i) * 0.9f;
+            mob.body.y = gBody.y;
+            mob.body.z = gBody.z + 0.5f;
+            gZombies.push_back(mob);
         }
         return count;
     }
@@ -1623,13 +1629,13 @@ public:
             gSurvival.health = 0;
             return 1;
         }
-        if (target == "zombie" || target == "@e") {
-            int killed = 0;
-            for (Zombie& zombie : gZombies)
-                if (zombie.health > 0) { zombie.health = 0; ++killed; }
-            return killed;
-        }
-        return -1;
+        MobType type;
+        const bool all = target == "@e";
+        if (!all && !ParseMobId(target, type)) return -1;
+        int killed = 0;
+        for (Zombie& zombie : gZombies)
+            if (zombie.health > 0 && (all || zombie.type == type)) { zombie.health = 0; ++killed; }
+        return killed;
     }
     int ClearInventory() override {
         int removed = 0;
@@ -1768,6 +1774,21 @@ static void UpdateWeather(float dt) {
         const float py = gCamera.y + 7.0f + float(rand() % 500) * 0.01f;
         gParticles.SpawnRain(px, py, pz, snow);
     }
+}
+
+static void DropMobLoot(const Mob& mob) {
+    if (gGameMode != 0) return;
+    const MobStats& stats = GetMobStats(mob.type);
+    auto give = [](const char* name, int lo, int hi) {
+        if (!name || !name[0] || hi <= 0) return;
+        const uint8_t id = ItemIdFromResourceName(name);
+        if (id == BLOCK_AIR) return;
+        const int count = lo + (hi > lo ? int(rand()) % (hi - lo + 1) : 0);
+        if (count > 0) gInventory.Add(id, count);
+    };
+    give(stats.drop, stats.dropMin, stats.dropMax);
+    give(stats.drop2, stats.drop2Min, stats.drop2Max);
+    SyncHotbar();
 }
 
 static void HandleGameFrame(float dt) {
@@ -1911,32 +1932,54 @@ static void HandleGameFrame(float dt) {
 
     gWorld->Update(gCamera.x, gCamera.z);
     gPlayerResistance.Advance(dt);
+    for (const Zombie& mob : gZombies) {
+        if (mob.health > 0) continue;
+        DropMobLoot(mob);
+        const int sound = mob.type == MobType::Zombie ? SND_ZOMBIE_DEATH : SND_HIT;
+        gSound.PlayAt(sound, mob.body.x, mob.body.y, mob.body.z);
+    }
     gZombies.erase(std::remove_if(gZombies.begin(), gZombies.end(), [](const Zombie& zombie) {
         const float dx = zombie.body.x - gBody.x, dz = zombie.body.z - gBody.z;
-        if (zombie.health <= 0)
-            gSound.PlayAt(SND_ZOMBIE_DEATH, zombie.body.x, zombie.body.y, zombie.body.z);
-        return zombie.health <= 0 || dx * dx + dz * dz > 64 * 64;
+        return zombie.health <= 0 || dx * dx + dz * dz > 96 * 96;
     }), gZombies.end());
     static float sSayTimer = 0;
     sSayTimer += dt;
     if (sSayTimer >= 6 && !gZombies.empty()) {
         sSayTimer = 0;
         const Zombie& z = gZombies[gWorldClock.Ticks() % gZombies.size()];
-        gSound.PlayAt(SND_ZOMBIE_SAY, z.body.x, z.body.y, z.body.z);
+        if (z.type == MobType::Zombie)
+            gSound.PlayAt(SND_ZOMBIE_SAY, z.body.x, z.body.y, z.body.z);
     }
-    if (!gAutomation && gRuleMobSpawning && gSettings.difficulty != 0 &&
-        gSkyTimeline.Sample(gWorldClock.Ticks()).stars > 0.1f) {
+    if (!gAutomation && gRuleMobSpawning && gSettings.difficulty != 0) {
         gMobSpawnTimer += dt;
-        if (gMobSpawnTimer >= 4 && gZombies.size() < 12) {
+        if (gMobSpawnTimer >= 4 && gZombies.size() < 24) {
             gMobSpawnTimer = 0;
-            const float angle = float(gWorldClock.Ticks() % 6283) * 0.001f;
-            const int x = int(floorf(gBody.x + sinf(angle) * 26)), z = int(floorf(gBody.z + cosf(angle) * 26));
-            const int y = gWorld->SurfaceY(x, z);
-            if (y >= 0 && gWorld->GetBlock(x, y, z) != BLOCK_WATER &&
-                gWorld->GetBlock(x, y + 1, z) == BLOCK_AIR && gWorld->GetBlock(x, y + 2, z) == BLOCK_AIR) {
-                Zombie zombie;
-                zombie.body.x = float(x) + 0.5f; zombie.body.y = float(y + 1); zombie.body.z = float(z) + 0.5f;
-                gZombies.push_back(zombie);
+            int hostile = 0, passive = 0;
+            for (const Zombie& mob : gZombies)
+                (GetMobStats(mob.type).hostile ? hostile : passive)++;
+            const bool night = gSkyTimeline.Sample(gWorldClock.Ticks()).stars > 0.1f;
+            const bool wantHostile = hostile < (night ? 14 : 6);
+            const bool wantPassive = passive < 10;
+            if (wantHostile || wantPassive) {
+                static const MobType kHostile[] = {MobType::Zombie, MobType::Creeper, MobType::Skeleton,
+                                                   MobType::Spider, MobType::Enderman};
+                static const MobType kPassive[] = {MobType::Pig, MobType::Cow, MobType::Sheep, MobType::Chicken};
+                const uint64_t tick = gWorldClock.Ticks();
+                const float angle = float(tick % 6283) * 0.001f;
+                const int x = int(floorf(gBody.x + sinf(angle) * 26)), z = int(floorf(gBody.z + cosf(angle) * 26));
+                const int y = gWorld->SurfaceY(x, z);
+                const uint8_t ground = y >= 0 ? gWorld->GetBlock(x, y, z) : BLOCK_AIR;
+                if (y >= 0 && ground != BLOCK_AIR && ground != BLOCK_WATER &&
+                    gWorld->GetBlock(x, y + 1, z) == BLOCK_AIR && gWorld->GetBlock(x, y + 2, z) == BLOCK_AIR) {
+                    Mob mob;
+                    const bool spawnHostile = wantHostile && (night || !wantPassive);
+                    const MobType type = spawnHostile
+                        ? kHostile[(tick / 7) % (sizeof(kHostile) / sizeof(kHostile[0]))]
+                        : kPassive[(tick / 11) % (sizeof(kPassive) / sizeof(kPassive[0]))];
+                    mob.SetType(type);
+                    mob.body.x = float(x) + 0.5f; mob.body.y = float(y + 1); mob.body.z = float(z) + 0.5f;
+                    gZombies.push_back(mob);
+                }
             }
         }
     }
@@ -1944,14 +1987,31 @@ static void HandleGameFrame(float dt) {
         zombie.Update(dt, gBody, getBlock);
         const float dx = gBody.x - zombie.body.x, dz = gBody.z - zombie.body.z;
         const float distance2 = dx * dx + dz * dz;
-        if (!zombie.passive && gGameMode == 0 && gSettings.difficulty != 0 && zombie.attackDelay == 0 &&
-            distance2 < 1.8f * 1.8f && fabsf(gBody.y - zombie.body.y) < 1.5f) {
+        if (zombie.type == MobType::Creeper && zombie.fuse >= 0 && zombie.fuse <= 0 && zombie.health > 0) {
+            zombie.health = 0;
+            gParticles.SpawnCrit(zombie.body.x, zombie.body.y + 1, zombie.body.z);
+            gSound.Play(SND_HURT);
+            const float blast = sqrtf(distance2);
+            if (blast < 6.0f && gGameMode == 0) {
+                const float raw = 22.0f * (1.0f - blast / 6.0f);
+                const float damage = gPlayerResistance.Apply(raw);
+                if (damage > 0) {
+                    gSurvival.health = std::max(0, gSurvival.health - int(ceilf(damage)));
+                    const float scale = blast > 0.001f ? 6.0f / blast : 0;
+                    gBody.impulseX = dx * scale; gBody.impulseZ = dz * scale; gBody.vy = 6; gBody.onGround = false;
+                }
+            }
+            continue;
+        }
+        if (GetMobStats(zombie.type).attackDamage > 0 && gGameMode == 0 && gSettings.difficulty != 0 &&
+            zombie.attackDelay == 0 && distance2 < 1.8f * 1.8f && fabsf(gBody.y - zombie.body.y) < 1.5f) {
             int bx, by, bz, normalX, normalY, normalZ;
             const float distance = sqrtf(distance2);
             if (distance > 0.001f && RaycastDDA(getBlock, zombie.body.x, zombie.body.y + 1.4f, zombie.body.z,
                 dx / distance, 0, dz / distance, distance, bx, by, bz, normalX, normalY, normalZ)) continue;
             zombie.attackDelay = 1;
-            const float raw = gSettings.difficulty == 1 ? 2.0f : (gSettings.difficulty == 3 ? 4.0f : 3.0f);
+            const float raw = GetMobStats(zombie.type).attackDamage *
+                (gSettings.difficulty == 3 ? 1.5f : (gSettings.difficulty == 1 ? 0.7f : 1.0f));
             const int defense = gInventory.Defense();
             const float toughness = gInventory.Toughness();
             float armored = raw;
@@ -2008,6 +2068,8 @@ static void HandleGameFrame(float dt) {
     if (gInput.KeyPressed(VK_F1)) gHideHud = !gHideHud;
     if (gInput.KeyPressed(VK_F3)) gDebug = !gDebug;
     if (gInput.KeyPressed(VK_F5)) gPerspective = (gPerspective + 1) % 3;
+    const float zoomTarget = gInput.keys['C'] ? 0.22f : 1.0f;
+    gZoom += (zoomTarget - gZoom) * std::min(1.0f, dt * 18.0f);
 
     int hx, hy, hz, nx, ny, nz;
     gHaveTarget = RaycastDDA(getBlock, gCamera.x, gCamera.y, gCamera.z,
@@ -2309,53 +2371,189 @@ static void DrawWorldSky(const XMMATRIX& view, const XMMATRIX& proj, const SkySt
     gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
 }
 
+struct MobPart {
+    float x, y, z, w, h, d, u, v, pivot, rot;
+};
+
+// Box models use Java's 16 px/block model space and standard box unwrap UVs
+// from the per-entity 64x32 / 64x64 texture.
+static void MobParts(MobType type, float moving, std::vector<MobPart>& parts) {
+    parts.clear();
+    switch (type) {
+    case MobType::Pig:
+        parts = {{-4, 8, -14, 8, 8, 8, 0, 0, 12, 0},
+                 {-5, 6, -8, 10, 8, 16, 28, 8, 10, 0},
+                 {-2, 8, -15, 4, 3, 1, 16, 16, 10, 0},
+                 {-3, 0, -6, 4, 6, 4, 0, 16, 6, moving},
+                 {1, 0, -6, 4, 6, 4, 0, 16, 6, -moving},
+                 {-3, 0, 4, 4, 6, 4, 0, 16, 6, -moving},
+                 {1, 0, 4, 4, 6, 4, 0, 16, 6, moving}};
+        break;
+    case MobType::Cow:
+        parts = {{-4, 8, -15, 8, 8, 8, 0, 0, 12, 0},
+                 {-6, 5, -10, 12, 10, 18, 28, 8, 10, 0},
+                 {-4, 0, -7, 4, 7, 4, 0, 16, 7, moving},
+                 {2, 0, -7, 4, 7, 4, 0, 16, 7, -moving},
+                 {-4, 0, 5, 4, 7, 4, 0, 16, 7, -moving},
+                 {2, 0, 5, 4, 7, 4, 0, 16, 7, moving}};
+        break;
+    case MobType::Sheep:
+        parts = {{-3, 8, -13, 6, 6, 6, 0, 0, 11, 0},
+                 {-5, 7, -8, 10, 12, 16, 28, 8, 13, 0},
+                 {-3, 0, -6, 4, 7, 4, 0, 16, 7, moving},
+                 {1, 0, -6, 4, 7, 4, 0, 16, 7, -moving},
+                 {-3, 0, 4, 4, 7, 4, 0, 16, 7, -moving},
+                 {1, 0, 4, 4, 7, 4, 0, 16, 7, moving}};
+        break;
+    case MobType::Chicken:
+        parts = {{-2, 9, -7, 4, 6, 3, 0, 13, 12, 0},
+                 {-3, 5, -3, 6, 8, 6, 0, 9, 9, 0},
+                 {-2, 9, -9, 4, 2, 2, 14, 0, 10, 0},
+                 {-4, 6, -3, 1, 4, 6, 24, 13, 9, moving},
+                 {3, 6, -3, 1, 4, 6, 24, 13, 9, -moving},
+                 {-2, 0, -1, 1, 5, 1, 26, 0, 5, moving},
+                 {1, 0, -1, 1, 5, 1, 26, 0, 5, -moving}};
+        break;
+    case MobType::Creeper:
+        parts = {{-4, 18, -4, 8, 8, 8, 8, 0, 18, 0},
+                 {-4, 6, -2, 8, 12, 4, 16, 16, 12, 0},
+                 {-4, 0, -4, 4, 6, 4, 0, 16, 6, moving},
+                 {0, 0, -4, 4, 6, 4, 0, 16, 6, -moving},
+                 {-4, 0, 0, 4, 6, 4, 0, 16, 6, -moving},
+                 {0, 0, 0, 4, 6, 4, 0, 16, 6, moving}};
+        break;
+    case MobType::Spider:
+        parts = {{-4, 4, -9, 8, 8, 8, 32, 4, 8, 0},
+                 {-3, 4, -3, 6, 6, 6, 0, 0, 7, 0},
+                 {-5, 4, 3, 10, 8, 12, 0, 0, 8, 0},
+                 {-15, 6, -6, 12, 1, 1, 0, 0, 6, moving},
+                 {-15, 5, -3, 12, 1, 1, 0, 0, 5, -moving},
+                 {-15, 5, 0, 12, 1, 1, 0, 0, 5, moving},
+                 {-15, 6, 3, 12, 1, 1, 0, 0, 6, -moving},
+                 {3, 6, -6, 12, 1, 1, 0, 0, 6, -moving},
+                 {3, 5, -3, 12, 1, 1, 0, 0, 5, moving},
+                 {3, 5, 0, 12, 1, 1, 0, 0, 5, -moving},
+                 {3, 6, 3, 12, 1, 1, 0, 0, 6, moving}};
+        break;
+    case MobType::Enderman:
+        parts = {{-4, 38, -4, 8, 8, 8, 0, 0, 42, 0},
+                 {-4, 26, -2, 8, 12, 4, 16, 16, 32, 0},
+                 {-6, 2, -2, 2, 34, 2, 40, 16, 36, moving},
+                 {4, 2, -2, 2, 34, 2, 40, 16, 36, -moving},
+                 {-2, 0, -2, 2, 26, 2, 0, 16, 13, moving},
+                 {0, 0, -2, 2, 26, 2, 0, 16, 13, -moving}};
+        break;
+    case MobType::Skeleton:
+    case MobType::Zombie:
+    default:
+        parts = {{-4, 24, -4, 8, 8, 8, 0, 0, 24, 0},
+                 {-4, 12, -2, 8, 12, 4, 16, 16, 12, 0},
+                 {-8, 12, -2, 4, 12, 4, 40, 16, 23, XM_PIDIV2},
+                 {4, 12, -2, 4, 12, 4, 40, 16, 23, XM_PIDIV2},
+                 {-4, 0, -2, 4, 12, 4, 0, 16, 12, moving},
+                 {0, 0, -2, 4, 12, 4, 0, 16, 12, -moving}};
+        break;
+    }
+}
+
 static void DrawZombies() {
-    if (gZombies.empty() || !gZombieVB || !gGui.texZombie.srv) return;
-    std::vector<MeshVertex> vertices;
+    if (gZombies.empty() || !gZombieVB) return;
+    static std::vector<MeshVertex> vertices;
+    static std::vector<MobPart> parts;
+    vertices.clear();
     vertices.reserve(gZombies.size() * 216);
-    for (const Zombie& zombie : gZombies) {
-        if (zombie.health <= 0) continue;
-        const float cy = cosf(zombie.yaw), sy = sinf(zombie.yaw);
-        const bool hurt = zombie.resistance.remaining > 0.5f;
-        auto box = [&](float x, float y, float z, float w, float h, float d,
-                       float u, float v, float pivotY, float rotation) {
-            const float corners[8][3] = {{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
-                {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
-            const int faces[6][4] = {{0,1,2,3},{5,4,7,6},{4,0,3,7},{1,5,6,2},{3,2,6,7},{4,5,1,0}};
-            const float uv[6][4] = {{u+d,v+d,w,h},{u+2*d+w,v+d,w,h},{u,v+d,d,h},
-                {u+d+w,v+d,d,h},{u+d,v,w,d},{u+d+w,v,w,d}};
-            const int triangles[6] = {0,1,2,0,2,3};
-            const float cr = cosf(rotation), sr = sinf(rotation);
-            for (int face = 0; face < 6; ++face) {
-                for (int index : triangles) {
-                    const float* p = corners[faces[face][index]];
-                    const float localY = pivotY + (p[1] - pivotY) * cr - p[2] * sr;
-                    const float localZ = (p[1] - pivotY) * sr + p[2] * cr;
-                    const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
-                    const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
-                    vertices.push_back({zombie.body.x + (cy * p[0] - sy * localZ) / 16,
-                        zombie.body.y + localY / 16, zombie.body.z + (sy * p[0] + cy * localZ) / 16,
-                        0, 0, tu / 64, tv / 64, face == 4 ? 15.0f : 12.0f, 1, hurt ? 0.35f : 1.0f, hurt ? 0.35f : 1.0f});
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->PSSetShader(gRC.psEntity);
+    for (int t = 0; t < int(MobType::Count); ++t) {
+        const GuiTexture& tex = gGui.texMob[t];
+        if (!tex.srv) continue;
+        const float tw = float(tex.w > 0 ? tex.w : 64), th = float(tex.h > 0 ? tex.h : 32);
+        vertices.clear();
+        for (const Zombie& zombie : gZombies) {
+            if (zombie.health <= 0 || zombie.type != MobType(t)) continue;
+            const float cy = cosf(zombie.yaw), sy = sinf(zombie.yaw);
+            const bool hurt = zombie.resistance.remaining > 0.5f;
+            const float moving = fabsf(zombie.body.vx) + fabsf(zombie.body.vz) > 0.1f
+                ? sinf(gTimeSec * 5) * 0.5f : 0.0f;
+            MobParts(zombie.type, moving, parts);
+            for (const MobPart& part : parts) {
+                const float x = part.x, y = part.y, z = part.z, w = part.w, h = part.h, d = part.d;
+                const float u = part.u, v = part.v, pivotY = part.pivot, rotation = part.rot;
+                const float corners[8][3] = {{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
+                    {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
+                const int faces[6][4] = {{0,1,2,3},{5,4,7,6},{4,0,3,7},{1,5,6,2},{3,2,6,7},{4,5,1,0}};
+                const float uv[6][4] = {{u+d,v+d,w,h},{u+2*d+w,v+d,w,h},{u,v+d,d,h},
+                    {u+d+w,v+d,d,h},{u+d,v,w,d},{u+d+w,v,w,d}};
+                const int triangles[6] = {0,1,2,0,2,3};
+                const float cr = cosf(rotation), sr = sinf(rotation);
+                for (int face = 0; face < 6; ++face) {
+                    for (int index : triangles) {
+                        const float* p = corners[faces[face][index]];
+                        const float localY = pivotY + (p[1] - pivotY) * cr - p[2] * sr;
+                        const float localZ = (p[1] - pivotY) * sr + p[2] * cr;
+                        const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
+                        const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
+                        vertices.push_back({zombie.body.x + (cy * p[0] - sy * localZ) / 16,
+                            zombie.body.y + localY / 16, zombie.body.z + (sy * p[0] + cy * localZ) / 16,
+                            0, 0, tu / tw, tv / th, face == 4 ? 15.0f : 12.0f,
+                            1, hurt ? 0.35f : 1.0f, hurt ? 0.35f : 1.0f});
+                    }
                 }
             }
-        };
-        const float moving = fabsf(zombie.body.vx) + fabsf(zombie.body.vz) > 0.1f ? sinf(gTimeSec * 5) * 0.5f : 0;
-        box(-4,24,-4,8,8,8,0,0,24,0);
-        box(-4,12,-2,8,12,4,16,16,12,0);
-        box(-8,12,-2,4,12,4,40,16,23,XM_PIDIV2);
-        box(4,12,-2,4,12,4,40,16,23,XM_PIDIV2);
-        box(-4,0,-2,4,12,4,0,16,12,moving);
-        box(0,0,-2,4,12,4,0,16,12,-moving);
+        }
+        if (vertices.empty()) continue;
+        void* data = nullptr;
+        if (FAILED(gZombieVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+        memcpy(data, vertices.data(), vertices.size() * sizeof(MeshVertex));
+        gZombieVB->Unmap();
+        gRC.device->PSSetShaderResources(0, 1, &tex.srv);
+        gRC.device->IASetVertexBuffers(0, 1, &gZombieVB, &stride, &offset);
+        gRC.device->Draw(UINT(vertices.size()), 0);
     }
-    if (vertices.empty()) return;
+}
+
+// Vanilla overworld clouds: a 256x256 alpha texture stretched over 12-block
+// cells (3072 blocks per texture repeat), 4 blocks thick at y=192, drifting
+// east at 0.03 blocks/tick. The point sampler uses CLAMP, so the plane is
+// built from 2x2 aligned texture-repeat quads around the eye.
+static void DrawClouds(float eyeX, float eyeY, float eyeZ) {
+    if (gDimension != 0 || !gGui.texClouds.srv || !gZombieVB || eyeY < 0.0f) return;
+    const float span = 3072.0f;
+    const double ticks = double(gWorldClock.Ticks()) + double(gWorldClock.Fraction());
+    const float drift = float(fmod(ticks * 0.03, double(span)));
+    const float startX = floorf((eyeX - drift) / span) * span - span + drift;
+    const float startZ = floorf(eyeZ / span) * span - span;
+    static std::vector<MeshVertex> vertices;
+    vertices.clear();
+    vertices.reserve(96);
+    const float bottom = 192.0f, top = 196.0f;
+    for (int iz = 0; iz < 2; ++iz) {
+        for (int ix = 0; ix < 2; ++ix) {
+            const float x0 = startX + ix * span, x1 = x0 + span;
+            const float z0 = startZ + iz * span, z1 = z0 + span;
+            const float corners[4][2] = {{x0, z0}, {x1, z0}, {x1, z1}, {x0, z1}};
+            const float uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+            const int order[6] = {0, 1, 2, 0, 2, 3};
+            for (int face = 0; face < 2; ++face) {
+                const float y = face == 0 ? top : bottom;
+                const float shade = face == 0 ? 15.0f : 13.0f;
+                for (int k : order) {
+                    vertices.push_back({corners[k][0], y, corners[k][1], 0, 0,
+                        uv[k][0], uv[k][1], shade, 1, 1, 1});
+                }
+            }
+        }
+    }
     void* data = nullptr;
     if (FAILED(gZombieVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
     memcpy(data, vertices.data(), vertices.size() * sizeof(MeshVertex));
     gZombieVB->Unmap();
-    gRC.device->PSSetShader(gRC.psEntity);
-    gRC.device->PSSetShaderResources(0, 1, &gGui.texZombie.srv);
     const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->PSSetShader(gRC.psEntity);
+    gRC.device->PSSetShaderResources(0, 1, &gGui.texClouds.srv);
     gRC.device->IASetVertexBuffers(0, 1, &gZombieVB, &stride, &offset);
+    gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+    gRC.device->OMSetDepthStencilState(gRC.depthReadOnly, 0);
     gRC.device->Draw(UINT(vertices.size()), 0);
 }
 
@@ -2489,7 +2687,7 @@ static void DrawHand() {
     memcpy(data, vertices.data(), vertices.size() * sizeof(MeshVertex));
     gZombieVB->Unmap();
     const XMMATRIX proj = XMMatrixPerspectiveFovRH(
-        gSettings.fov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.05f, 10.0f);
+        gSettings.fov * gZoom * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.05f, 10.0f);
     SetViewProj(gRC, proj);
     gRC.device->PSSetShader(gRC.psEntity);
     gRC.device->PSSetShaderResources(0, 1, &gGui.texSkin.srv);
@@ -2568,7 +2766,7 @@ static void DrawWorld() {
     const XMVECTOR at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
     const XMMATRIX view = XMMatrixLookAtRH(eye, at, XMVectorSet(0, 1, 0, 0));
     static float sFov = 70.0f;
-    const float targetFov = gSettings.fov * (gBody.sprinting ? 1.12f : 1.0f);
+    const float targetFov = gSettings.fov * (gBody.sprinting ? 1.12f : 1.0f) * gZoom;
     sFov += (targetFov - sFov) * 0.15f;
     const XMMATRIX proj = XMMatrixPerspectiveFovRH(
         sFov * 0.01745329f, float(SCREEN_W) / float(SCREEN_H), 0.1f, 1000.0f);
@@ -2626,6 +2824,7 @@ static void DrawWorld() {
     DrawZombies();
     DrawPlayer();
     DrawHand();
+    DrawClouds(eyeX, eyeY, eyeZ);
     SetViewProj(gRC, vp, fogDist, &sky, 1.0f, 0.0f, waterTime);
     gRC.device->PSSetShader(gRC.psWater);
     gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);

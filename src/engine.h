@@ -309,15 +309,48 @@ struct HurtResistance {
     float Apply(float damage);
 };
 
-struct Zombie {
+enum class MobType {
+    Zombie, Pig, Cow, Sheep, Chicken, Creeper, Skeleton, Spider, Enderman, Count
+};
+
+// Java 26.3 base attributes. drop/drop2 are resource names resolved against the
+// JAR registry at kill time (empty = no drop).
+struct MobStats {
+    const char* id;
+    const char* name;
+    float health;
+    float speed;
+    float height;
+    float halfWidth;
+    float attackDamage; // 0 for passive mobs
+    bool hostile;
+    const char* drop;
+    int dropMin;
+    int dropMax;
+    const char* drop2;
+    int drop2Min;
+    int drop2Max;
+};
+
+const MobStats& GetMobStats(MobType type);
+const char* MobId(MobType type);
+const char* MobName(MobType type);
+bool ParseMobId(const std::string& name, MobType& type);
+
+struct Mob {
+    MobType type = MobType::Zombie;
     PlayerBody body;
     HurtResistance resistance;
     float health = 20, yaw = 0, attackDelay = 0;
+    float wanderTimer = 0, wanderYaw = 0;
+    float fuse = -1; // creeper ignition countdown, < 0 when idle
     bool passive = false;
-    Zombie() { body.walkSpeed = 1.3f; body.flying = false; }
+    Mob() { SetType(MobType::Zombie); }
+    void SetType(MobType type);
     void Update(float dt, const PlayerBody& player, const std::function<uint8_t(int, int, int)>& getBlock);
     float Hit(float damage, float knockX, float knockZ);
 };
+using Zombie = Mob;
 bool RayHitsBody(const FlyCamera& camera, const PlayerBody& body, float reach, float& distance);
 
 // Minecraft 1.9+ attack cooldown: swing recharge gates damage.

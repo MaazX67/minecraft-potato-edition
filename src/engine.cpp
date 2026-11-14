@@ -3,6 +3,7 @@
 #include "registry.h"
 #include "json.hpp"
 #include <algorithm>
+#include <cctype>
 #include <limits>
 #include <stdexcept>
 
@@ -830,25 +831,98 @@ float HurtResistance::Apply(float damage) {
     return damage;
 }
 
-void Zombie::Update(float dt, const PlayerBody& player, const std::function<uint8_t(int, int, int)>& getBlock) {
+namespace {
+const MobStats kMobStats[int(MobType::Count)] = {
+    {"zombie", "Zombie", 20, 1.30f, 1.95f, 0.30f, 3, true, "rotten_flesh", 0, 2, "", 0, 0},
+    {"pig", "Pig", 10, 1.00f, 0.90f, 0.45f, 0, false, "porkchop", 1, 3, "", 0, 0},
+    {"cow", "Cow", 10, 0.95f, 1.40f, 0.45f, 0, false, "beef", 1, 3, "leather", 0, 2},
+    {"sheep", "Sheep", 8, 1.00f, 1.30f, 0.45f, 0, false, "mutton", 1, 2, "white_wool", 1, 1},
+    {"chicken", "Chicken", 4, 0.90f, 0.70f, 0.20f, 0, false, "chicken", 1, 1, "feather", 0, 2},
+    {"creeper", "Creeper", 20, 1.15f, 1.70f, 0.30f, 0, true, "gunpowder", 0, 2, "", 0, 0},
+    {"skeleton", "Skeleton", 20, 1.20f, 1.95f, 0.30f, 2, true, "bone", 0, 2, "arrow", 0, 2},
+    {"spider", "Spider", 16, 1.35f, 0.90f, 0.70f, 2, true, "string", 0, 2, "", 0, 0},
+    {"enderman", "Enderman", 40, 1.45f, 2.90f, 0.30f, 7, true, "ender_pearl", 0, 1, "", 0, 0},
+};
+} // namespace
+
+const MobStats& GetMobStats(MobType type) {
+    const int index = int(type);
+    if (index < 0 || index >= int(MobType::Count)) return kMobStats[0];
+    return kMobStats[index];
+}
+
+const char* MobId(MobType type) { return GetMobStats(type).id; }
+const char* MobName(MobType type) { return GetMobStats(type).name; }
+
+bool ParseMobId(const std::string& name, MobType& type) {
+    std::string id = name;
+    if (id.rfind("minecraft:", 0) == 0) id = id.substr(10);
+    for (char& c : id) c = char(tolower(uint8_t(c)));
+    for (int i = 0; i < int(MobType::Count); ++i) {
+        if (id == kMobStats[i].id) { type = MobType(i); return true; }
+    }
+    return false;
+}
+
+void Mob::SetType(MobType value) {
+    type = value;
+    const MobStats& stats = GetMobStats(value);
+    health = stats.health;
+    passive = !stats.hostile;
+    body.walkSpeed = stats.speed;
+    body.flying = false;
+    fuse = -1;
+    attackDelay = 0;
+    wanderTimer = 0;
+}
+
+void Mob::Update(float dt, const PlayerBody& player, const std::function<uint8_t(int, int, int)>& getBlock) {
     resistance.Advance(dt);
     attackDelay = std::max(0.0f, attackDelay - dt);
     if (health <= 0) return;
     InputState input;
     FlyCamera camera;
     const float dx = player.x - body.x, dz = player.z - body.z;
-    if (!passive) {
+    const float distance2 = dx * dx + dz * dz;
+    const MobStats& stats = GetMobStats(type);
+    if (passive) {
+        // Java-pig-style calm wander: pick a heading every few seconds and
+        // flee briefly after taking damage.
+        wanderTimer -= dt;
+        if (wanderTimer <= 0) {
+            wanderTimer = 2.0f + float(int(body.x * 7 + body.z * 13) & 7) * 0.5f;
+            wanderYaw = float(int(body.z * 31 - body.x * 17) % 628) * 0.01f;
+            input.keys['W'] = (int(body.x + body.z) & 3) != 0;
+        }
+        if (resistance.remaining > 1.0f && distance2 < 16 * 16) {
+            yaw = atan2f(-dx, dz);
+            input.keys['W'] = true;
+        } else {
+            yaw = wanderYaw;
+        }
+        if (input.keys['W'] && body.onGround &&
+            BodyHits(getBlock, body.x + sinf(yaw) * 0.5f, body.y, body.z - cosf(yaw) * 0.5f))
+            input.keys[VK_SPACE] = true;
+    } else {
         yaw = atan2f(dx, -dz);
-        const float distance2 = dx * dx + dz * dz;
-        input.keys['W'] = distance2 > 1.5f * 1.5f && distance2 < 32 * 32;
+        const float reach = type == MobType::Skeleton ? 14.0f : 32.0f;
+        input.keys['W'] = distance2 > 1.5f * 1.5f && distance2 < reach * reach;
         if (input.keys['W'] && body.onGround && BodyHits(getBlock, body.x + sinf(yaw) * 0.5f, body.y,
                                                        body.z - cosf(yaw) * 0.5f)) input.keys[VK_SPACE] = true;
+        if (type == MobType::Creeper) {
+            if (distance2 < 3.0f * 3.0f) {
+                fuse = fuse < 0 ? 1.5f : fuse - dt;
+            } else if (fuse > 0) {
+                fuse = std::min(1.5f, fuse + dt * 2.0f);
+            }
+        }
     }
+    (void)stats;
     camera.yaw = yaw;
     body.Update(input, dt, camera, getBlock);
 }
 
-float Zombie::Hit(float damage, float knockX, float knockZ) {
+float Mob::Hit(float damage, float knockX, float knockZ) {
     if (health <= 0) return 0;
     const float applied = resistance.Apply(damage);
     if (applied <= 0) return 0;

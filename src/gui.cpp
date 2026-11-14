@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 namespace potato {
 
@@ -174,6 +175,31 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     }
 
     texZombie = LoadGui(rc, store, "minecraft/textures/entity/zombie/zombie.png");
+    auto loadEntity = [&](std::initializer_list<const char*> paths) {
+        for (const char* path : paths) {
+            std::vector<uint8_t> bytes, px;
+            GuiTexture t;
+            if (store.ReadFile(path, bytes) && DecodePNGAny(bytes, px, t.w, t.h)) {
+                t.srv = CreateTextureSRV(rc, px.data(), t.w, t.h);
+                if (t.srv) return t;
+            }
+        }
+        return LoadGui(rc, store, *paths.begin());
+    };
+    texMob[int(MobType::Zombie)]   = texZombie;
+    texMob[int(MobType::Pig)]      = loadEntity({"minecraft/textures/entity/pig/pig.png",
+                                                 "minecraft/textures/entity/pig/temperate/pig.png"});
+    texMob[int(MobType::Cow)]      = loadEntity({"minecraft/textures/entity/cow/temperate/cow.png",
+                                                 "minecraft/textures/entity/cow/cow.png"});
+    texMob[int(MobType::Sheep)]    = loadEntity({"minecraft/textures/entity/sheep/sheep.png"});
+    texMob[int(MobType::Chicken)]  = loadEntity({"minecraft/textures/entity/chicken/chicken.png",
+                                                 "minecraft/textures/entity/chicken/temperate/chicken.png"});
+    texMob[int(MobType::Creeper)]  = loadEntity({"minecraft/textures/entity/creeper/creeper.png"});
+    texMob[int(MobType::Skeleton)] = loadEntity({"minecraft/textures/entity/skeleton/skeleton.png"});
+    texMob[int(MobType::Spider)]   = loadEntity({"minecraft/textures/entity/spider/spider.png"});
+    texMob[int(MobType::Enderman)] = loadEntity({"minecraft/textures/entity/enderman/enderman.png"});
+    texClouds = loadEntity({"minecraft/textures/environment/clouds.png",
+                            "minecraft/textures/environment/clouds/clouds.png"});
 
     D3D10_BUFFER_DESC bd = {};
     bd.ByteWidth = VB_VERTS * UINT(sizeof(MeshVertex));
@@ -189,13 +215,17 @@ void GuiRenderer::Shutdown() {
                         &texWhite, &texBlack, &texAttackBg, &texAttackProgress, &texPanoramaOverlay,
                         &texSlider, &texSliderHi, &texSliderHandle, &texSliderHandleHi,
                         &texInvBg, &texCraftBg, &texFurnaceBg, &texChestBg, &texMenuBg, &texHeaderSeparator, &texFooterSeparator,
-                        &texTab, &texTabHi, &texTabSelected, &texTabSelectedHi, &texSkin, &texZombie,
+                        &texTab, &texTabHi, &texTabSelected, &texTabSelectedHi, &texSkin, &texClouds,
                         &texHeart[0], &texHeart[1], &texHeart[2],
                         &texFood[0], &texFood[1], &texFood[2],
                         &texArmor[0], &texArmor[1], &texArmor[2]};
     for (GuiTexture* t : all) {
         if (t->srv) { t->srv->Release(); t->srv = nullptr; }
     }
+    for (GuiTexture& t : texMob) {
+        if (t.srv) { t.srv->Release(); t.srv = nullptr; }
+    }
+    texZombie = {};
     for (GuiTexture& t : texItemIcon) {
         if (t.srv) { t.srv->Release(); t.srv = nullptr; }
     }

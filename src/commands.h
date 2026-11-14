@@ -24,7 +24,7 @@ public:
     virtual bool GiveItem(const std::string& item, int count, std::string& givenName) = 0;
     virtual bool LocateBiome(const std::string& biome, int& x, int& z, int& distance) = 0;
     // Returns the number spawned, -1 for an unknown entity id.
-    virtual int Summon(const std::string& entity, int count) = 0;
+    virtual int Summon(const std::string& entity, int count, std::string& spawnedName) = 0;
     // Returns entities killed, -1 for an unknown target.
     virtual int KillEntities(const std::string& target) = 0;
     virtual int ClearInventory() = 0;

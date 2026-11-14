@@ -831,6 +831,46 @@ static bool ClimateColumnsValid(const std::vector<uint8_t>& blocks, const Perlin
     return valid;
 }
 
+static void TestMobCatalog() {
+    for (int i = 0; i < int(MobType::Count); ++i) {
+        const MobType type = MobType(i);
+        MobType parsed;
+        CHECK(ParseMobId(MobId(type), parsed) && parsed == type, "every mob id round-trips through the parser");
+        const MobStats& stats = GetMobStats(type);
+        CHECK(stats.health > 0 && stats.speed > 0 && stats.height > 0 && stats.drop[0] && stats.name[0],
+              "mob stats carry vanilla health/speed/height/drops");
+    }
+    MobType parsed;
+    CHECK(ParseMobId("minecraft:pig", parsed) && parsed == MobType::Pig, "namespaced mob ids are accepted");
+    CHECK(!ParseMobId("dragon", parsed), "unknown entities are rejected");
+    CHECK(GetMobStats(MobType::Pig).health == 10 && !GetMobStats(MobType::Pig).hostile &&
+          std::string(GetMobStats(MobType::Pig).drop) == "porkchop" &&
+          GetMobStats(MobType::Cow).drop2[0] &&
+          GetMobStats(MobType::Enderman).health == 40 && GetMobStats(MobType::Enderman).hostile,
+          "key vanilla attributes and drops match Java (pig 10, enderman 40)");
+    Mob chicken;
+    chicken.SetType(MobType::Chicken);
+    CHECK(chicken.health == 4 && chicken.passive && Near(chicken.body.walkSpeed, 0.9f),
+          "SetType applies per-mob health, temperament and speed");
+    auto ground = [](int, int y, int) -> uint8_t { return y >= 0 && y < 64 ? BLOCK_STONE : BLOCK_AIR; };
+    PlayerBody player;
+    player.x = 40; player.y = 64; player.z = 0;
+    chicken.body.x = 0; chicken.body.y = 64; chicken.body.z = 0; chicken.body.onGround = true;
+    for (int i = 0; i < 60; ++i) chicken.Update(1.0f / 60.0f, player, ground);
+    CHECK(chicken.health == 4 && chicken.body.y >= 63.9f, "passive mobs wander without chasing the player");
+    Mob creeper;
+    creeper.SetType(MobType::Creeper);
+    creeper.body.x = 0.5f; creeper.body.y = 64; creeper.body.z = 0.5f; creeper.body.onGround = true;
+    player.x = 1.0f;
+    bool armed = false, exploded = false;
+    for (int i = 0; i < 240; ++i) {
+        creeper.Update(1.0f / 60.0f, player, ground);
+        armed = armed || creeper.fuse >= 0;
+        exploded = exploded || creeper.fuse <= 0;
+    }
+    CHECK(armed && exploded, "creepers ignite near the player and finish their fuse");
+}
+
 static void TestClimateGeneration() {
     const WorldGenerator generators[] = {WorldGenerator::Legacy, WorldGenerator::Climate, WorldGenerator::Flat, WorldGenerator::Nether};
     const char* names[] = {"potato-perlin-v1", "potato-climate-v2", "potato-flat-v1", "potato-nether-v1"};
@@ -1261,13 +1301,16 @@ public:
         x = -176; z = 288; distance = 336;
         return true;
     }
-    int Summon(const std::string& entity, int count) override {
-        if (entity != "zombie") return -1;
+    int Summon(const std::string& entity, int count, std::string& name) override {
+        MobType type;
+        if (!ParseMobId(entity, type)) return -1;
+        name = MobName(type);
         summoned += count;
         return count;
     }
     int KillEntities(const std::string& target) override {
-        if (target != "player" && target != "@s" && target != "zombie" && target != "@e") return -1;
+        MobType type;
+        if (target != "player" && target != "@s" && target != "@e" && !ParseMobId(target, type)) return -1;
         return kills;
     }
     int ClearInventory() override { return cleared; }
@@ -1340,6 +1383,8 @@ static void TestChatCommands() {
 
     r = run("/summon zombie 2");
     CHECK(r.ok && host.summoned == 2 && has(r.lines[0], "Zombie"), "summon spawns zombies");
+    r = run("/summon pig 3");
+    CHECK(r.ok && has(r.lines[0], "Summoned new Pig") && host.summoned == 5, "summon supports every vanilla mob");
     CHECK(run("/summon dragon").error, "unknown entities are rejected");
 
     CHECK(run("/kill").ok && host.kills == 3, "kill targets the player by default");
@@ -1471,6 +1516,7 @@ int main() {
     TestDamagedInventory();
     TestMiningAndDurability();
     TestHurtAndZombies();
+    TestMobCatalog();
     TestClimateGeneration();
     TestBlockExpansion();
     TestHeldItemMesh();
