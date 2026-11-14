@@ -3246,7 +3246,9 @@ static void BuildLodMesh(float eyeX, float eyeZ, std::vector<MeshVertex>& out) {
         MeshVertex v;
         v.x = float(baseX + i * cell);
         v.z = float(baseZ + j * cell);
-        v.y = water ? float(LOD_SEA_TOP) : float(c.height + 1);
+        // Sit just under the true chunk surface; combined with the rasterizer
+        // depth bias this guarantees chunk geometry wins every coplanar test.
+        v.y = (water ? float(LOD_SEA_TOP) : float(c.height + 1)) - 0.05f;
         tileOrigin(tile, v.tu, v.tv);
         v.u = v.x;
         v.v = v.z;
