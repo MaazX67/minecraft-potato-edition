@@ -638,6 +638,7 @@ void GenerateNetherChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t see
             }
         }
     }
+    ApplyStructures(blocks, noise, seed, cx, cz, true);
 }
 
 void GenerateClimateChunk(uint8_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz,
