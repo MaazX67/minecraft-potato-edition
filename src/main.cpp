@@ -1935,7 +1935,7 @@ static void HandleGameFrame(float dt) {
     for (const Zombie& mob : gZombies) {
         if (mob.health > 0) continue;
         DropMobLoot(mob);
-        const int sound = mob.type == MobType::Zombie ? SND_ZOMBIE_DEATH : SND_HIT;
+        const SoundCat sound = mob.type == MobType::Zombie ? SND_ZOMBIE_DEATH : SND_HIT;
         gSound.PlayAt(sound, mob.body.x, mob.body.y, mob.body.z);
     }
     gZombies.erase(std::remove_if(gZombies.begin(), gZombies.end(), [](const Zombie& zombie) {
