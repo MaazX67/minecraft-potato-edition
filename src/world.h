@@ -25,6 +25,7 @@ struct MeshVertex {
     float u, v;       // local UV in block units (greedy tiling via frac in PS)
     float light;      // raw 0..15
     float cr, cg, cb; // vertex tint (1,1,1 = untinted; GUI text colors)
+    float sky = 0;    // raw 0..15 sky light (world meshes; 0 elsewhere)
 };
 
 struct MeshData {

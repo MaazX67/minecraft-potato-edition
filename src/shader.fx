@@ -28,8 +28,9 @@ struct VSIn
     float3 pos   : POSITION;
     float2 tile  : TEXCOORD0;  // atlas tile origin in UV space (world only)
     float2 uv    : TEXCOORD1;  // world: block units across the merged quad; UI: 0..1
-    float  light : TEXCOORD2;  // raw 0..15 light level
+    float  light : TEXCOORD2;  // raw 0..15 block light level
     float3 color : COLOR;      // vertex tint (white = untinted)
+    float  sky   : TEXCOORD3;  // raw 0..15 sky light level (0 = not sky-lit)
 };
 
 struct PSIn
@@ -41,6 +42,7 @@ struct PSIn
     float3 tint  : TEXCOORD3;
     float3 dir   : TEXCOORD4;  // object-space direction (skybox only)
     float fogDepth : TEXCOORD5;
+    float skylight : TEXCOORD6;
 };
 
 PSIn VSMain(VSIn input)
@@ -53,7 +55,19 @@ PSIn VSMain(VSIn input)
     o.tint  = input.color;
     o.dir   = input.pos;
     o.fogDepth = o.pos.w;
+    o.skylight = input.sky / 15.0f;
     return o;
+}
+
+// Java's 2D lightmap: block light and sky light are independent channels,
+// combined per fragment with max(), then scaled by the daylight factor and
+// the per-dimension light color (gLightColorOpacity.rgb).
+float3 CombineLight(float blockLight, float skyLight)
+{
+    float l = max(blockLight, skyLight);
+    float3 light = saturate(l * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
+    float3 dark = 1.0f - light;
+    return lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
 }
 
 // World pass: repeat the 16x16 tile across merged greedy quads.
@@ -71,9 +85,7 @@ float4 PSMain(PSIn input) : SV_TARGET
     float2 atlasUV = input.tile + (floor(frac(input.uv) * tileSize) + 0.5f) * scale / 1024.0f;
     float4 tex = gAtlas.SampleLevel(gPoint, atlasUV, lod);
     clip(tex.a - 0.5f);
-    float3 light = saturate(input.shade * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
-    float3 dark = 1.0f - light;
-    light = lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
+    float3 light = CombineLight(input.shade, input.skylight);
     float3 col = tex.rgb * light * input.tint;
     float fog = 0.0f;
     if (gFogEnd > 0.0f) fog = smoothstep(gFogStart, gFogEnd, input.fogDepth);
@@ -94,9 +106,7 @@ float4 PSMainWater(PSIn input) : SV_TARGET
     float tileSize = 16.0f / scale;
     float2 atlasUV = input.tile + (floor(frac(uv) * tileSize) + 0.5f) * scale / 1024.0f;
     float4 tex = gAtlas.SampleLevel(gPoint, atlasUV, lod);
-    float3 light = saturate(input.shade * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
-    float3 dark = 1.0f - light;
-    light = lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
+    float3 light = CombineLight(input.shade, input.skylight);
     float3 col = tex.rgb * light * input.tint;
     float fog = 0.0f;
     if (gFogEnd > 0.0f) fog = smoothstep(gFogStart, gFogEnd, input.fogDepth);

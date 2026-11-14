@@ -144,8 +144,9 @@ bool InitRenderer(HWND hwnd, RenderContext& rc, const char* shaderSource) {
         {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    0, 20, D3D10_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 2, DXGI_FORMAT_R32_FLOAT,       0, 28, D3D10_INPUT_PER_VERTEX_DATA, 0},
         {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D10_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 3, DXGI_FORMAT_R32_FLOAT,       0, 44, D3D10_INPUT_PER_VERTEX_DATA, 0},
     };
-    hr = rc.device->CreateInputLayout(elems, 5, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(),
+    hr = rc.device->CreateInputLayout(elems, 6, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(),
                                       &rc.layout);
     vsBlob->Release();
     if (FAILED(hr)) return false;

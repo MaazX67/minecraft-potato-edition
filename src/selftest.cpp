@@ -1631,6 +1631,45 @@ int main() {
         CheckBoxMesh(merged, 3, 60, 4, 6, 65, 11);
     }
 
+    // --- Sky lightmap vertex channel ---
+    {
+        std::vector<uint8_t> lit(CHUNK_VOL, BLOCK_AIR);
+        for (int z = 0; z < CHUNK_Z; ++z)
+            for (int x = 0; x < CHUNK_X; ++x)
+                lit[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * 64] = BLOCK_STONE;
+        MeshData openSky;
+        BuildChunkMeshCPU(lit.data(), nullptr, nullptr, nullptr, nullptr, tiles, openSky);
+        int openTop = 0, openTopSky = 0;
+        for (const MeshVertex& v : openSky.vertices) {
+            if (v.y == 65.0f) {
+                ++openTop;
+                if (v.sky == 15.0f) ++openTopSky;
+            }
+        }
+        CHECK(openTop == 4 && openTopSky == 4,
+              "open-sky surface quads carry full skylight (15)");
+
+        for (int z = 0; z < CHUNK_Z; ++z)
+            for (int x = 0; x < CHUNK_X; ++x)
+                lit[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * 70] = BLOCK_STONE;
+        MeshData roofed;
+        BuildChunkMeshCPU(lit.data(), nullptr, nullptr, nullptr, nullptr, tiles, roofed);
+        int roofTop = 0, roofTopSky = 0;
+        for (const MeshVertex& v : roofed.vertices) {
+            if (v.y == 65.0f) {
+                ++roofTop;
+                if (v.sky == 0.0f) ++roofTopSky;
+            }
+        }
+        CHECK(roofTop == 4 && roofTopSky == 4,
+              "faces under a solid roof receive zero skylight");
+        int roofSky = 0;
+        for (const MeshVertex& v : roofed.vertices) {
+            if (v.y == 71.0f && v.sky == 15.0f) ++roofSky;
+        }
+        CHECK(roofSky == 4, "roof top surface is fully sky-lit above the shadowed floor");
+    }
+
     // --- Raycast ---
     auto get = [&](int, int y, int) -> uint8_t {
         return (y >= 0 && y < CHUNK_Y) ? BLOCK_STONE : 0;

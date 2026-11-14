@@ -798,6 +798,27 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
         return blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
     };
 
+    // Sky light: per-column height of the highest solid cell. A face whose
+    // adjacent air cell sits above that height sees the full sky (15); faces
+    // under an overhang are shadowed. This feeds the shader's 2D lightmap so
+    // surface faces stay bright while cave interiors stay dark.
+    int heights[CHUNK_X * CHUNK_Z];
+    for (int z = 0; z < CHUNK_Z; ++z) {
+        for (int x = 0; x < CHUNK_X; ++x) {
+            int h = -1;
+            for (int y = CHUNK_Y - 1; y >= 0; --y) {
+                if (BLOCK_FLAGS[sample(x, y, z)] & BF_SOLID) { h = y; break; }
+            }
+            heights[x + CHUNK_X * z] = h;
+        }
+    }
+    auto skyAt = [&](int nx, int ny, int nz) -> float {
+        if (ny >= CHUNK_Y) return 15.0f;
+        if (ny < 0) return 0.0f;
+        if (nx < 0 || nx >= CHUNK_X || nz < 0 || nz >= CHUNK_Z) return 15.0f;
+        return ny > heights[nx + CHUNK_X * nz] ? 15.0f : 0.0f;
+    };
+
     for (int d = 0; d < 3; ++d) {
         const int u = (d + 1) % 3, v = (d + 2) % 3;
         int x[3] = {0, 0, 0}, q[3] = {0, 0, 0};
@@ -897,6 +918,14 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
                         }
                         vert.light = float(cell.light);
                         vert.cr = vert.cg = vert.cb = 1.0f;
+                        // Air cell on the face's normal side; p[d] is the
+                        // plane coordinate (opaque cell at p[d]-1 when sign>0).
+                        int ax = int(vert.x), ay = int(vert.y), az = int(vert.z);
+                        const int airCell = int(p[d]) + (cell.sign > 0 ? 0 : -1);
+                        if (d == 0) ax = airCell;
+                        else if (d == 1) ay = airCell;
+                        else az = airCell;
+                        vert.sky = skyAt(ax, ay, az);
                         dst.vertices.push_back(vert);
                     }
                     dst.indices.push_back(base);
