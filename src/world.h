@@ -116,7 +116,7 @@ private:
         mBits = newBits;
     }
     uint8_t mBits = 0;            // 0 = uniform, else 2/4/8 bits per index
-    uint8_t mUniform = BLOCK_AIR;
+    uint8_t mUniform = 0;         // 0 == BLOCK_AIR (world.h has no assets.h include)
     std::vector<uint8_t> mPalette;
     std::vector<uint32_t> mWords;
 };
