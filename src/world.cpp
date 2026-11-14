@@ -815,7 +815,9 @@ void BuildChunkMeshCPU(const uint8_t* blocks, const uint8_t* negX, const uint8_t
     auto skyAt = [&](int nx, int ny, int nz) -> float {
         if (ny >= CHUNK_Y) return 15.0f;
         if (ny < 0) return 0.0f;
-        if (nx < 0 || nx >= CHUNK_X || nz < 0 || nz >= CHUNK_Z) return 15.0f;
+        // Quad corners on the outer boundary (16) resolve to the edge column.
+        if (nx < 0) nx = 0; else if (nx >= CHUNK_X) nx = CHUNK_X - 1;
+        if (nz < 0) nz = 0; else if (nz >= CHUNK_Z) nz = CHUNK_Z - 1;
         return ny > heights[nx + CHUNK_X * nz] ? 15.0f : 0.0f;
     };
 
