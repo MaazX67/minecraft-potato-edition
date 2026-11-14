@@ -406,7 +406,7 @@ const char* CreativeTabName(int tab) {
 
 uint8_t CreativeTabIcon(int tab) {
     switch (tab) {
-        case CTAB_BUILDING: return BLOCK_BRICKS;
+        case CTAB_BUILDING: return BLOCK_BRICK;
         case CTAB_COLORED: return BLOCK_RED_WOOL;
         case CTAB_NATURAL: return BLOCK_GRASS;
         case CTAB_FUNCTIONAL: return BLOCK_CRAFTING_TABLE;
