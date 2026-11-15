@@ -59,13 +59,17 @@ PSIn VSMain(VSIn input)
     return o;
 }
 
-// Java's 2D lightmap: block light and sky light are independent channels,
-// combined per fragment with max(), then scaled by the daylight factor and
-// the per-dimension light color (gLightColorOpacity.rgb).
+// Java's light curve: block/sky light levels (0..15) map through a gamma
+// curve so caves and shadows fall off gradually instead of linearly.
+float JavaLightCurve(float l) {
+    l = saturate(l / 15.0f);
+    return 0.003921569f + 0.99607843f * l * l;
+}
+
 float3 CombineLight(float blockLight, float skyLight)
 {
-    float l = max(blockLight, skyLight);
-    float3 light = saturate(l * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
+    float l = JavaLightCurve(max(blockLight, skyLight));
+    float3 light = l * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f;
     float3 dark = 1.0f - light;
     return lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
 }
@@ -88,7 +92,7 @@ float4 PSMain(PSIn input) : SV_TARGET
     float3 light = CombineLight(input.shade, input.skylight);
     float3 col = tex.rgb * light * input.tint;
     float fog = 0.0f;
-    if (gFogEnd > 0.0f) fog = smoothstep(gFogStart, gFogEnd, input.fogDepth);
+    if (gFogEnd > 0.0f) fog = saturate((input.fogDepth - gFogStart) / max(gFogEnd - gFogStart, 0.001f));
     col = lerp(col, gFogColorStars.rgb, fog);
     return float4(col, tex.a);
 }
@@ -109,7 +113,7 @@ float4 PSMainWater(PSIn input) : SV_TARGET
     float3 light = CombineLight(input.shade, input.skylight);
     float3 col = tex.rgb * light * input.tint;
     float fog = 0.0f;
-    if (gFogEnd > 0.0f) fog = smoothstep(gFogStart, gFogEnd, input.fogDepth);
+    if (gFogEnd > 0.0f) fog = saturate((input.fogDepth - gFogStart) / max(gFogEnd - gFogStart, 0.001f));
     col = lerp(col, gFogColorStars.rgb, fog);
     return float4(col, tex.a);
 }
@@ -140,7 +144,7 @@ float4 PSMainEntity(PSIn input) : SV_TARGET
     float3 light = saturate(input.shade * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
     float3 dark = 1.0f - light;
     light = lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
-    float fog = gFogEnd > 0 ? smoothstep(gFogStart, gFogEnd, input.fogDepth) : 0;
+    float fog = gFogEnd > 0 ? saturate((input.fogDepth - gFogStart) / max(gFogEnd - gFogStart, 0.001f)) : 0;
     return float4(lerp(tex.rgb * light * input.tint, gFogColorStars.rgb, fog), tex.a);
 }
 

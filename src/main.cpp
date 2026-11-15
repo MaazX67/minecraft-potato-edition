@@ -3186,11 +3186,13 @@ static void DrawHand() {
             const float lz = p[2] / 16.0f * armScale;
             const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
             const float tv = uv[face][1] + (index < 2 ? 0 : uv[face][3]);
-            vertices.push_back({
-                shoulderX + sideX * lx + armX * ly + upX * lz,
-                shoulderY + armY * ly + upY * lz,
-                shoulderZ + sideZ * lx + armZ * ly + upZ * lz,
-                0, 0, tu / 64, tv / 64, 15, 1, 1, 1});
+            const float px = shoulderX + sideX * lx + armX * ly + upX * lz;
+            const float py = shoulderY + armY * ly + upY * lz;
+            const float pz = shoulderZ + sideZ * lx + armZ * ly + upZ * lz;
+            const float cp = cosf(gCamera.pitch), sp = sinf(gCamera.pitch);
+            const float ry = py * cp - pz * sp;
+            const float rz = py * sp + pz * cp;
+            vertices.push_back({px, ry, rz, 0, 0, tu / 64, tv / 64, 15, 1, 1, 1});
         }
     }
     void* data = nullptr;
@@ -3239,9 +3241,15 @@ static void DrawHand() {
                 const float rz = -sx * sy + sz * cy;
                 const float ry = syy * cp - rz * sp;
                 const float rz2 = syy * sp + rz * cp;
-                v.x = rx + 0.30f;
-                v.y = ry - 0.38f + swing * 0.10f + bob * 0.012f;
-                v.z = rz2 - 0.72f - swing * 0.08f;
+                float hx = rx + 0.30f;
+                float hy = ry - 0.38f + swing * 0.10f + bob * 0.012f;
+                float hz = rz2 - 0.72f - swing * 0.08f;
+                // Follow the camera pitch so the hand doesn't go through blocks
+                // when looking down.
+                const float ccp = cosf(gCamera.pitch), csp = sinf(gCamera.pitch);
+                const float hy2 = hy * ccp - hz * csp;
+                const float hz2 = hy * csp + hz * ccp;
+                v.x = hx; v.y = hy2; v.z = hz2;
             }
             void* hd = nullptr;
             if (SUCCEEDED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &hd))) {
