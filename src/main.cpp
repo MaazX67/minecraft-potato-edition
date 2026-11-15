@@ -2474,6 +2474,9 @@ static void HandleGameFrame(float dt) {
     static float sTickAcc = 0.0f;
     sTickAcc += dt;
     if (sTickAcc >= 0.05f) { sTickAcc -= 0.05f; RandomTickBlocks(); }
+    static float sRsAcc = 0.0f;
+    sRsAcc += dt;
+    if (sRsAcc >= 1.0f) { sRsAcc -= 1.0f; UpdateRedstone(); }
     gSound.SetListener(gCamera.x, gCamera.y, gCamera.z,
                        gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ,
                        gCamera.rightX, gCamera.rightZ);
@@ -2590,7 +2593,6 @@ static void HandleGameFrame(float dt) {
             } else {
                 gWorld->SetBlock(hx, hy, hz, BLOCK_AIR);
                 ++gBrokenBlocks;
-                UpdateRedstone();
                 if (gGameMode == 0) {
                     if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 2 : 1))
                         gSound.Play(SND_TOOL_BREAK);
@@ -2678,7 +2680,6 @@ static void HandleGameFrame(float dt) {
                 const uint16_t block = gHotbar[gHotbarSlot];
                 if (block == BLOCK_AIR || !IsBlockId(block) || (gGameMode == 0 && gInventory.slots[27 + gHotbarSlot].Empty())) return;
                 gWorld->SetBlock(px, py, pz, block);
-                UpdateRedstone();
                 if (gGameMode == 0) {
                     ItemSlot& s = gInventory.slots[27 + gHotbarSlot];
                     if (--s.count <= 0) s = ItemSlot{};
@@ -3751,6 +3752,83 @@ static void UpdateItemEntities(float dt) {
 static void UpdateRedstone() {
     gRedstonePower.clear();
     if (!gWorld) return;
+    // Only scan 4 chunks per call (rotating) to avoid frame hitches.
+    static size_t sCursor = 0;
+    std::vector<uint64_t> keys;
+    for (auto it = gGpu.begin(); it != gGpu.end(); ++it) keys.push_back(it->first);
+    if (keys.empty()) return;
+    std::vector<std::tuple<int,int,int>> sources, lamps;
+    bool anyLampPowered = false;
+    int processed = 0;
+    size_t start = sCursor % keys.size();
+    for (size_t i = 0; i < keys.size() && processed < 4; ++i) {
+        uint64_t key = keys[(start + i) % keys.size()];
+        int cx = KeyCX(key), cz = KeyCZ(key);
+        for (int lx = 0; lx < CHUNK_X; ++lx)
+            for (int lz = 0; lz < CHUNK_Z; ++lz)
+                for (int y = 0; y < CHUNK_Y; ++y) {
+                    int wx = cx * CHUNK_X + lx, wz = cz * CHUNK_Z + lz;
+                    uint16_t b = gWorld->GetBlock(wx, y, wz);
+                    if (b == BLOCK_AIR) continue;
+                    const char* nm = (b < BLOCK_COUNT) ? BLOCK_DEFS[b].name : nullptr;
+                    if (!nm) for (const RegistryBlockEntry& e : RegistryBlocks()) if (e.id == b) { nm = e.name.c_str(); break; }
+                    std::string nname = nm ? nm : "";
+                    if (nname == "redstone_block") sources.push_back({wx, y, wz});
+                    if (b == gRedstoneLampId) {
+                        lamps.push_back({wx, y, wz});
+                        if (gRedstonePower.count(RedstoneKey(wx, y, wz))) {} // placeholder
+                    }
+                }
+        ++processed;
+    }
+    sCursor = (sCursor + 4) % (keys.size() + 1);
+    // BFS (only if sources found)
+    if (!sources.empty()) {
+        std::deque<std::tuple<int,int,int,int>> q;
+        for (auto& s : sources) q.push_back({std::get<0>(s), std::get<1>(s), std::get<2>(s), 15});
+        const int dx[6] = {1,-1,0,0,0,0}, dy[6]={0,0,1,-1,0,0}, dz[6]={0,0,0,0,1,-1};
+        while (!q.empty()) {
+            auto [x,y,z,p] = q.front(); q.pop_front();
+            if (p <= 0) continue;
+            uint64_t k = RedstoneKey(x,y,z);
+            if (gRedstonePower.count(k) && gRedstonePower[k] >= (uint8_t)p) continue;
+            gRedstonePower[k] = (uint8_t)p;
+            for (int d = 0; d < 6; ++d) {
+                int nx = x+dx[d], ny = y+dy[d], nz = z+dz[d];
+                if (ny < 0 || ny >= CHUNK_Y) continue;
+                uint16_t nb = gWorld->GetBlock(nx, ny, nz);
+                bool canProp = (nb == BLOCK_AIR);
+                if (!canProp) {
+                    const char* nnm = (nb < BLOCK_COUNT) ? BLOCK_DEFS[nb].name : nullptr;
+                    if (!nnm) for (const RegistryBlockEntry& e : RegistryBlocks()) if (e.id == nb) { nnm = e.name.c_str(); break; }
+                    std::string nn = nnm ? nnm : "";
+                    if (nn == "redstone_lamp" || nn == "redstone_block") canProp = true;
+                }
+                if (!canProp) continue;
+                q.push_back({nx, ny, nz, p - 1});
+            }
+        }
+    }
+    // Lamp powered check (only among scanned lamps this round — approximate).
+    for (auto& lp : lamps)
+        if (gRedstonePower.count(RedstoneKey(std::get<0>(lp), std::get<1>(lp), std::get<2>(lp))) &&
+            gRedstonePower[RedstoneKey(std::get<0>(lp), std::get<1>(lp), std::get<2>(lp))] > 0)
+            anyLampPowered = true;
+    if (anyLampPowered != gLampPowered) {
+        gLampPowered = anyLampPowered;
+        if (gRedstoneLampId != 0 && gRedstoneLampOnTile > 0) {
+            int tile = anyLampPowered ? gRedstoneLampOnTile : gRedstoneLampOffTile;
+            gTiles.side[gRedstoneLampId] = gTiles.top[gRedstoneLampId] = gTiles.bottom[gRedstoneLampId] = tile;
+        }
+        for (auto& lp : lamps) {
+            gWorld->SetBlock(std::get<0>(lp), std::get<1>(lp), std::get<2>(lp), gRedstoneLampId);
+        }
+    }
+}
+
+static void RenderFrame() {
+    gRedstonePower.clear();
+    if (!gWorld) return;
     // Collect sources: redstone_block emits 15. (Lever/button/torch/wire handled
     // when their meshes land in M4; their state maps are ready.)
     std::vector<std::tuple<int,int,int>> sources;
@@ -3839,8 +3917,9 @@ static void UpdateRedstone() {
 static void RandomTickBlocks() {
     if (!gWorld) return;
     static std::mt19937 rng(12345);
-    // 3 random ticks per loaded chunk per call (Java: 3 per chunk per game tick).
-    for (auto it = gGpu.begin(); it != gGpu.end(); ++it) {
+    // Limit to 4 chunks per tick to avoid frame hitches.
+    int processed = 0;
+    for (auto it = gGpu.begin(); it != gGpu.end() && processed < 4; ++it, ++processed) {
         int cx = KeyCX(it->first), cz = KeyCZ(it->first);
         for (int t = 0; t < 3; ++t) {
             int lx = rng() % CHUNK_X;
@@ -3849,33 +3928,26 @@ static void RandomTickBlocks() {
             int wx = cx * CHUNK_X + lx, wz = cz * CHUNK_Z + lz;
             uint16_t b = gWorld->GetBlock(wx, y, wz);
             if (b == BLOCK_AIR) continue;
-            // Grass spread: dirt -> grass if exposed to sky light and adjacent grass.
             if (b == BLOCK_DIRT) {
-                // Check sky exposure (block above is air) and adjacent grass.
                 if (gWorld->GetBlock(wx, y + 1, wz) == BLOCK_AIR) {
                     bool adjacentGrass = false;
                     const int dx[4] = {1,-1,0,0}, dz[4] = {0,0,1,-1};
-                    for (int d = 0; d < 4; ++d) {
+                    for (int d = 0; d < 4; ++d)
                         if (gWorld->GetBlock(wx + dx[d], y, wz + dz[d]) == BLOCK_GRASS) { adjacentGrass = true; break; }
-                    }
-                    if (adjacentGrass && (rng() % 8) == 0) // Java: 1/8 chance (with light check omitted)
+                    if (adjacentGrass && (rng() % 8) == 0)
                         gWorld->SetBlock(wx, y, wz, BLOCK_GRASS);
                 }
-            }
-            // Leaf decay: leaves with no wood within 4 blocks decay.
-            else if (b == BLOCK_OAK_LEAVES || b == BLOCK_SPRUCE_LEAVES || b == BLOCK_BIRCH_LEAVES || b == BLOCK_CHERRY_LEAVES) {
-                // Simple: decay if no log within 4 (check 6 neighbors-ish). Use 1/64 chance.
+            } else if (b == BLOCK_OAK_LEAVES || b == BLOCK_SPRUCE_LEAVES || b == BLOCK_BIRCH_LEAVES || b == BLOCK_CHERRY_LEAVES) {
+                // Small radius check.
                 bool hasLog = false;
-                for (int dx = -4; dx <= 4 && !hasLog; ++dx)
-                    for (int dy = -4; dy <= 4 && !hasLog; ++dy)
-                        for (int dz = -4; dz <= 4 && !hasLog; ++dz) {
+                for (int dx = -3; dx <= 3 && !hasLog; ++dx)
+                    for (int dy = -3; dy <= 3 && !hasLog; ++dy)
+                        for (int dz = -3; dz <= 3 && !hasLog; ++dz) {
                             uint16_t nb = gWorld->GetBlock(wx + dx, y + dy, wz + dz);
                             if (nb == BLOCK_LOG || nb == BLOCK_SPRUCE_LOG || nb == BLOCK_BIRCH_LOG || nb == BLOCK_CHERRY_LOG) hasLog = true;
                         }
-                if (!hasLog && (rng() % 10) == 0) gWorld->SetBlock(wx, y, wz, BLOCK_AIR);
-            }
-            // Ice melting: ice -> water if light. Simplified: melt if block above is air and y > 63.
-            else if (b == BLOCK_ICE) {
+                if (!hasLog && (rng() % 16) == 0) gWorld->SetBlock(wx, y, wz, BLOCK_AIR);
+            } else if (b == BLOCK_ICE) {
                 if (y > 63 && gWorld->GetBlock(wx, y + 1, wz) == BLOCK_AIR && (rng() % 3) == 0)
                     gWorld->SetBlock(wx, y, wz, BLOCK_WATER);
             }

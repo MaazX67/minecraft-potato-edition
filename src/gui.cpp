@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <unordered_set>
 
 namespace potato {
 
@@ -1251,13 +1252,29 @@ void RebuildCreativeList() {
         // torches, ...) have no mesh yet: showing them in creative produces
         // blank slots that can never be placed. Keep them addressable (recipes,
         // /give, loot) but out of the creative grid until M4.
+    static std::unordered_set<uint16_t> sPlaceable;
+    static bool sBuilt = false;
+    if (!sBuilt) {
+        sPlaceable.clear();
+        for (const RegistryBlockEntry& entry : RegistryBlocks()) {
+            if (entry.fullCube && ItemIconTile(entry.id) >= 0)
+                sPlaceable.insert(entry.id);
+        }
+        sBuilt = true;
+    }
+    if (gCreativeListDirty) {
+        sPlaceable.clear();
+        for (const RegistryBlockEntry& entry : RegistryBlocks()) {
+            if (entry.fullCube && ItemIconTile(entry.id) >= 0)
+                sPlaceable.insert(entry.id);
+        }
+    }
+
+    for (int i = 1; i <= 0xFFFF; ++i) {
+        const uint16_t id = uint16_t(i);
+        if (!IsValidItem(id)) continue;
         if (id >= REGISTRY_ID_BASE) {
-            bool isRegistryBlock = false, fullCube = false;
-            for (const RegistryBlockEntry& entry : RegistryBlocks()) {
-                if (entry.id == id) { isRegistryBlock = true; fullCube = entry.fullCube; break; }
-            }
-            if (isRegistryBlock && !fullCube) continue;
-            if (ItemIconTile(id) < 0) continue; // no sprite -> blank slot
+            if (!sPlaceable.count(id)) continue;
         }
         if (gCreativeTab == CTAB_SEARCH) {
             if (!ItemMatchesSearch(id, gCreativeSearch)) continue;
@@ -1265,6 +1282,7 @@ void RebuildCreativeList() {
             continue;
         }
         gCreativeList.push_back(id);
+    }
     }
     gCreativeListDirty = false;
     if (gCreativeScroll > CreativeMaxScroll()) gCreativeScroll = CreativeMaxScroll();
