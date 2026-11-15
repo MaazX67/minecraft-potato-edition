@@ -73,6 +73,7 @@ hardcoded subsets**, proven by a probe that counts and hashes the loaded registr
 | Specs | done | `docs/specs/ui.md`, `docs/specs/golden.md` (measured from the JAR) |
 | ID widening (`ItemId`/`BlockId` -> 16-bit) | done (step 1.1) | `enum BlockId/ItemId : uint16_t`, 16-bit palette index tier, edits blob v2; see `docs/registry-widening.md` |
 | `--parity` gate (real numbers without a compiler) | done (step 1.1) | `PotatoEdition.exe --parity` writes `parity.txt` on the user's machine |
+| Opaque/liquid index split (P0 render bug) | done | `BuildChunkMeshCPU` records `opaqueIndexCount` before appending trail liquid quads; selftests: solid cube stays fully opaque, stone+water splits 36/36 with disjoint vertex ranges |
 | JAR-driven block textures (step 1.2a) | done | `ResolveBlockTextures` reads blockstates/models; chest + crafting-table magenta fixed; `PARITY-BLOCKTEX` gate; see `docs/block-textures.md` |
 | Full 26.3 registry + one shared atlas (step 1.3) | written, pending CI | `RegisterRuntimeRegistry` appends 1,288 blockstates + item namespace from 0x1000; only full cubes placeable; one 1024×1024 block+item atlas; `cubes=` in parity line; see `docs/registry-m1.md` |
 

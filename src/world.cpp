@@ -1197,8 +1197,11 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
         }
     }
 
-    // Liquid quads trail the opaque ones...
+    // Liquid quads trail the opaque ones; record the split before appending so
+    // the renderer's opaque pass sees its range (a zero here draws everything
+    // through the water shader).
     const uint32_t vbase = uint32_t(out.vertices.size());
+    out.opaqueIndexCount = uint32_t(out.indices.size());
     out.vertices.insert(out.vertices.end(), liquid.vertices.begin(), liquid.vertices.end());
     for (const uint32_t idx : liquid.indices) out.indices.push_back(vbase + idx);
 }

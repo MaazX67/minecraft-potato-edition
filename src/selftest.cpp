@@ -2059,6 +2059,8 @@ int main() {
         BuildChunkMeshCPU(cube.data(), nullptr, nullptr, nullptr, nullptr, bt, cm);
         CHECK(cm.vertices.size() == 24, "solid cube meshes to exactly 6 quads");
         CHECK(cm.indices.size() == 36, "solid cube index count");
+        CHECK(cm.opaqueIndexCount == cm.indices.size(),
+              "solid-only chunk is entirely in the opaque pass");
     }
 
     // --- Liquid mesh partition ---
@@ -2069,6 +2071,26 @@ int main() {
     CHECK(wm.opaqueIndexCount == 0 && wm.indices.size() == 36,
           "isolated water block meshes to 6 liquid quads (opaque count 0)");
     CheckBoxMesh(wm, 5, 64, 5, 6, 65, 6);
+
+    // --- Mixed chunk: opaque/liquid split must survive the trail merge ---
+    {
+        std::vector<uint16_t> mixed(CHUNK_VOL, 0);
+        for (int y = 0; y < 16; ++y)
+            for (int z = 0; z < 16; ++z)
+                for (int x = 0; x < 16; ++x)
+                    mixed[x + 16 * z + 256 * y] = BLOCK_STONE;
+        mixed[5 + 16 * 5 + 256 * 64] = BLOCK_WATER;
+        MeshData mm;
+        BuildChunkMeshCPU(mixed.data(), nullptr, nullptr, nullptr, nullptr, tiles, mm);
+        CHECK(mm.opaqueIndexCount == 36 && mm.indices.size() == 72,
+              "stone+water chunk splits 36 opaque / 36 liquid indices");
+        bool splitOk = true;
+        for (size_t i = 0; i < mm.opaqueIndexCount; ++i)
+            if (mm.indices[i] >= 24) splitOk = false;
+        for (size_t i = mm.opaqueIndexCount; i < mm.indices.size(); ++i)
+            if (mm.indices[i] < 24) splitOk = false;
+        CHECK(splitOk, "mixed chunk: opaque range only touches opaque vertices and vice versa");
+    }
 
     // --- Player physics: gravity, landing, jump ---
     {
