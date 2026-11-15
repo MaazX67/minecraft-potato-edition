@@ -37,6 +37,8 @@ void BuildNameMap() {
     for (int i = 1; i < BLOCK_COUNT; ++i) gNameToId.emplace(BLOCK_DEFS[i].name, uint16_t(i));
     // Java 1.13+ renamed the block; our palette kept the short name.
     gNameToId["grass_block"] = BLOCK_GRASS;
+    // Same reason: "magma" is the pre-1.13 short name in our table.
+    gNameToId["magma_block"] = BLOCK_MAGMA;
     // Scan the whole 16-bit item range so a registry that outgrows 255 keeps
     // every name mapped. IsValidItem is the authority on what exists.
     for (int i = BLOCK_COUNT; i <= 0xFFFF; ++i) {
@@ -297,6 +299,123 @@ bool ParseLootTableJson(const std::string& text, LootEntry& out, bool& hasItem) 
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Runtime registry tail (M1 step 1.3)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::vector<RegistryBlockEntry> gRegBlocks;
+std::vector<uint16_t> gRegIds;
+std::unordered_map<uint16_t, std::string> gRegNames;
+std::vector<std::string> gRegClaimed; // names this registry added to gNameToId
+bool gRegDone = false;
+
+// Claims one id for a resource name. A built-in that already owns the name keeps
+// its old id (that resource is the same block, not a second one); a new name
+// takes the next append-only slot from REGISTRY_ID_BASE.
+bool ClaimRuntimeName(const std::string& raw, uint16_t& id, bool& appended) {
+    const std::string name = NormalizeName(raw);
+    if (name.empty()) return false;
+    const auto known = gNameToId.find(name);
+    if (known != gNameToId.end()) {
+        id = known->second;
+        appended = false;
+        return true;
+    }
+    if (gRegIds.size() >= size_t(int(BLOCK_ID_LIMIT) - int(REGISTRY_ID_BASE))) return false;
+    id = uint16_t(int(REGISTRY_ID_BASE) + int(gRegIds.size()));
+    gNameToId.emplace(name, id);
+    gRegNames.emplace(id, name);
+    gRegClaimed.push_back(name);
+    gRegIds.push_back(id);
+    appended = true;
+    return true;
+}
+
+} // namespace
+
+int RegisterRuntimeRegistry(AssetStore& store) {
+    if (gRegDone) return int(gRegIds.size());
+    if (!store.HasJar()) return 0; // jar-less run: built-ins only
+    gRegDone = true;
+    BuildNameMap();
+
+    const char kBlockstates[] = "assets/minecraft/blockstates/";
+    for (const std::string& path : store.ListJarPrefix(kBlockstates)) {
+        if (!EndsWith(path, ".json")) continue;
+        std::string name = path.substr(strlen(kBlockstates));
+        name.resize(name.size() - 5);
+        uint16_t id = 0;
+        bool appended = false;
+        if (!ClaimRuntimeName(name, id, appended)) continue;
+        if (!appended) continue; // a built-in block already represents this name
+
+        const BlockModelInfo model = ResolveBlockModel(store, name);
+        RegistryBlockEntry entry;
+        entry.id = id;
+        entry.name = name;
+        entry.textures = model.textures;
+        entry.fullCube = model.fullCube;
+        entry.cutout = model.cutout;
+        gRegBlocks.push_back(entry);
+
+        // Only full cubes are placeable. Anything else (slab, stairs, door,
+        // torch, chest) is an inventory entry until its own mesh exists, which is
+        // why its flags stay 0 and the mesher never sees it.
+        uint8_t flags = 0;
+        if (model.fullCube) {
+            flags = uint8_t(BF_SOLID | BF_OPAQUE);
+            if (model.cutout) flags |= BF_CUTOUT;
+        }
+        if (id < BLOCK_ID_LIMIT) REGISTRY_BLOCK_FLAGS[id] = flags;
+
+        // Block items have no textures/item/*.png of their own: the icon is the
+        // model's side sprite (top/bottom as fallback), same as the world face.
+        const std::string& icon = !model.textures.side.empty()  ? model.textures.side
+                                  : !model.textures.top.empty() ? model.textures.top
+                                                                : model.textures.bottom;
+        if (!icon.empty()) SetBlockItemTexture(id, icon);
+    }
+    gStats.cubes = 0;
+    for (const RegistryBlockEntry& entry : gRegBlocks)
+        if (entry.fullCube) ++gStats.cubes;
+
+    // Item namespace: Java 1.20.5+ declares every item under items/<name>.json.
+    // Sorted scan => the same jar always yields the same ids.
+    const char kItems[] = "assets/minecraft/items/";
+    for (const std::string& path : store.ListJarPrefix(kItems)) {
+        if (!EndsWith(path, ".json")) continue;
+        std::string name = path.substr(strlen(kItems));
+        name.resize(name.size() - 5);
+        uint16_t id = 0;
+        bool appended = false;
+        ClaimRuntimeName(name, id, appended);
+    }
+    return int(gRegIds.size());
+}
+
+const std::vector<RegistryBlockEntry>& RegistryBlocks() { return gRegBlocks; }
+const std::vector<uint16_t>& RegistryIds() { return gRegIds; }
+
+void ResetRuntimeRegistry() {
+    for (const std::string& name : gRegClaimed) gNameToId.erase(name);
+    gRegClaimed.clear();
+    gRegBlocks.clear();
+    gRegIds.clear();
+    gRegNames.clear();
+    gRegDone = false;
+    std::fill(REGISTRY_BLOCK_FLAGS, REGISTRY_BLOCK_FLAGS + BLOCK_TILE_SLOTS, 0);
+    gStats.cubes = 0;
+}
+
+bool RegistryRuntimeHasId(uint16_t id) { return gRegNames.find(id) != gRegNames.end(); }
+
+const char* RegistryRuntimeName(uint16_t id) {
+    const auto it = gRegNames.find(id);
+    return it == gRegNames.end() ? nullptr : it->second.c_str();
+}
+
 bool LoadRegistry(AssetStore& store) {
     gStats = {};
     gRecipes.clear();
@@ -304,6 +423,10 @@ bool LoadRegistry(AssetStore& store) {
     BuildNameMap();
     if (!store.HasJar()) return false;
     gStats.jarLoaded = true;
+
+    // The whole 26.3 namespace becomes addressable before recipes and loot are
+    // read, so a recipe naming a block we used to lack resolves to a real id.
+    RegisterRuntimeRegistry(store);
 
     // Name coverage: how much of Java's block/item namespace this palette maps.
     const char kBlockstates[] = "assets/minecraft/blockstates/";
@@ -338,7 +461,7 @@ bool LoadRegistry(AssetStore& store) {
         const size_t slash = path.find_last_of('/');
         const std::string base = path.substr(slash == std::string::npos ? 0 : slash + 1);
         const uint16_t block = ItemIdFromResourceName(base.substr(0, base.size() - 5));
-        if (block == BLOCK_AIR || block >= BLOCK_COUNT) continue;
+        if (block == BLOCK_AIR || block >= BLOCK_ID_LIMIT) continue;
         if (!store.ReadJarEntry(path, bytes) || bytes.empty()) continue;
         LootEntry entry;
         bool hasItem = false;
@@ -469,9 +592,9 @@ std::string RegistryParityLine() {
 
     char line[256];
     std::snprintf(line, sizeof(line),
-                  "PARITY-REGISTRY: jar=%s blocks=%d items=%d recipes=%d loot=%d names=%zu dup=%d hash=%08x",
+                  "PARITY-REGISTRY: jar=%s blocks=%d items=%d cubes=%d recipes=%d loot=%d names=%zu dup=%d hash=%08x",
                   stats.jarLoaded ? "yes" : "no", stats.mappedBlockNames, stats.mappedItemNames,
-                  stats.recipes, stats.lootTables, byName.size(), duplicates, hash);
+                  stats.cubes, stats.recipes, stats.lootTables, byName.size(), duplicates, hash);
     return line;
 }
 

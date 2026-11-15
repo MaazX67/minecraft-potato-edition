@@ -50,7 +50,16 @@ Scores are **seed values** from the v2.0.0 state; each is replaced by a harness 
 | Blocks | 136 | full JAR set |
 | Items | 66 | full JAR set |
 | Recipes | 64 | full JAR set |
-| Loot tables | partial | full JAR set |
+| Loot tables | 133 | full JAR set |
+
+**Baseline captured from the user's machine** (`PotatoEdition.exe --parity`, step 1.1 build):
+
+```
+PARITY-REGISTRY: jar=yes blocks=136 items=66 recipes=64 loot=133 names=202 dup=0 hash=91ec9356
+```
+
+That 16-bit hash replaces the retired Step 0 8-bit hash. It may only change when the
+registry really changes, and `dup` must stay 0.
 
 Exit criteria: every 26.3 block, item, recipe and loot table is loaded from the JAR/index at runtime, with **zero
 hardcoded subsets**, proven by a probe that counts and hashes the loaded registry.
@@ -64,6 +73,8 @@ hardcoded subsets**, proven by a probe that counts and hashes the loaded registr
 | Specs | done | `docs/specs/ui.md`, `docs/specs/golden.md` (measured from the JAR) |
 | ID widening (`ItemId`/`BlockId` -> 16-bit) | done (step 1.1) | `enum BlockId/ItemId : uint16_t`, 16-bit palette index tier, edits blob v2; see `docs/registry-widening.md` |
 | `--parity` gate (real numbers without a compiler) | done (step 1.1) | `PotatoEdition.exe --parity` writes `parity.txt` on the user's machine |
+| JAR-driven block textures (step 1.2a) | done | `ResolveBlockTextures` reads blockstates/models; chest + crafting-table magenta fixed; `PARITY-BLOCKTEX` gate; see `docs/block-textures.md` |
+| Full 26.3 registry + one shared atlas (step 1.3) | written, pending CI | `RegisterRuntimeRegistry` appends 1,288 blockstates + item namespace from 0x1000; only full cubes placeable; one 1024×1024 block+item atlas; `cubes=` in parity line; see `docs/registry-m1.md` |
 
 `--parity` runs the same probe as `PotatoSelfTest.exe` but inside the shipped executable: it loads the user's own
 26.3 JAR from `%APPDATA%\Migurinth\meta`, prints `PARITY-REGISTRY: ...` and exits before creating a window. CI has no

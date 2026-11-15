@@ -115,7 +115,9 @@ public:
     GuiTexture texMenuBg, texHeaderSeparator, texFooterSeparator;
     GuiTexture texTab, texTabHi, texTabSelected, texTabSelectedHi;
     GuiTexture texSkin;
-    GuiTexture texItemIcon[256];
+    // One shared block+item atlas (M1 step 1.3): every icon is a UV rect into
+    // it, so ~2,300 sprites cost one GPU texture instead of ~1,100.
+    GuiTexture texItemAtlas;
     GuiTexture texDestroy[10];
     GuiTexture texZombie;
     GuiTexture texMob[int(MobType::Count)];

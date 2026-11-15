@@ -813,8 +813,8 @@ static bool ClimateColumnsValid(const std::vector<uint16_t>& blocks, const Perli
                         ++caveAir;
                         if (y <= 6 || y >= h - 5 || h <= 64 || river || column.biome == Biome::Ocean ||
                             (y <= 63 && y > waterFloor)) valid = false;
-                    } else if (!(BLOCK_FLAGS[block] & BF_SOLID)) valid = false;
-                    if (y >= h - 5 && !(BLOCK_FLAGS[block] & BF_SOLID)) valid = false;
+                    } else if (!(BlockFlags(block) & BF_SOLID)) valid = false;
+                    if (y >= h - 5 && !(BlockFlags(block) & BF_SOLID)) valid = false;
                 } else if (y <= 63) {
                     const uint16_t liquid = y == 63 && column.temperature < 0.27f ? uint16_t(BLOCK_ICE) : uint16_t(BLOCK_WATER);
                     if (block != liquid) valid = false;
@@ -990,7 +990,7 @@ static void TestBlockExpansion() {
           "block registry grows to 138 entries with items relocated above the block range");
     bool solid = true;
     for (int b = BLOCK_DEEPSLATE; b < BLOCK_LAVA; ++b) {
-        if (BLOCK_FLAGS[b] != (BF_SOLID | BF_OPAQUE) || !BLOCK_DEFS[b].name || !BLOCK_DEFS[b].side) solid = false;
+        if (BlockFlags(b) != (BF_SOLID | BF_OPAQUE) || !BLOCK_DEFS[b].name || !BLOCK_DEFS[b].side) solid = false;
     }
     CHECK(solid, "all 75 added blocks are solid opaque cubes with texture definitions");
     CHECK(BlockDrops(BLOCK_DEEPSLATE, ITEM_DIAMOND_PICKAXE).id == BLOCK_COBBLED_DEEPSLATE &&
@@ -1564,15 +1564,56 @@ static void TestRegistryParity() {
     const RegistryStats& stats = RegistryInfo();
     const std::string line = RegistryParityLine();
     printf("%s\n", line.c_str());
+    // Data-only texture audit: every face name in the built-in block table must
+    // exist in the jar, so a vanilla rename fails here instead of showing up as
+    // a magenta block in the world.
+    const std::vector<std::string> missingTextures = MissingBlockTextures(store);
+    printf("PARITY-BLOCKTEX: missing=%zu\n", missingTextures.size());
+    for (size_t i = 0; i < missingTextures.size() && i < 16; ++i)
+        printf("  missing texture: %s\n", missingTextures[i].c_str());
+    CHECK(missingTextures.empty(), "every built-in block face exists in the client jar");
 
     const size_t dupPos = line.find("dup=");
     const int duplicates = dupPos == std::string::npos ? 0 : atoi(line.c_str() + dupPos + 4);
 
     CHECK(loaded && stats.jarLoaded, "jar registry loads on this machine");
-    CHECK(stats.mappedBlockNames >= 136, "jar registry keeps at least 136 mapped blocks");
-    CHECK(stats.mappedItemNames >= 66, "jar registry keeps at least 66 mapped items");
+    CHECK(stats.mappedBlockNames >= 1288, "every 26.3 blockstate maps to an id (1,288)");
+    CHECK(stats.mappedItemNames >= 1309, "every 26.3 item model maps to an id (1,309)");
     CHECK(stats.recipes >= 64, "jar registry keeps at least 64 recipes");
     CHECK(duplicates == 0, "no two ids share one resource name");
+
+    // --- Runtime registry tail (M1 step 1.3) ---
+    const std::vector<RegistryBlockEntry>& blocks = RegistryBlocks();
+    CHECK(!blocks.empty(), "jar blockstates append runtime block ids");
+    CHECK(stats.cubes > 1000, "the jar contributes >1,000 placeable full cubes");
+    bool idsOk = true, badCube = false;
+    size_t cubes = 0;
+    for (const RegistryBlockEntry& entry : blocks) {
+        if (entry.id < REGISTRY_ID_BASE || entry.id >= BLOCK_ID_LIMIT) idsOk = false;
+        const uint8_t flags = BlockFlags(entry.id);
+        if (entry.fullCube) {
+            ++cubes;
+            // A placeable cube is solid+opaque (cutout leaves/glass add a bit)
+            // and always has a side sprite for its inventory icon.
+            if (!(flags & BF_SOLID) || !(flags & BF_OPAQUE) || entry.textures.side.empty()) badCube = true;
+        } else if (flags != 0) {
+            idsOk = false; // non-cubes must stay inventory-only
+        }
+    }
+    CHECK(idsOk, "registry ids stay inside the appended range");
+    CHECK(cubes == size_t(stats.cubes), "cube count matches the placeable entries");
+    CHECK(!badCube, "every appended cube is solid, opaque and textured");
+    // Deterministic: the same jar must yield the same table, and the tail must
+    // never touch a built-in id.
+    const size_t firstCount = RegistryIds().size();
+    const int again = RegisterRuntimeRegistry(store);
+    CHECK(size_t(again) == firstCount, "registry tail registration is idempotent");
+    CHECK(ItemIdFromResourceName("minecraft:stone") == BLOCK_STONE,
+          "built-in ids keep their old numbers after registration");
+    ResetRuntimeRegistry();
+    CHECK(RegistryBlocks().empty() && RegistryIds().empty(), "registry tail resets cleanly");
+    CHECK(ItemIdFromResourceName("minecraft:stone") == BLOCK_STONE,
+          "built-ins survive a registry reset");
 }
 
 int main() {
@@ -1909,16 +1950,23 @@ int main() {
     parts.Update(2.0f);
     CHECK(parts.List().empty(), "expired particles are swept");
 
-    // --- Block flags ---
-    CHECK(BLOCK_FLAGS[BLOCK_AIR] == 0, "air has no flags");
-    CHECK((BLOCK_FLAGS[BLOCK_WATER] & BF_LIQUID) && !(BLOCK_FLAGS[BLOCK_WATER] & BF_SOLID),
+    // --- Block flags (jar registry ids must go through the same accessor) ---
+    CHECK(BlockFlags(BLOCK_AIR) == 0, "air has no flags");
+    CHECK((BlockFlags(BLOCK_WATER) & BF_LIQUID) && !(BlockFlags(BLOCK_WATER) & BF_SOLID),
           "water is liquid and non-solid");
-    CHECK((BLOCK_FLAGS[BLOCK_OAK_LEAVES] & BF_CUTOUT) && (BLOCK_FLAGS[BLOCK_OAK_LEAVES] & BF_SOLID),
+    CHECK((BlockFlags(BLOCK_OAK_LEAVES) & BF_CUTOUT) && (BlockFlags(BLOCK_OAK_LEAVES) & BF_SOLID),
           "leaves are solid cutout");
-    CHECK((BLOCK_FLAGS[BLOCK_STONE] & BF_OPAQUE) && (BLOCK_FLAGS[BLOCK_STONE] & BF_SOLID),
+    CHECK((BlockFlags(BLOCK_STONE) & BF_OPAQUE) && (BlockFlags(BLOCK_STONE) & BF_SOLID),
           "stone is solid opaque");
-    CHECK((BLOCK_FLAGS[BLOCK_GLASS] & BF_CUTOUT) && !(BLOCK_FLAGS[BLOCK_GLASS] & BF_OPAQUE),
+    CHECK((BlockFlags(BLOCK_GLASS) & BF_CUTOUT) && !(BlockFlags(BLOCK_GLASS) & BF_OPAQUE),
           "glass is cutout, not opaque");
+    // An id the registry never filled is air, never a random built-in flag.
+    CHECK(BlockFlags(0x7FF0) == 0 && !IsBlockId(0x7FF0), "unknown registry id is air");
+    // An appended full cube becomes placeable with cutout preserved.
+    REGISTRY_BLOCK_FLAGS[0x1000] = uint8_t(BF_SOLID | BF_OPAQUE | BF_CUTOUT);
+    CHECK(BlockFlags(0x1000) == (BF_SOLID | BF_OPAQUE | BF_CUTOUT) && IsBlockId(0x1000),
+          "jar block ids resolve through BlockFlags");
+    REGISTRY_BLOCK_FLAGS[0x1000] = 0;
 
     // --- Greedy mesher emits all six face directions ---
     {
@@ -1973,7 +2021,7 @@ int main() {
         }
         CHECK(sy > 0, "terrain generates a surface near spawn");
         CHECK(world.GetBlock(8, 0, 8) == BLOCK_BEDROCK, "bedrock floor at y=0");
-        if (sy > 0) CHECK((BLOCK_FLAGS[world.GetBlock(8, sy, 8)] & BF_SOLID) != 0,
+        if (sy > 0) CHECK((BlockFlags(world.GetBlock(8, sy, 8)) & BF_SOLID) != 0,
                           "surface block is solid");
         std::vector<uint16_t> cb(CHUNK_VOL);
         for (int y = 0; y < CHUNK_Y; ++y)
@@ -1999,7 +2047,7 @@ int main() {
                 for (int y = 0; y < CHUNK_Y - 1; ++y) {
                     const uint16_t a = cb[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
                     const uint16_t b = cb[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * (y + 1)];
-                    if ((BLOCK_FLAGS[a] & BF_SOLID) && !(BLOCK_FLAGS[b] & BF_SOLID)) ++exposedTop;
+                    if ((BlockFlags(a) & BF_SOLID) && !(BlockFlags(b) & BF_SOLID)) ++exposedTop;
                 }
             }
         }

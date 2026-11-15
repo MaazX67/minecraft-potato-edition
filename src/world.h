@@ -1,5 +1,6 @@
 #pragma once
 #include "engine.h"
+#include "assets.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -36,16 +37,13 @@ struct MeshData {
     uint32_t opaqueIndexCount = 0;
 };
 
-// Resolved atlas tile ids per block id and face class.
+// Resolved atlas tile ids per block id and face class. Sized to the whole
+// runtime id range (jar registry included) and heap-allocated: three 32K int
+// arrays would be ~400 KB of stack per copy, and the selftest builds several.
 struct BlockTiles {
-    int top[256];
-    int side[256];
-    int bottom[256];
-    BlockTiles() {
-        memset(top, 0, sizeof(top));
-        memset(side, 0, sizeof(side));
-        memset(bottom, 0, sizeof(bottom));
-    }
+    std::vector<int> top, side, bottom;
+    BlockTiles()
+        : top(BLOCK_TILE_SLOTS, 0), side(BLOCK_TILE_SLOTS, 0), bottom(BLOCK_TILE_SLOTS, 0) {}
 };
 
 // Java-style PalettedContainer for one 16x16x16 chunk section. Uniform
@@ -235,6 +233,11 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
 // Extrudes a 16x16 RGBA item sprite into a 1-pixel-thick voxel mesh (front/back
 // faces plus side walls on transparent borders), centered at the origin in local
 // space. u/v carry sprite UVs. Mirrors Java's item model generator.
+// Extruded 2D sprite (held item / dropped item). `uvRect` maps the sprite into
+// the shared atlas, so the extruded mesh and every GUI icon show the same texels.
+void BuildExtrudedItemMesh(const uint8_t* rgba, float u0, float v0, float uSize, float vSize,
+                           std::vector<MeshVertex>& out);
+// Whole-sprite convenience form used by the selftest (UV 0..1).
 void BuildExtrudedItemMesh(const uint8_t* rgba, std::vector<MeshVertex>& out);
 
 // Amanatides & Woo voxel traversal. Returns the hit voxel and the face normal.

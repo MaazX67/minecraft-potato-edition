@@ -60,6 +60,32 @@ bool Atlas::GetTileOrigin(int tile, float& u, float& v) const {
     return true;
 }
 
+bool Atlas::GetTilePixels(int tile, uint8_t* out16) const {
+    if (tile < 0 || tile >= mNext || !out16) return false;
+    const int x0 = (tile % ATLAS_COLS) * ATLAS_TILE;
+    const int y0 = (tile / ATLAS_COLS) * ATLAS_TILE;
+    const uint8_t* src = mPixels.data() + (size_t(y0) * ATLAS_SIZE + x0) * 4;
+    for (int y = 0; y < ATLAS_TILE; ++y) {
+        memcpy(out16 + size_t(y) * ATLAS_TILE * 4, src + size_t(y) * ATLAS_SIZE * 4,
+               ATLAS_TILE * 4);
+    }
+    return true;
+}
+
+// Normalised rect for one atlas tile. Half-texel insets keep a point sampler
+// inside the tile on every GPU, so neighbouring icons never bleed.
+bool AtlasTileRect(int tile, float& u0, float& v0, float& u1, float& v1) {
+    if (tile < 0 || tile >= Atlas::MAX_TILES) return false;
+    constexpr float half = 0.5f / float(ATLAS_SIZE);
+    const float px = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+    const float py = float((tile / ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+    u0 = px + half;
+    v0 = py + half;
+    u1 = px + float(ATLAS_TILE) / float(ATLAS_SIZE) - half;
+    v1 = py + float(ATLAS_TILE) / float(ATLAS_SIZE) - half;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // AssetStore
 // ---------------------------------------------------------------------------
@@ -338,7 +364,7 @@ const BlockDef BLOCK_DEFS[BLOCK_COUNT] = {
     {"mossy_cobblestone", "mossy_cobblestone",    "mossy_cobblestone",    "mossy_cobblestone"},
     {"obsidian",          "obsidian",             "obsidian",             "obsidian"},
     {"tnt",               "tnt_top",              "tnt_side",             "tnt_bottom"},
-    {"crafting_table",    "crafting_table_top",   "crafting_table_side",  "crafting_table_bottom"},
+    {"crafting_table",    "crafting_table_top",   "crafting_table_front",  "oak_planks"},
     {"furnace",           "furnace_top",          "furnace_side",         "furnace_top"},
     {"bookshelf",         "oak_planks",           "bookshelf",            "oak_planks"},
     {"white_wool",        "white_wool",           "white_wool",           "white_wool"},
@@ -438,7 +464,11 @@ const BlockDef BLOCK_DEFS[BLOCK_COUNT] = {
     {"cherry_log",            "cherry_log_top",         "cherry_log",             "cherry_log_top"},
     {"cherry_leaves",         "cherry_leaves",          "cherry_leaves",          "cherry_leaves"},
     {"cherry_planks",         "cherry_planks",          "cherry_planks",          "cherry_planks"},
-    {"chest",                 "chest_top",              "chest_side",             "chest_bottom"},
+    // Vanilla renders a chest from entity/chest/normal.png via a block-entity
+    // model; its block model only declares a particle texture. Until the
+    // render phase grows block-entity meshes, the fallback uses that same
+    // particle material (oak planks) instead of the retired magenta tile.
+    {"chest",                 "oak_planks",           "oak_planks",           "oak_planks"},
 };
 
 const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
@@ -638,15 +668,48 @@ const ArmorDef* FindArmor(uint16_t id) {
 }
 
 bool IsValidItem(int id) {
-    return (id >= 0 && id < BLOCK_COUNT) || id == ITEM_STICK ||
+    if (id < 0 || id > 0xFFFF) return false;
+    if (id < BLOCK_COUNT) return true;
+    if (id == ITEM_STICK ||
         (id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD) ||
         (id >= ITEM_COAL && id <= ITEM_RAW_COPPER) ||
         (id >= ITEM_LEATHER_HELMET && id <= ITEM_NETHERITE_BOOTS) ||
-        (id >= ITEM_ELYTRA && id <= ITEM_COPPER_INGOT);
+        (id >= ITEM_ELYTRA && id <= ITEM_COPPER_INGOT))
+        return true;
+    // Jar registry tail: names and ids loaded by registry.cpp at boot.
+    return id >= int(REGISTRY_ID_BASE) && id < int(BLOCK_ID_LIMIT) &&
+        RegistryRuntimeHasId(uint16_t(id));
+}
+
+// Filled once at boot by SetBlockItemTexture(): the atlas key each block uses
+// for its inventory icon. Empty means "use the built-in BLOCK_DEFS side face".
+// Sized to the whole runtime id range so jar blocks share the same path.
+static std::string gBlockItemTexture[BLOCK_TILE_SLOTS];
+
+// Icon tile per id in the shared atlas (-1 = no icon). 32K ints = 128 KB.
+static int gItemIconTile[BLOCK_TILE_SLOTS];
+static bool gItemIconTileReady = false;
+
+int ItemIconTile(uint16_t id) {
+    if (!gItemIconTileReady) {
+        std::fill(gItemIconTile, gItemIconTile + BLOCK_TILE_SLOTS, -1);
+        gItemIconTileReady = true;
+    }
+    return id < BLOCK_ID_LIMIT ? gItemIconTile[id] : -1;
+}
+
+void SetItemIconTile(uint16_t id, int tile) {
+    if (id >= BLOCK_ID_LIMIT) return;
+    if (!gItemIconTileReady) {
+        std::fill(gItemIconTile, gItemIconTile + BLOCK_TILE_SLOTS, -1);
+        gItemIconTileReady = true;
+    }
+    gItemIconTile[id] = tile;
 }
 
 const char* ItemName(uint16_t id) {
     if (id < BLOCK_COUNT) return BLOCK_DEFS[id].name;
+    if (const char* runtime = RegistryRuntimeName(id)) return runtime;
     if (id == ITEM_STICK) return "stick";
     if (const ToolDef* tool = FindTool(id)) return tool->name;
     if (const ArmorDef* armor = FindArmor(id)) return armor->name;
@@ -664,8 +727,15 @@ const char* ItemName(uint16_t id) {
 }
 
 std::string ItemTexture(uint16_t id) {
-    return std::string("minecraft/textures/") + (id < BLOCK_COUNT ? "block/" : "item/") +
-        (id < BLOCK_COUNT ? BLOCK_DEFS[id].side : ItemName(id)) + ".png";
+    if (id < BLOCK_TILE_SLOTS) {
+        // Model-resolved side texture when the jar provided one: a chest icon
+        // then matches the block in the world instead of the retired table.
+        const std::string& key = gBlockItemTexture[id];
+        if (!key.empty()) return std::string("minecraft/textures/") + key + ".png";
+    }
+    if (id < BLOCK_COUNT)
+        return std::string("minecraft/textures/block/") + BLOCK_DEFS[id].side + ".png";
+    return std::string("minecraft/textures/item/") + ItemName(id) + ".png";
 }
 
 bool LoadItemRGBA(AssetStore& store, uint16_t id, uint8_t* out16) {
@@ -714,20 +784,279 @@ static void ApplyBiomeTint(const std::string& name, uint8_t* px) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// JAR-driven block textures (M1 step 1.2)
+// ---------------------------------------------------------------------------
+//
+// Vanilla keeps every block -> texture binding inside the client jar, not in
+// engine code:
+//
+//   blockstates/<block>.json   -> variants/multipart pick a model
+//   models/block/<model>.json  -> "parent" chain + a textures map
+//   textures/block/<name>.png  -> the pixels
+//
+// Reading that chain means a renamed texture, a resource pack or a block whose
+// model lives under textures/entity/ (chest) can never paint the magenta
+// "missing" tile again. The built-in BLOCK_DEFS table stays only as a fallback
+// for a jar-less run.
+
+namespace {
+
+bool LoadJsonEntry(AssetStore& store, const std::string& path, nlohmann::json& out) {
+    std::vector<uint8_t> bytes;
+    if (!store.ReadFile(path, bytes) || bytes.empty()) return false;
+    try {
+        out = nlohmann::json::parse(bytes.begin(), bytes.end());
+    } catch (const std::exception&) {
+        return false;
+    }
+    return out.is_object();
+}
+
+// "minecraft:block/cube_all" / "block/cube_all" -> "minecraft/models/block/cube_all.json"
+std::string BlockModelPath(const std::string& ref) {
+    std::string s = ref;
+    const size_t colon = s.find(':');
+    if (colon != std::string::npos) s = s.substr(colon + 1);
+    if (s.compare(0, 7, "models/") == 0) s = s.substr(7);
+    return "minecraft/models/" + s + ".json";
+}
+
+// "minecraft:block/oak_planks" -> "block/oak_planks" (atlas key form).
+std::string TextureAtlasKey(const std::string& ref) {
+    std::string s = ref;
+    const size_t colon = s.find(':');
+    if (colon != std::string::npos) s = s.substr(colon + 1);
+    if (s.size() >= 9 && s.compare(0, 9, "textures/") == 0) s = s.substr(9);
+    return s;
+}
+
+std::string ModelFromApply(const nlohmann::json& apply) {
+    const nlohmann::json* node = &apply;
+    if (apply.is_array()) {
+        if (apply.empty()) return {};
+        node = &apply[0];
+    }
+    if (!node->is_object()) return {};
+    if (node->contains("model") && (*node)["model"].is_string())
+        return (*node)["model"].get<std::string>();
+    return {};
+}
+
+// First declared model of a blockstate. Vanilla's single "" variant is the
+// canonical default; anything else (facing=..., multipart) is data-driven too,
+// so the first entry keeps the mesher deterministic.
+std::string FirstStateModel(const nlohmann::json& state) {
+    if (state.contains("variants") && state["variants"].is_object()) {
+        const auto& variants = state["variants"];
+        if (variants.contains("")) return ModelFromApply(variants[""]);
+        for (auto it = variants.begin(); it != variants.end(); ++it) {
+            const std::string model = ModelFromApply(it.value());
+            if (!model.empty()) return model;
+        }
+    }
+    if (state.contains("multipart") && state["multipart"].is_array()) {
+        for (const auto& part : state["multipart"]) {
+            if (!part.is_object() || !part.contains("apply")) continue;
+            const std::string model = ModelFromApply(part["apply"]);
+            if (!model.empty()) return model;
+        }
+    }
+    return {};
+}
+
+// A vanilla texture value is either a string or an object such as
+// {"force_translucent": true, "sprite": "minecraft:block/glass"}.
+std::string TextureRefValue(const nlohmann::json& value) {
+    if (value.is_string()) return value.get<std::string>();
+    if (value.is_object()) {
+        if (value.contains("sprite") && value["sprite"].is_string())
+            return value["sprite"].get<std::string>();
+        if (value.contains("texture") && value["texture"].is_string())
+            return value["texture"].get<std::string>();
+    }
+    return {};
+}
+
+// Facts a parent chain contributes. Textures merge parent-first; elements are
+// overridden by the deepest model that declares them, exactly like vanilla.
+struct ModelWalk {
+    nlohmann::json textures = nlohmann::json::object();
+    bool hasElements = false;
+    bool fullCube = false;
+    bool forceTranslucent = false;
+    bool cutoutRender = false;
+};
+
+bool IsFullCubeElement(const nlohmann::json& elements) {
+    if (!elements.is_array() || elements.size() != 1) return false;
+    const nlohmann::json& e = elements[0];
+    if (!e.is_object() || !e.contains("from") || !e.contains("to")) return false;
+    auto axisBox = [&](const char* key, float expected) {
+        const nlohmann::json& v = e[key];
+        if (!v.is_array() || v.size() != 3) return false;
+        for (const auto& axis : v) {
+            if (!axis.is_number()) return false;
+            if (std::fabs(axis.get<float>() - expected) > 0.001f) return false;
+        }
+        return true;
+    };
+    if (!axisBox("from", 0.0f) || !axisBox("to", 16.0f)) return false;
+    if (!e.contains("faces") || !e["faces"].is_object()) return false;
+    for (const char* face : {"down", "up", "north", "south", "east", "west"})
+        if (!e["faces"].contains(face)) return false;
+    return true;
+}
+
+void WalkModel(AssetStore& store, const std::string& modelRef, ModelWalk& walk, int depth) {
+    if (depth > 8 || modelRef.empty()) return;
+    nlohmann::json model;
+    if (!LoadJsonEntry(store, BlockModelPath(modelRef), model)) return;
+    if (model.contains("parent") && model["parent"].is_string())
+        WalkModel(store, model["parent"].get<std::string>(), walk, depth + 1);
+    if (model.contains("textures") && model["textures"].is_object()) {
+        for (auto it = model["textures"].begin(); it != model["textures"].end(); ++it) {
+            const std::string ref = TextureRefValue(it.value());
+            if (!ref.empty()) walk.textures[it.key()] = ref;
+            if (it.value().is_object() && it.value().value("force_translucent", false))
+                walk.forceTranslucent = true;
+        }
+    }
+    if (model.contains("elements") && model["elements"].is_array()) {
+        walk.hasElements = true;
+        walk.fullCube = IsFullCubeElement(model["elements"]);
+    }
+    if (model.contains("render_type") && model["render_type"].is_string()) {
+        const std::string type = model["render_type"].get<std::string>();
+        walk.cutoutRender = type.find("cutout") != std::string::npos ||
+                            type.find("translucent") != std::string::npos;
+    }
+}
+
+// "#side" -> "minecraft:block/oak_planks" -> "block/oak_planks".
+std::string LookupTextureKey(const nlohmann::json& textures, const char* name, int depth) {
+    if (depth > 8 || !name || !*name) return {};
+    const auto it = textures.find(name);
+    if (it == textures.end()) return {};
+    const std::string value = TextureRefValue(*it);
+    if (value.empty()) return {};
+    if (value[0] == '#') return LookupTextureKey(textures, value.c_str() + 1, depth + 1);
+    return TextureAtlasKey(value);
+}
+
+// Face alias order taken from vanilla's cube/cube_all/cube_bottom_top/leaves and
+// grass_block models. "particle" is the last resort: block-entity models such
+// as block/chest declare only that, and vanilla itself uses it for break
+// particles, so a cube drawn from it is at least the correct material.
+std::string PickFace(const nlohmann::json& textures, const char* const* keys, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        const std::string key = LookupTextureKey(textures, keys[i], 0);
+        if (!key.empty()) return key;
+    }
+    return {};
+}
+
+const char* const kTopKeys[] = {"up", "top", "end", "all", "particle"};
+const char* const kSideKeys[] = {"north", "side", "front", "all", "particle"};
+const char* const kBottomKeys[] = {"down", "bottom", "end", "all", "particle"};
+
+} // namespace
+
+BlockModelInfo ResolveBlockModel(AssetStore& store, const std::string& blockName) {
+    BlockModelInfo out;
+    if (blockName.empty() || blockName == "air") return out;
+    nlohmann::json state;
+    if (!LoadJsonEntry(store, "minecraft/blockstates/" + blockName + ".json", state)) return out;
+    const std::string model = FirstStateModel(state);
+    if (model.empty()) return out;
+    ModelWalk walk;
+    WalkModel(store, model, walk, 0);
+    if (walk.textures.empty()) return out;
+    out.hasModel = true;
+    // Vanilla's own full-cube models (block/cube, block/cube_all, block/cube_column,
+    // leaves) all reduce to one [0,0,0]-[16,16,16] element with six faces, so the
+    // element test alone is both necessary and sufficient.
+    out.fullCube = walk.fullCube;
+    // cutout: the model asks for an alpha-tested/translucent render layer, or the
+    // sprite is a force_translucent overlay (glass, ice).
+    out.cutout = walk.cutoutRender || walk.forceTranslucent;
+    out.textures.top = PickFace(walk.textures, kTopKeys, sizeof(kTopKeys) / sizeof(kTopKeys[0]));
+    out.textures.side = PickFace(walk.textures, kSideKeys, sizeof(kSideKeys) / sizeof(kSideKeys[0]));
+    out.textures.bottom = PickFace(walk.textures, kBottomKeys, sizeof(kBottomKeys) / sizeof(kBottomKeys[0]));
+    // leaves and ice are cutout by material, not by render_type: the jar declares
+    // no render_type on them. Names come from the jar, so this stays data-driven.
+    const std::string& side = out.textures.side;
+    if (side.find("leaves") != std::string::npos || side.find("_ice") != std::string::npos ||
+        side.find("glass") != std::string::npos || blockName.find("leaves") != std::string::npos)
+        out.cutout = true;
+    return out;
+}
+
+BlockTextureSet ResolveBlockTextures(AssetStore& store, const std::string& blockName) {
+    return ResolveBlockModel(store, blockName).textures;
+}
+
+// Runtime registry tail: full cubes the jar appended. Filled by registry.cpp.
+uint8_t REGISTRY_BLOCK_FLAGS[BLOCK_TILE_SLOTS];
+
+// Registry-resident name lookup for the appended id range (registry.cpp owns the
+// table; this is the one accessor assets.cpp needs).
+void SetBlockItemTexture(uint16_t id, const std::string& atlasKey) {
+    if (id < BLOCK_TILE_SLOTS) gBlockItemTexture[id] = atlasKey;
+}
+
+std::vector<std::string> MissingBlockTextures(AssetStore& store) {
+    const std::vector<std::string> names = store.ListPrefix("minecraft/textures/block/");
+    std::unordered_map<std::string, bool> present;
+    present.reserve(names.size() * 2);
+    for (const std::string& name : names) present.emplace(name, true);
+    std::vector<std::string> missing;
+    for (int b = 1; b < BLOCK_COUNT; ++b) {
+        const char* const faces[3] = {BLOCK_DEFS[b].top, BLOCK_DEFS[b].side, BLOCK_DEFS[b].bottom};
+        for (const char* face : faces) {
+            if (!face || !*face) continue;
+            const std::string path = std::string("minecraft/textures/block/") + face + ".png";
+            if (!present.count(path)) missing.push_back(path);
+        }
+    }
+    std::sort(missing.begin(), missing.end());
+    missing.erase(std::unique(missing.begin(), missing.end()), missing.end());
+    return missing;
+}
+
 int BuildBlockAtlas(AssetStore& store, Atlas& atlas) {
     atlas.AddCheckerTile("__missing"); // tile 0 is always the fallback
-    const std::vector<std::string> names = store.ListPrefix("minecraft/textures/block/");
     int loaded = 0;
     uint8_t px[ATLAS_TILE * ATLAS_TILE * 4];
-    for (const std::string& name : names) {
-        if (name.size() < 4 || name.compare(name.size() - 4, 4, ".png") != 0) continue;
-        std::vector<uint8_t> bytes;
-        if (!store.ReadFile(name, bytes)) continue;
-        if (!DecodePNG16(bytes, px)) continue;
-        ApplyBiomeTint(name, px);
-        if (atlas.AddTile(name, px) >= 0) ++loaded;
+    // One atlas for blocks and items: 1,406 block + 832 item PNGs still leave
+    // half of the 1024x1024 sheet free, and every icon then costs one UV rect
+    // instead of its own 16 KB GPU texture.
+    const char* const prefixes[] = {"minecraft/textures/block/", "minecraft/textures/item/"};
+    for (const char* prefix : prefixes) {
+        const std::vector<std::string> names = store.ListPrefix(prefix);
+        for (const std::string& name : names) {
+            if (name.size() < 4 || name.compare(name.size() - 4, 4, ".png") != 0) continue;
+            std::vector<uint8_t> bytes;
+            if (!store.ReadFile(name, bytes)) continue;
+            if (!DecodePNG16(bytes, px)) continue;
+            ApplyBiomeTint(name, px);
+            if (atlas.AddTile(name, px) >= 0) ++loaded;
+        }
     }
     return loaded;
+}
+
+int BindItemIconTiles(Atlas& atlas) {
+    int bound = 0;
+    for (int i = 1; i < BLOCK_TILE_SLOTS; ++i) {
+        const uint16_t id = uint16_t(i);
+        if (!IsValidItem(id)) continue;
+        const int tile = atlas.FindTile(ItemTexture(id));
+        if (tile < 0) continue;
+        SetItemIconTile(id, tile);
+        ++bound;
+    }
+    return bound;
 }
 
 } // namespace potato

@@ -229,9 +229,10 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texBlack.w = texBlack.h = 1;
     texBlack.srv = CreateTextureSRV(rc, black, 1, 1);
 
-    for (int id = 1; id < 256; ++id) {
-        if (IsValidItem(id)) texItemIcon[id] = LoadGui(rc, store, ItemTexture(uint16_t(id)).c_str());
-    }
+    // Item/block icons are not loaded here any more: they are tiles of the one
+    // shared atlas (gAtlas), bound once at boot by BuildBlockAtlas +
+    // BindItemIconTiles. GuiRenderer only points at that texture.
+    texItemAtlas.w = texItemAtlas.h = ATLAS_TILE;
     for (int i = 0; i < 10; ++i) {
         const std::string name = "minecraft/textures/block/destroy_stage_" + std::to_string(i) + ".png";
         texDestroy[i] = LoadGui(rc, store, name.c_str());
@@ -289,9 +290,9 @@ void GuiRenderer::Shutdown() {
         if (t.srv) { t.srv->Release(); t.srv = nullptr; }
     }
     texZombie = {};
-    for (GuiTexture& t : texItemIcon) {
-        if (t.srv) { t.srv->Release(); t.srv = nullptr; }
-    }
+    // texItemAtlas aliases the renderer's atlas SRV; releasing it here would
+    // destroy the world's texture. The atlas owns its own lifetime.
+    texItemAtlas = {};
     for (GuiTexture& t : texDestroy) {
         if (t.srv) { t.srv->Release(); t.srv = nullptr; }
     }
@@ -1053,11 +1054,12 @@ int MenuSystem::HitTest(int mouseX, int mouseY) const {
 // ---------------------------------------------------------------------------
 
 static void DrawItemIcon(GuiRenderer& ui, int id, float x, float y, float scale = 1.0f) {
-    if (id <= BLOCK_AIR || id >= 256 || !IsValidItem(id)) return;
-    const GuiTexture& icon = ui.texItemIcon[id];
-    if (!icon.srv || icon.w <= 0 || icon.h <= 0) return;
-    const float frame = float(std::min(icon.w, icon.h));
-    ui.DrawQuad(&icon, x, y, 32 * scale, 32 * scale, 0, 0, frame / icon.w, frame / icon.h, 15);
+    if (!IsValidItem(id)) return;
+    const int tile = ItemIconTile(uint16_t(id));
+    if (tile < 0) return;
+    float u0, v0, u1, v1;
+    if (!AtlasTileRect(tile, u0, v0, u1, v1)) return;
+    ui.DrawQuad(&ui.texItemAtlas, x, y, 32 * scale, 32 * scale, u0, v0, u1, v1, 15);
 }
 
 static void DrawStackCount(GuiRenderer& ui, float x, float y, const ItemSlot& s,
@@ -1242,11 +1244,12 @@ void SlotRect(int index, float& x, float& y) {
 }
 
 void DrawScaledIcon(GuiRenderer& ui, int id, float x, float y, float size) {
-    if (id <= BLOCK_AIR || id >= 256 || !IsValidItem(id)) return;
-    const GuiTexture& icon = ui.texItemIcon[id];
-    if (!icon.srv || icon.w <= 0 || icon.h <= 0) return;
-    const float frame = float(std::min(icon.w, icon.h));
-    ui.DrawQuad(&icon, x, y, size, size, 0, 0, frame / icon.w, frame / icon.h, 15);
+    if (!IsValidItem(id)) return;
+    const int tile = ItemIconTile(uint16_t(id));
+    if (tile < 0) return;
+    float u0, v0, u1, v1;
+    if (!AtlasTileRect(tile, u0, v0, u1, v1)) return;
+    ui.DrawQuad(&ui.texItemAtlas, x, y, size, size, u0, v0, u1, v1, 15);
 }
 
 void DrawSlot(GuiRenderer& ui, float x, float y, bool hovered) {

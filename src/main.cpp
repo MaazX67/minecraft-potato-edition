@@ -71,8 +71,7 @@ static ID3D10ShaderResourceView* gWhiteSRV = nullptr;
 static ID3D10Buffer* gOutlineVB = nullptr;
 static ID3D10Buffer* gZombieVB = nullptr;
 static ID3D10Buffer* gHeldVB = nullptr;
-static uint8_t gItemPixels[256][ATLAS_TILE * ATLAS_TILE * 4];
-static bool gItemHasPixels[256] = {};
+static int gIconsBound = 0; // ids that found a sprite in the shared atlas
 static std::vector<Zombie> gZombies;
 static FurnaceState gFurnace;
 static int gDimension = 0; // 0 overworld, 1 nether
@@ -199,7 +198,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const int surface = gWorld->SurfaceY(x, z);
                 if (surface < 0) continue;
                 for (int y = 8; y < std::min(surface - 8, 60); ++y) {
-                    if (!(BLOCK_FLAGS[gWorld->GetBlock(x, y - 1, z)] & BF_SOLID)) continue;
+                    if (!(BlockFlags(gWorld->GetBlock(x, y - 1, z)) & BF_SOLID)) continue;
                     bool open = true;
                     for (int forward = 0; forward <= 2; ++forward)
                         for (int height = 0; height < 2; ++height)
@@ -365,10 +364,32 @@ static uint64_t ParseSeed(const std::string& text) {
     return uint64_t(int64_t(h));
 }
 
+// Textures referenced during boot but absent from the jar. Written to
+// missingtextures.txt so a future texture rename is named, never silent.
+static std::vector<std::string> gMissingTextures;
+
+static int ResolveAtlasKey(const std::string& tex) {
+    if (tex.empty()) return 0;
+    const std::string path = "minecraft/textures/" + tex + ".png";
+    const int t = gAtlas.FindTile(path);
+    if (t < 0) gMissingTextures.push_back(path);
+    return t < 0 ? 0 : t;
+}
+
 static int ResolveTile(const char* tex) {
     if (!tex || !tex[0]) return 0;
-    const int t = gAtlas.FindTile(std::string("minecraft/textures/block/") + tex + ".png");
-    return t < 0 ? 0 : t;
+    return ResolveAtlasKey(std::string("block/") + tex);
+}
+
+static void WriteMissingTextureReport() {
+    if (gMissingTextures.empty()) return;
+    std::sort(gMissingTextures.begin(), gMissingTextures.end());
+    gMissingTextures.erase(std::unique(gMissingTextures.begin(), gMissingTextures.end()),
+                           gMissingTextures.end());
+    std::ofstream out("missingtextures.txt", std::ios::trunc);
+    if (!out.is_open()) return;
+    out << "Referenced by the block models but absent from the client jar:\n";
+    for (const std::string& name : gMissingTextures) out << name << "\n";
 }
 
 static void SyncBinds() {
@@ -1483,7 +1504,9 @@ static void SaveTestState(const char* screenshot) {
         {"targetBlock", gHaveTarget ? int(gWorld->GetBlock(gTargetX, gTargetY, gTargetZ)) : 0},
         {"soundsPlayed", gSound.Played()}, {"stoneSounds", gSound.Variants(SND_STONE)},
         {"cracksLoaded", gGui.texDestroy[0].srv != nullptr},
-        {"toolTexturesLoaded", gGui.texItemIcon[ITEM_WOOD_PICKAXE].srv != nullptr},
+        {"toolTexturesLoaded", ItemIconTile(ITEM_WOOD_PICKAXE) >= 0},
+        {"iconsBound", gIconsBound},
+        {"atlasTiles", gAtlas.TileCount()},
         {"zombieTextureLoaded", gGui.texMob[int(MobType::Zombie)].srv != nullptr},
         {"mobTexturesLoaded", [&] { int n = 0; for (const GuiTexture& t : gGui.texMob) n += t.srv != nullptr; return n; }()},
         {"zombieBufferLoaded", gZombieVB != nullptr},
@@ -2615,7 +2638,7 @@ static void HandleGameFrame(float dt) {
                 py + 1 > gBody.y && py < gBody.y + PlayerBody::HEIGHT;
             if (!insideBody) {
                 const uint16_t block = gHotbar[gHotbarSlot];
-                if (block == BLOCK_AIR || block >= BLOCK_COUNT || (gGameMode == 0 && gInventory.slots[27 + gHotbarSlot].Empty())) return;
+                if (block == BLOCK_AIR || !IsBlockId(block) || (gGameMode == 0 && gInventory.slots[27 + gHotbarSlot].Empty())) return;
                 gWorld->SetBlock(px, py, pz, block);
                 if (gGameMode == 0) {
                     ItemSlot& s = gInventory.slots[27 + gHotbarSlot];
@@ -2970,7 +2993,7 @@ static void DrawEntityShadows() {
         int gy = -1;
         for (int y = int(floorf(s.y)) + 1; y > int(floorf(s.y)) - 8; --y) {
             const uint16_t b = gWorld->GetBlock(int(floorf(s.x)), y, int(floorf(s.z)));
-            if (b != BLOCK_AIR && !(BLOCK_FLAGS[b] & BF_LIQUID)) { gy = y; break; }
+            if (b != BLOCK_AIR && !(BlockFlags(b) & BF_LIQUID)) { gy = y; break; }
         }
         if (gy < 0) continue;
         const float y = float(gy + 1) + 0.02f;
@@ -3145,11 +3168,18 @@ static void DrawHand() {
     const uint16_t held = gHotbar[gHotbarSlot];
     if (held != BLOCK_AIR && gHeldVB) {
         std::vector<MeshVertex> local;
-        const bool isBlock = held < BLOCK_COUNT;
+        const bool isBlock = IsBlockId(held);
         if (isBlock) {
             BuildHeldBlockCube(held, local);
-        } else if (held < 256 && gItemHasPixels[held] && gGui.texItemIcon[held].srv) {
-            BuildExtrudedItemMesh(gItemPixels[held], local);
+        } else {
+            // Item sprite: pull the texels straight out of the shared atlas, so
+            // the held sprite is the same tile the hotbar and the GUI draw.
+            const int icon = ItemIconTile(held);
+            uint8_t px[ATLAS_TILE * ATLAS_TILE * 4];
+            float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
+            if (icon >= 0 && gAtlas.GetTilePixels(icon, px) &&
+                AtlasTileRect(icon, u0, v0, u1, v1))
+                BuildExtrudedItemMesh(px, u0, v0, u1 - u0, v1 - v0, local);
         }
         if (!local.empty() && local.size() <= 20000) {
             // Java held-item display: 45 deg inward yaw, slight pitch toward the
@@ -3184,7 +3214,7 @@ static void DrawHand() {
                 } else {
                     gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
                     gRC.device->PSSetShader(gRC.psUI);
-                    gRC.device->PSSetShaderResources(0, 1, &gGui.texItemIcon[held].srv);
+                    gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
                 }
                 gRC.device->Draw(UINT(local.size()), 0);
                 gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
@@ -3646,9 +3676,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (!jar.empty()) store.LoadJar(jar);
         if (store.HasJar()) LoadRegistry(store);
         const std::string line = RegistryParityLine();
-        printf("%s\n", line.c_str());
+        // Second gate: every texture a built-in block declares must exist in
+        // the jar. Catches vanilla renames (chest_side) before they ship as
+        // magenta in the world.
+        const std::vector<std::string> missingTextures = MissingBlockTextures(store);
+        std::string texLine = "PARITY-BLOCKTEX: missing=" + std::to_string(missingTextures.size());
+        for (size_t i = 0; i < missingTextures.size() && i < 16; ++i) texLine += " " + missingTextures[i];
+        printf("%s\n%s\n", line.c_str(), texLine.c_str());
         std::ofstream out("parity.txt", std::ios::binary | std::ios::trunc);
-        out << line << "\n";
+        out << line << "\n" << texLine << "\n";
         out.close();
         return 0;
     }
@@ -3741,16 +3777,43 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     gRC.atlasSRV = CreateBlockAtlasSRV(gRC, gAtlas.Pixels(), ATLAS_SIZE, ATLAS_SIZE);
     if (strstr(GetCommandLineA(), "--dump-atlas")) DumpAtlas();
     for (int b = 1; b < BLOCK_COUNT; ++b) {
-        gTiles.top[b] = ResolveTile(BLOCK_DEFS[b].top);
-        gTiles.side[b] = ResolveTile(BLOCK_DEFS[b].side);
-        gTiles.bottom[b] = ResolveTile(BLOCK_DEFS[b].bottom);
+        // Resolve faces from the jar's blockstate/model JSON first; the
+        // built-in table is only a fallback for a jar-less run.
+        const BlockTextureSet set = ResolveBlockTextures(gStore, BLOCK_DEFS[b].name);
+        auto face = [](const std::string& key, const char* fallback) {
+            const int tile = ResolveAtlasKey(key);
+            return tile > 0 ? tile : ResolveTile(fallback);
+        };
+        gTiles.top[b] = face(set.top, BLOCK_DEFS[b].top);
+        gTiles.side[b] = face(set.side, BLOCK_DEFS[b].side);
+        gTiles.bottom[b] = face(set.bottom, BLOCK_DEFS[b].bottom);
+        // The inventory icon must be the same texture the world shows.
+        std::string icon = set.side;
+        if (icon.empty() && BLOCK_DEFS[b].side && BLOCK_DEFS[b].side[0])
+            icon = std::string("block/") + BLOCK_DEFS[b].side;
+        SetBlockItemTexture(uint16_t(b), icon);
     }
 
-    if (!gGui.Init(gRC, gStore)) return 1;
-    for (int id = BLOCK_COUNT; id < 256; ++id) {
-        if (IsValidItem(id) && LoadItemRGBA(gStore, uint16_t(id), gItemPixels[id]))
-            gItemHasPixels[id] = true;
+    // Jar registry blocks: the same tile table, ids from REGISTRY_ID_BASE up.
+    // Only full cubes get tiles because only full cubes are placeable.
+    for (const RegistryBlockEntry& entry : RegistryBlocks()) {
+        if (!entry.fullCube || entry.id >= BLOCK_ID_LIMIT) continue;
+        auto key = [](const std::string& atlasKey) {
+            return atlasKey.empty() ? 0 : ResolveAtlasKey(atlasKey);
+        };
+        gTiles.top[entry.id] = key(entry.textures.top);
+        gTiles.side[entry.id] = key(entry.textures.side);
+        gTiles.bottom[entry.id] = key(entry.textures.bottom);
     }
+    // One icon tile per id in the shared atlas (blocks + items).
+    gIconsBound = BindItemIconTiles(gAtlas);
+    WriteMissingTextureReport();
+
+    if (!gGui.Init(gRC, gStore)) return 1;
+    // The GUI samples the world atlas; it must not release it (Shutdown clears
+    // the pointer only).
+    gGui.texItemAtlas.srv = gRC.atlasSRV;
+    gGui.texItemAtlas.w = gGui.texItemAtlas.h = ATLAS_TILE;
     if (!gGui.LoadPlayerSkin(gRC, gStore, gProfile)) {
         gActionBar = "Player skin missing from the local Java assets.";
         gActionBarUntil = SystemTimeMs() + 4000;

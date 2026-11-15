@@ -34,6 +34,7 @@ struct RegistryStats {
     int mappedItemNames = 0;  // JAR item names that map to an internal id
     int recipes = 0;           // JAR crafting recipes usable by this engine
     int lootTables = 0;        // JAR block loot tables parsed
+    int cubes = 0;             // appended full-cube blocks that can be placed
 };
 
 // Parses Java's data/minecraft/recipe and data/minecraft/loot_table/blocks
@@ -42,6 +43,32 @@ struct RegistryStats {
 bool LoadRegistry(AssetStore& store);
 
 const RegistryStats& RegistryInfo();
+
+// ---------------------------------------------------------------------------
+// Runtime registry tail (M1 step 1.3)
+// ---------------------------------------------------------------------------
+//
+// Every resource the jar declares gets an append-only id from
+// REGISTRY_ID_BASE upwards: 1,288 blockstates then the item namespace. Ids are
+// handed out in sorted-name order, so two runs on the same jar always agree and
+// a world save stays readable. Only ids whose model is a full cube become
+// placeable; slabs, stairs, doors and torches stay inventory-only until their
+// own meshes exist.
+
+struct RegistryBlockEntry {
+    uint16_t id = 0;
+    std::string name;      // resource name without namespace ("oak_planks")
+    BlockTextureSet textures; // resolved side/top/bottom atlas keys
+    bool fullCube = false; // model is one [0,0,0]-[16,16,16] element
+    bool cutout = false;   // alpha-tested material (leaves, glass, ice)
+};
+
+// Scans blockstates/ and items/ and appends the tail. Idempotent. Returns how
+// many ids were appended (0 without a jar, or on a second call).
+int RegisterRuntimeRegistry(AssetStore& store);
+const std::vector<RegistryBlockEntry>& RegistryBlocks();
+const std::vector<uint16_t>& RegistryIds(); // every appended id, ascending
+void ResetRuntimeRegistry();                // test seam: back to built-ins only
 
 // One machine-readable parity line for the loaded registry:
 //   PARITY-REGISTRY: jar=yes blocks=136 items=66 recipes=64 loot=... names=202 dup=0 hash=1a2b3c4d

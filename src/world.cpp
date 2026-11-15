@@ -778,6 +778,7 @@ struct MaskCell {
 };
 
 int FaceTile(const BlockTiles& t, uint16_t b, int d, int sign) {
+    if (b >= BLOCK_TILE_SLOTS) return 0; // id outside the tile table: missing tile
     if (d == 1) return sign > 0 ? t.top[b] : t.bottom[b];
     return t.side[b];
 }
@@ -816,7 +817,7 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
         for (int x = 0; x < CHUNK_X; ++x) {
             int h = -1;
             for (int y = CHUNK_Y - 1; y >= 0; --y) {
-                if (BLOCK_FLAGS[sample(x, y, z)] & BF_SOLID) { h = y; break; }
+                if (BlockFlags(sample(x, y, z)) & BF_SOLID) { h = y; break; }
             }
             heights[x + CHUNK_X * z] = h;
         }
@@ -844,8 +845,8 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                 for (x[u] = 0; x[u] < dimU; ++x[u]) {
                     const uint16_t a = sample(x[0], x[1], x[2]);
                     const uint16_t b = sample(x[0] + q[0], x[1] + q[1], x[2] + q[2]);
-                    const bool aOpaque = (BLOCK_FLAGS[a] & BF_OPAQUE) != 0;
-                    const bool bOpaque = (BLOCK_FLAGS[b] & BF_OPAQUE) != 0;
+                    const bool aOpaque = (BlockFlags(a) & BF_OPAQUE) != 0;
+                    const bool bOpaque = (BlockFlags(b) & BF_OPAQUE) != 0;
                     uint16_t blk = 0;
                     int sign = 0;
                     if (aOpaque != bOpaque) {
@@ -862,7 +863,7 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         mask[n].tile = FaceTile(tiles, blk, d, sign);
                         mask[n].light = FaceLight(d, sign);
                         mask[n].sign = sign;
-                        mask[n].liquid = (BLOCK_FLAGS[blk] & BF_LIQUID) != 0;
+                        mask[n].liquid = (BlockFlags(blk) & BF_LIQUID) != 0;
                         ++n;
                     }
                 }
@@ -964,7 +965,8 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
     for (const uint32_t idx : liquid.indices) out.indices.push_back(vbase + idx);
 }
 
-void BuildExtrudedItemMesh(const uint8_t* rgba, std::vector<MeshVertex>& out) {
+void BuildExtrudedItemMesh(const uint8_t* rgba, float u0, float v0, float uSize, float vSize,
+                           std::vector<MeshVertex>& out) {
     const float s = 0.55f / 16.0f;
     const float t = s * 0.5f;
     auto opaque = [&](int x, int y) -> bool {
@@ -983,21 +985,29 @@ void BuildExtrudedItemMesh(const uint8_t* rgba, std::vector<MeshVertex>& out) {
         vert(x0,y0,z0,u0,v0); vert(x1,y0,z0,u1,v0); vert(x1,y1,z0,u1,v1);
         vert(x0,y0,z0,u0,v0); vert(x1,y1,z0,u1,v1); vert(x0,y1,z0,u0,v1);
     };
+    // Sprite pixel (x,y) -> atlas UV. Half-texel inset matches AtlasTileRect so a
+    // point sampler never picks up the neighbouring tile.
+    auto au = [&](int x) { return u0 + (float(x) + 0.5f) / 16.0f * uSize; };
+    auto av = [&](int y) { return v0 + (float(y) + 0.5f) / 16.0f * vSize; };
     for (int y = 0; y < 16; ++y) {
         for (int x = 0; x < 16; ++x) {
             if (!opaque(x, y)) continue;
             const float x0 = (x - 8) * s, x1 = (x + 1 - 8) * s;
             const float y0 = (8 - y) * s, y1 = (8 - y - 1) * s;
-            const float u0 = x / 16.0f, u1 = (x + 1) / 16.0f;
-            const float v0 = y / 16.0f, v1 = (y + 1) / 16.0f;
-            quad(x0,y0,x1,y1, t,t, u0,v0,u1,v1);   // front
-            quad(x0,y0,x1,y1,-t,-t, u0,v0,u1,v1);  // back
-            if (!opaque(x-1,y)) quad(x0,y0,x0,y1,-t,t, u0,v0,u0,v1); // left
-            if (!opaque(x+1,y)) quad(x1,y0,x1,y1,-t,t, u1,v0,u1,v1); // right
-            if (!opaque(x,y-1)) quad(x0,y0,x1,y0,-t,t, u0,v0,u1,v0); // top
-            if (!opaque(x,y+1)) quad(x0,y1,x1,y1,-t,t, u0,v1,u1,v1); // bottom
+            const float u0p = au(x), u1p = au(x + 1);
+            const float v0p = av(y), v1p = av(y + 1);
+            quad(x0,y0,x1,y1, t,t, u0p,v0p,u1p,v1p);   // front
+            quad(x0,y0,x1,y1,-t,-t, u0p,v0p,u1p,v1p);  // back
+            if (!opaque(x-1,y)) quad(x0,y0,x0,y1,-t,t, u0p,v0p,u0p,v1p); // left
+            if (!opaque(x+1,y)) quad(x1,y0,x1,y1,-t,t, u1p,v0p,u1p,v1p); // right
+            if (!opaque(x,y-1)) quad(x0,y0,x1,y0,-t,t, u0p,v0p,u1p,v0p); // top
+            if (!opaque(x,y+1)) quad(x0,y1,x1,y1,-t,t, u0p,v1p,u1p,v1p); // bottom
         }
     }
+}
+
+void BuildExtrudedItemMesh(const uint8_t* rgba, std::vector<MeshVertex>& out) {
+    BuildExtrudedItemMesh(rgba, 0.0f, 0.0f, 1.0f, 1.0f, out);
 }
 
 // ---------------------------------------------------------------------------
@@ -1026,7 +1036,7 @@ bool RaycastDDA(const std::function<uint16_t(int, int, int)>& getBlock,
 
     for (int i = 0; i < 512; ++i) {
         const uint16_t b = getBlock(x, y, z);
-        if (b != 0 && !(BLOCK_FLAGS[b] & BF_LIQUID)) {
+        if (b != 0 && !(BlockFlags(b) & BF_LIQUID)) {
             hx = x; hy = y; hz = z;
             return true;
         }
@@ -1249,7 +1259,7 @@ int World::SurfaceY(int x, int z) const {
     std::shared_lock<std::shared_mutex> blk(mBlocksMutex);
     for (int y = CHUNK_Y - 1; y >= 0; --y) {
         const uint16_t b = c->GetIndex(lx + CHUNK_X * lz + CHUNK_X * CHUNK_Z * y);
-        if (BLOCK_FLAGS[b] & BF_SOLID) return y;
+        if (BlockFlags(b) & BF_SOLID) return y;
     }
     return -1;
 }

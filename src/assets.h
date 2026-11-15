@@ -38,6 +38,17 @@ constexpr int ATLAS_SIZE = 1024;
 constexpr int ATLAS_TILE = 16;
 constexpr int ATLAS_COLS = ATLAS_SIZE / ATLAS_TILE;
 
+// Runtime id space filled from the client jar (M1 step 1.3).
+//
+// Built-in ids keep their old numbers: blocks 0..BLOCK_COUNT-1, items
+// 160..ITEM_COPPER_INGOT. Every resource the jar adds gets an append-only id
+// from REGISTRY_ID_BASE upwards, so a world saved by an older build keeps
+// every id it already wrote. Recipe tags begin at 0x8000, therefore the
+// ceiling keeps one uint16 cell unambiguous.
+constexpr uint16_t REGISTRY_ID_BASE = 0x1000;
+constexpr uint16_t BLOCK_ID_LIMIT = 0x8000;
+constexpr int BLOCK_TILE_SLOTS = int(BLOCK_ID_LIMIT);
+
 // Contiguous 1024x1024 RGBA atlas, 16x16 tiles, 4096 slots.
 // CPU-side only: the renderer uploads Pixels() as one immutable texture.
 class Atlas {
@@ -49,6 +60,9 @@ public:
     int AddCheckerTile(const std::string& name);
     int FindTile(const std::string& name) const;
     bool GetTileOrigin(int tile, float& u, float& v) const;
+    // Copies one 16x16 RGBA tile out of the atlas. Used by the held-item path,
+    // which extrudes the sprite from the same atlas the world samples.
+    bool GetTilePixels(int tile, uint8_t* out16) const;
     int TileCount() const { return mNext; }
     const uint8_t* Pixels() const { return mPixels.data(); }
 
@@ -176,12 +190,69 @@ const char* ItemName(uint16_t id);
 std::string ItemTexture(uint16_t id);
 int ItemStackLimit(uint16_t id);
 
+// Shared block+item atlas icon. The GUI, the hotbar, the creative grid and the
+// held-item extruder all read the same tile, so an icon can never disagree with
+// the block in the world (and there is one GPU texture, not ~1,100).
+int ItemIconTile(uint16_t id);
+void SetItemIconTile(uint16_t id, int tile);
+// Normalised atlas rect with half-texel insets, safe for a point sampler.
+bool AtlasTileRect(int tile, float& u0, float& v0, float& u1, float& v1);
+
+// Per-face block textures in atlas-key form ("block/oak_planks"), resolved from
+// the client jar's own blockstates/<block>.json -> models/block/<model>.json
+// parent chain. Empty fields mean the model does not declare that face.
+struct BlockTextureSet {
+    std::string top, side, bottom;
+};
+
+// Full model facts a block needs at runtime. fullCube is conservative: one
+// element from [0,0,0] to [16,16,16] with all six faces, or a chain ending in
+// vanilla's block/cube. Anything else (slab, stairs, torch, door) stays
+// inventory-only until its own mesh exists.
+struct BlockModelInfo {
+    BlockTextureSet textures;
+    bool hasModel = false;
+    bool fullCube = false;
+    bool cutout = false; // leaves/glass/ice or a force_translucent sprite
+};
+BlockModelInfo ResolveBlockModel(AssetStore& store, const std::string& blockName);
+BlockTextureSet ResolveBlockTextures(AssetStore& store, const std::string& blockName);
+
+// The item icon a block uses in inventories: the model-resolved side texture,
+// falling back to the built-in table when the model has nothing. Filled once at
+// boot from the same resolver the world mesher uses, so an inventory icon and
+// the block in the world can never disagree.
+void SetBlockItemTexture(uint16_t id, const std::string& atlasKey);
+
+// Every BLOCK_DEFS face name whose PNG is absent from the user's jar. Pure data
+// check: no GPU, no atlas. Used by `--parity` so a texture rename in a future
+// 26.x cannot silently turn a block magenta again.
+std::vector<std::string> MissingBlockTextures(AssetStore& store);
+
+// Runtime registry tail (defined in registry.cpp). assets.cpp consults these so
+// ItemName/IsValidItem cover the whole 26.3 namespace without a header cycle.
+bool RegistryRuntimeHasId(uint16_t id);
+const char* RegistryRuntimeName(uint16_t id); // nullptr when unknown
+
 // SOLID: collides with the player. OPAQUE: culls neighbor faces. CUTOUT:
 // alpha-tested (leaves/glass). LIQUID: rendered in the transparent pass.
 enum BlockFlags : uint8_t {
     BF_SOLID = 1, BF_OPAQUE = 2, BF_CUTOUT = 4, BF_LIQUID = 8
 };
 extern const uint8_t BLOCK_FLAGS[BLOCK_COUNT];
+
+// Flags for blocks the jar appended (full cubes only, step 1.3). Filled by
+// registry.cpp before the first world exists.
+extern uint8_t REGISTRY_BLOCK_FLAGS[BLOCK_TILE_SLOTS];
+
+// Every block lookup in the engine goes through this, so an id from a jar
+// registry can never index past the built-in table. Unknown ids behave as air.
+inline uint8_t BlockFlags(uint16_t id) {
+    if (id < BLOCK_COUNT) return BLOCK_FLAGS[id];
+    if (id < BLOCK_ID_LIMIT) return REGISTRY_BLOCK_FLAGS[id];
+    return 0;
+}
+inline bool IsBlockId(uint16_t id) { return BlockFlags(id) != 0; }
 
 struct BlockDef {
     const char* name;
@@ -207,8 +278,12 @@ bool LoadItemRGBA(AssetStore& store, uint16_t id, uint8_t* out16);
 // Decodes a PNG at its native size (GUI sprites, font). out is w*h*4 RGBA.
 bool DecodePNGAny(const std::vector<uint8_t>& bytes, std::vector<uint8_t>& out, int& w, int& h);
 
-// Loads every minecraft/textures/block/*.png into the atlas.
-// Tile 0 is always the missing-texture checker. Returns block tiles loaded.
+// Loads every minecraft/textures/block/*.png and minecraft/textures/item/*.png
+// into one shared atlas. Tile 0 is always the missing-texture checker.
 int BuildBlockAtlas(AssetStore& store, Atlas& atlas);
+
+// Points every valid id at its atlas tile (block side face or item sprite).
+// Returns how many ids got an icon. Call once after BuildBlockAtlas.
+int BindItemIconTiles(Atlas& atlas);
 
 } // namespace potato

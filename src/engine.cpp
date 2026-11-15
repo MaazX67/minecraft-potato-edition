@@ -294,7 +294,7 @@ static bool BodyHits(const std::function<uint16_t(int, int, int)>& getBlock,
     for (int bx = x0; bx <= x1; ++bx)
         for (int by = y0; by <= y1; ++by)
             for (int bz = z0; bz <= z1; ++bz)
-                if (BLOCK_FLAGS[getBlock(bx, by, bz)] & BF_SOLID) return true;
+                if (BlockFlags(getBlock(bx, by, bz)) & BF_SOLID) return true;
     return false;
 }
 
@@ -320,7 +320,7 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
     impulseX *= drag; impulseZ *= drag;
 
     const uint16_t feet = getBlock(int(floorf(x)), int(floorf(y + 0.2f)), int(floorf(z)));
-    inWater = (BLOCK_FLAGS[feet] & BF_LIQUID) != 0;
+    inWater = (BlockFlags(feet) & BF_LIQUID) != 0;
 
     if (flying) {
         vy = ((in.keys[gBinds.jump] ? 1.0f : 0.0f) - (in.keys[gBinds.sneak] ? 1.0f : 0.0f)) * speed;
