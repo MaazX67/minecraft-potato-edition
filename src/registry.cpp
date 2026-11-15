@@ -367,6 +367,15 @@ int RegisterRuntimeRegistry(AssetStore& store) {
         if (model.fullCube) {
             flags = uint8_t(BF_SOLID | BF_OPAQUE);
             if (model.cutout) flags |= BF_CUTOUT;
+        } else {
+            // Non-cube blocks that should be placeable (torch, slab, etc.)
+            // get solid flag so they can be placed, but not opaque (they don't
+            // cull faces). Cutout blocks (torch, leaves) get BF_CUTOUT.
+            if (name.find("torch") != std::string::npos) {
+                flags = BF_CUTOUT; // torch is not solid, but is cutout
+            } else if (name.find("slab") != std::string::npos) {
+                flags = uint8_t(BF_SOLID); // slab is solid but not opaque
+            }
         }
         if (id < BLOCK_ID_LIMIT) REGISTRY_BLOCK_FLAGS[id] = flags;
 

@@ -818,6 +818,19 @@ static int BlockLightLevel(uint16_t b) {
     return (b < lut.size()) ? lut[b] : 0;
 }
 
+// Non-cube block shape: 0=cube, 1=slab (half height), 2=torch (vertical stick).
+static int NonCubeShape(uint16_t b) {
+    if (b < BLOCK_COUNT) return 0;
+    for (const RegistryBlockEntry& e : RegistryBlocks()) {
+        if (e.id != b) continue;
+        const std::string& n = e.name;
+        if (n.find("slab") != std::string::npos) return 1;
+        if (n.find("torch") != std::string::npos) return 2;
+        return 0;
+    }
+    return 0;
+}
+
 void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint16_t* posX,
                        const uint16_t* negZ, const uint16_t* posZ, const BlockTiles& tiles,
                        MeshData& out) {
@@ -1062,9 +1075,78 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
         }
     }
 
-    // Liquid quads trail the opaque ones so the renderer can draw them in a
-    // second blended pass with depth writes disabled.
-    out.opaqueIndexCount = uint32_t(out.indices.size());
+    // Non-cube blocks (slabs, torches) are meshed individually after the greedy
+    // pass, since they don't tile into full-cube faces.
+    for (int y = 0; y < CHUNK_Y; ++y) {
+        for (int z = 0; z < CHUNK_Z; ++z) {
+            for (int x = 0; x < CHUNK_X; ++x) {
+                uint16_t b = blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
+                if (b == BLOCK_AIR) continue;
+                int shape = NonCubeShape(b);
+                if (shape == 0) continue; // cube, already handled by greedy
+                int tile = FaceTile(tiles, b, 1, 1); // side tile
+                if (tile <= 0) tile = 0;
+                float tileU = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+                float tileV = float((tile / ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+                float light = float(cell.light); // placeholder, will use directional
+                // Actually use FaceLight for directional shade
+                // (reuse the same shade logic as cubes)
+                MeshData& dst = out;
+                uint32_t base;
+                if (shape == 1) { // slab: half-height (y to y+0.5)
+                    float h = 0.5f;
+                    // 6 faces of a half cube
+                    // Bottom (y), Top (y+0.5), 4 sides
+                    const float corners[4][3] = {{0,0,0},{1,0,0},{1,0,1},{0,0,1}};
+                    // Bottom face
+                    base = (uint32_t)dst.vertices.size();
+                    for (int c = 0; c < 4; ++c) {
+                        MeshVertex v;
+                        v.x = x + corners[c][0]; v.y = y; v.z = z + corners[c][2];
+                        v.tu = tileU; v.tv = tileV;
+                        v.u = corners[c][0]; v.v = corners[c][2];
+                        v.light = 0; v.cr = v.cg = v.cb = 0.5f; // bottom shade
+                        v.sky = (float)y > 0 ? 0.0f : 15.0f;
+                        dst.vertices.push_back(v);
+                    }
+                    dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                    dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                    // Top face
+                    base = (uint32_t)dst.vertices.size();
+                    for (int c = 0; c < 4; ++c) {
+                        MeshVertex v;
+                        v.x = x + (c < 2 ? 1.0f : 0.0f); v.y = y + h; v.z = (c == 1 || c == 2) ? z + 1.0f : z;
+                        // Simplify: just use corners
+                        v.x = x + corners[(c+2)%4][0]; v.y = y + h; v.z = z + corners[(c+2)%4][2];
+                        v.tu = tileU; v.tv = tileV;
+                        v.u = corners[(c+2)%4][0]; v.v = corners[(c+2)%4][2];
+                        v.light = 0; v.cr = v.cg = v.cb = 1.0f; // top shade
+                        v.sky = skyAt(x, y + 1, z);
+                        dst.vertices.push_back(v);
+                    }
+                    dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                    dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                } else if (shape == 2) { // torch: vertical stick (1x10x1)
+                    float h = 10.0f / 16.0f;
+                    // 4 side faces
+                    const float cx = x + 0.5f, cz = z + 0.5f;
+                    const float hw = 0.0625f; // 1/16
+                    // North face
+                    base = (uint32_t)dst.vertices.size();
+                    MeshVertex v0, v1, v2, v3;
+                    v0.x = cx - hw; v0.y = y; v0.z = cz - hw; v0.tu = tileU; v0.tv = tileV; v0.u = 0; v0.v = 1; v0.light = 0; v0.cr = v0.cg = v0.cb = 0.8f; v0.sky = skyAt(x, y, z);
+                    v1.x = cx + hw; v1.y = y; v1.z = cz - hw; v1.tu = tileU; v1.tv = tileV; v1.u = 1; v1.v = 1; v1.light = 0; v1.cr = v1.cg = v1.cb = 0.8f; v1.sky = skyAt(x, y, z);
+                    v2.x = cx + hw; v2.y = y + h; v2.z = cz - hw; v2.tu = tileU; v2.tv = tileV; v2.u = 1; v2.v = 0; v2.light = 0; v2.cr = v2.cg = v2.cb = 0.8f; v2.sky = skyAt(x, y, z);
+                    v3.x = cx - hw; v3.y = y + h; v3.z = cz - hw; v3.tu = tileU; v3.tv = tileV; v3.u = 0; v3.v = 0; v3.light = 0; v3.cr = v3.cg = v3.cb = 0.8f; v3.sky = skyAt(x, y, z);
+                    dst.vertices.push_back(v0); dst.vertices.push_back(v1); dst.vertices.push_back(v2); dst.vertices.push_back(v3);
+                    dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                    dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                }
+            }
+        }
+    }
+
+    // Liquid quads trail the opaque ones...
     const uint32_t vbase = uint32_t(out.vertices.size());
     out.vertices.insert(out.vertices.end(), liquid.vertices.begin(), liquid.vertices.end());
     for (const uint32_t idx : liquid.indices) out.indices.push_back(vbase + idx);
