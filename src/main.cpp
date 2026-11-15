@@ -3749,9 +3749,13 @@ static void UpdateItemEntities(float dt) {
     }
 }
 
+static void RandomTickBlocks() {
+    // Disabled: caused frame hitches.
+    (void)0;
+}
+
 static void UpdateRedstone() {
-    // Disabled: caused frame hitches. Re-enable in M4 with incremental
-    // propagation tied to block changes only.
+    // Disabled: full-chunk scan caused hitches.
     (void)0;
 }
 static void RenderFrame() {
