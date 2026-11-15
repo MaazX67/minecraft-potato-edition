@@ -960,7 +960,7 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         // Air cell on the face's normal side; p[d] is the
                         // plane coordinate (opaque cell at p[d]-1 when sign>0).
                         int ax = int(vert.x), ay = int(vert.y), az = int(vert.z);
-                        const int airCell = int(p[d]) + (cell.sign > 0 ? 1 : -1);
+                        const int airCell = int(p[d]) + (cell.sign > 0 ? 0 : -1);
                         if (d == 0) ax = airCell;
                         else if (d == 1) ay = airCell;
                         else az = airCell;
