@@ -1257,40 +1257,24 @@ int CreativeMaxScroll() {
 
 void RebuildCreativeList() {
     gCreativeList.clear();
-    // Scan the whole 16-bit id space: the registry, not the old 8-bit
-    // ceiling, decides what exists. Cheap: the table only has ~200 entries.
-    for (int i = 1; i <= 0xFFFF; ++i) {
-        const uint16_t id = uint16_t(i);
-        if (!IsValidItem(id)) continue;
-        // Registry blocks that are not full cubes (slabs, stairs, doors,
-        // torches, ...) have no mesh yet: showing them in creative produces
-        // blank slots that can never be placed. Keep them addressable (recipes,
-        // /give, loot) but out of the creative grid until M4.
+    std::unordered_set<uint16_t> seen;
+    // Single pass over the 16-bit id space. Build the placeable set once.
     static std::unordered_set<uint16_t> sPlaceable;
     static bool sBuilt = false;
-    if (!sBuilt) {
+    if (!sBuilt || gCreativeListDirty) {
         sPlaceable.clear();
         for (const RegistryBlockEntry& entry : RegistryBlocks()) {
-            if (entry.fullCube && ItemIconTile(entry.id) >= 0)
+            if (ItemIconTile(entry.id) >= 0)
                 sPlaceable.insert(entry.id);
         }
         sBuilt = true;
-    }
-    if (gCreativeListDirty) {
-        sPlaceable.clear();
-        for (const RegistryBlockEntry& entry : RegistryBlocks()) {
-            if (entry.fullCube && ItemIconTile(entry.id) >= 0)
-                sPlaceable.insert(entry.id);
-        }
     }
 
     for (int i = 1; i <= 0xFFFF; ++i) {
         const uint16_t id = uint16_t(i);
         if (!IsValidItem(id)) continue;
         if (id >= REGISTRY_ID_BASE) {
-            // Show all registry items with icons. Full-cube blocks are placeable;
-            // non-cube items (slabs, stairs, doors, torches) are inventory-only
-            // but still show in creative for parity.
+            // Show all registry items with icons.
             if (ItemIconTile(id) < 0) continue;
         }
         if (gCreativeTab == CTAB_SEARCH) {
@@ -1298,8 +1282,9 @@ void RebuildCreativeList() {
         } else if (ItemCreativeTab(id) != gCreativeTab) {
             continue;
         }
+        if (seen.count(id)) continue;
+        seen.insert(id);
         gCreativeList.push_back(id);
-    }
     }
     gCreativeListDirty = false;
     if (gCreativeScroll > CreativeMaxScroll()) gCreativeScroll = CreativeMaxScroll();

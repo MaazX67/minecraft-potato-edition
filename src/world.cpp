@@ -793,22 +793,29 @@ int FaceShade(int d, int sign) {
 } // namespace
 
 // Light emitted by a block (0 = none). Java values.
-// Light emitted by a block (0 = none). Java values.
+// Light emitted by a block (0 = none). Java values. Precomputed LUT.
 static int BlockLightLevel(uint16_t b) {
-    if (b == BLOCK_GLOWSTONE || b == BLOCK_SEA_LANTERN || b == BLOCK_SHROOMLIGHT) return 15;
-    if (b == BLOCK_LAVA) return 15;
-    // Registry blocks: check name for torches, glowstone, etc.
-    // (RegistryBlocks() available via registry.h included in world.cpp)
-    for (const RegistryBlockEntry& e : RegistryBlocks()) {
-        if (e.id != b) continue;
-        const std::string& n = e.name;
-        if (n.find("torch") != std::string::npos) return (n.find("soul") != std::string::npos) ? 10 : 14;
-        if (n == "glowstone" || n == "sea_lantern" || n == "shroomlight" || n == "end_rod" ||
-            n == "jack_o_lantern" || n.find("froglight") != std::string::npos) return 15;
-        if (n.find("lava") != std::string::npos) return 15;
-        return 0;
+    static std::vector<uint8_t> lut;
+    static bool built = false;
+    if (!built) {
+        lut.resize(65536, 0);
+        // Built-in light emitters.
+        if (BLOCK_GLOWSTONE < 65536) lut[BLOCK_GLOWSTONE] = 15;
+        if (BLOCK_SEA_LANTERN < 65536) lut[BLOCK_SEA_LANTERN] = 15;
+        if (BLOCK_SHROOMLIGHT < 65536) lut[BLOCK_SHROOMLIGHT] = 15;
+        if (BLOCK_LAVA < 65536) lut[BLOCK_LAVA] = 15;
+        // Registry blocks: check name.
+        for (const RegistryBlockEntry& e : RegistryBlocks()) {
+            if (e.id >= 65536) continue;
+            const std::string& n = e.name;
+            if (n.find("torch") != std::string::npos) lut[e.id] = (n.find("soul") != std::string::npos) ? 10 : 14;
+            else if (n == "glowstone" || n == "sea_lantern" || n == "shroomlight" || n == "end_rod" ||
+                     n == "jack_o_lantern" || n.find("froglight") != std::string::npos) lut[e.id] = 15;
+            else if (n.find("lava") != std::string::npos) lut[e.id] = 15;
+        }
+        built = true;
     }
-    return 0;
+    return (b < lut.size()) ? lut[b] : 0;
 }
 
 void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint16_t* posX,
