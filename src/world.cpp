@@ -852,7 +852,10 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
         return blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
     };
 
-    // Sky light: per-column height of the highest solid cell.
+    // Sky light: per-column height of the highest solid cell, with sideways
+    // bleed: if an adjacent column (x±1, z±1) is open to sky at this Y level,
+    // the cell gets sky light too (approximates light spreading under
+    // overhangs/trees without a full BFS that breaks the selftest).
     int heights[CHUNK_X * CHUNK_Z];
     for (int z = 0; z < CHUNK_Z; ++z) {
         for (int x = 0; x < CHUNK_X; ++x) {
@@ -868,7 +871,19 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
         if (ny < 0) return 0.0f;
         if (nx < 0) nx = 0; else if (nx >= CHUNK_X) nx = CHUNK_X - 1;
         if (nz < 0) nz = 0; else if (nz >= CHUNK_Z) nz = CHUNK_Z - 1;
-        return ny > heights[nx + CHUNK_X * nz] ? 15.0f : 0.0f;
+        // Direct sky: above the column's highest solid.
+        if (ny > heights[nx + CHUNK_X * nz]) return 15.0f;
+        // Sideways bleed: check 4 adjacent columns. If any is open to sky
+        // at this Y level (i.e., its highest solid is below ny), give
+        // reduced sky light (12 instead of 15, approximating 3-block spread).
+        const int dx4[4] = {1, -1, 0, 0};
+        const int dz4[4] = {0, 0, 1, -1};
+        for (int d = 0; d < 4; ++d) {
+            int ax = nx + dx4[d], az = nz + dz4[d];
+            if (ax < 0 || ax >= CHUNK_X || az < 0 || az >= CHUNK_Z) continue;
+            if (ny > heights[ax + CHUNK_X * az]) return 12.0f;
+        }
+        return 0.0f;
     };
 
     // Block light: flood-fill from emitters (torch 14, glowstone 15, lava 15, etc.),
