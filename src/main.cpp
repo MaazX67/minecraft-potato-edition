@@ -2424,12 +2424,12 @@ static void HandleGameFrame(float dt) {
             gParticles.SpawnCrit(zombie.body.x, zombie.body.y + 1, zombie.body.z);
             gSound.Play(SND_HURT);
             const float blast = sqrtf(distance2);
-            if (blast < 6.0f && gGameMode == 0) {
-                const float raw = 22.0f * (1.0f - blast / 6.0f);
+            if (blast < 3.0f && gGameMode == 0) {
+                const float raw = 22.0f * (1.0f - blast / 3.0f);
                 const float damage = gPlayerResistance.Apply(raw);
                 if (damage > 0) {
                     gSurvival.health = std::max(0, gSurvival.health - int(ceilf(damage)));
-                    const float scale = blast > 0.001f ? 6.0f / blast : 0;
+                    const float scale = blast > 0.001f ? 3.0f / blast : 0;
                     gBody.impulseX = dx * scale; gBody.impulseZ = dz * scale; gBody.vy = 6; gBody.onGround = false;
                 }
             }

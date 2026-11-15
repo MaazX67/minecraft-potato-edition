@@ -1668,8 +1668,8 @@ int main() {
           "solid chunk greedy-meshes to exactly 6 quads");
     bool hasTop = false, hasBottom = false;
     for (const MeshVertex& v : md.vertices) {
-        if (v.light == 15) hasTop = true;
-        if (v.light == 8) hasBottom = true;
+        if (v.cr == 1.0f) hasTop = true;
+        if (v.cr == 0.5f) hasBottom = true;
     }
     CHECK(hasTop && hasBottom, "face light levels present (top 15, bottom 8)");
     CheckBoxMesh(md, 0, 0, 0, float(CHUNK_X), float(CHUNK_Y), float(CHUNK_Z));
@@ -1721,7 +1721,7 @@ int main() {
         BuildChunkMeshCPU(lit.data(), nullptr, nullptr, nullptr, nullptr, tiles, openSky);
         int openTop = 0, openTopSky = 0;
         for (const MeshVertex& v : openSky.vertices) {
-            if (v.y == 65.0f && v.light == 15.0f) {
+            if (v.y == 65.0f && v.cr == 1.0f) {
                 ++openTop;
                 if (v.sky == 15.0f) ++openTopSky;
             }
@@ -1736,7 +1736,7 @@ int main() {
         BuildChunkMeshCPU(lit.data(), nullptr, nullptr, nullptr, nullptr, tiles, roofed);
         int roofTop = 0, roofTopSky = 0;
         for (const MeshVertex& v : roofed.vertices) {
-            if (v.y == 65.0f && v.light == 15.0f) {
+            if (v.y == 65.0f && v.cr == 1.0f) {
                 ++roofTop;
                 if (v.sky == 0.0f) ++roofTopSky;
             }
@@ -1745,7 +1745,7 @@ int main() {
               "faces under a solid roof receive zero skylight");
         int roofSky = 0;
         for (const MeshVertex& v : roofed.vertices) {
-            if (v.y == 71.0f && v.light == 15.0f && v.sky == 15.0f) ++roofSky;
+            if (v.y == 71.0f && v.cr == 1.0f && v.sky == 15.0f) ++roofSky;
         }
         CHECK(roofSky == 4, "roof top surface is fully sky-lit above the shadowed floor");
     }

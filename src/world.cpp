@@ -1,5 +1,6 @@
 #include "world.h"
 #include "assets.h"
+#include "registry.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -768,12 +769,13 @@ namespace {
 
 struct MaskCell {
     int tile = -1;
-    int light = 0;
+    int shade = 100;   // Java face shade in percent (top 100, bottom 50, X 60, Z 80)
     int sign = 0;
     bool liquid = false;
+    uint16_t block = 0;
     bool Empty() const { return tile < 0; }
     bool operator==(const MaskCell& o) const {
-        return tile == o.tile && light == o.light && sign == o.sign && liquid == o.liquid;
+        return tile == o.tile && shade == o.shade && sign == o.sign && liquid == o.liquid;
     }
 };
 
@@ -783,9 +785,9 @@ int FaceTile(const BlockTiles& t, uint16_t b, int d, int sign) {
     return t.side[b];
 }
 
-int FaceLight(int d, int sign) {
-    if (d == 1) return sign > 0 ? 15 : 8;
-    return d == 0 ? 12 : 10;
+int FaceShade(int d, int sign) {
+    if (d == 1) return sign > 0 ? 100 : 50;
+    return d == 0 ? 60 : 80;
 }
 
 } // namespace
@@ -877,9 +879,10 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         mask[n++] = MaskCell{};
                     } else {
                         mask[n].tile = FaceTile(tiles, blk, d, sign);
-                        mask[n].light = FaceLight(d, sign);
+                        mask[n].shade = FaceShade(d, sign);
                         mask[n].sign = sign;
                         mask[n].liquid = (BlockFlags(blk) & BF_LIQUID) != 0;
+                        mask[n].block = blk;
                         ++n;
                     }
                 }
@@ -944,8 +947,8 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                             vert.u = cell.sign > 0 ? corners[c][0] : float(w) - corners[c][0];
                             vert.v = d == 2 ? float(h) - corners[c][1] : corners[c][1];
                         }
-                        vert.light = float(cell.light);
-                        vert.cr = vert.cg = vert.cb = 1.0f;
+                        vert.light = 0.0f;   // block light emission not implemented yet
+                        vert.cr = vert.cg = vert.cb = float(cell.shade) / 100.0f;
                         // Air cell on the face's normal side; p[d] is the
                         // plane coordinate (opaque cell at p[d]-1 when sign>0).
                         int ax = int(vert.x), ay = int(vert.y), az = int(vert.z);
@@ -954,7 +957,6 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         else if (d == 1) ay = airCell;
                         else az = airCell;
                         vert.sky = skyAt(ax, ay, az);
-                        vert.blockLight = float(BlockLightLevel(blk));
                         dst.vertices.push_back(vert);
                     }
                     dst.indices.push_back(base);

@@ -24,10 +24,9 @@ struct MeshVertex {
     float x, y, z;    // world position
     float tu, tv;     // atlas tile origin (UV)
     float u, v;       // local UV in block units (greedy tiling via frac in PS)
-    float light;      // directional face shade (0..1)
+    float light;      // raw 0..15 block light (torches, glowstone, lava; 0 = none yet)
     float cr, cg, cb; // vertex tint (1,1,1 = untinted; GUI text colors)
     float sky = 0;    // raw 0..15 sky light (world meshes; 0 elsewhere)
-    float blockLight = 0; // raw 0..15 block light (torches, glowstone, lava)
 };
 
 struct MeshData {
