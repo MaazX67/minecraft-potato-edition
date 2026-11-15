@@ -790,6 +790,22 @@ int FaceLight(int d, int sign) {
 
 } // namespace
 
+// Light emitted by a block (0 = none). Java values.
+static int BlockLightLevel(uint16_t b) {
+    if (b == BLOCK_GLOWSTONE || b == BLOCK_SEA_LANTERN || b == BLOCK_SHROOMLIGHT) return 15;
+    if (b == BLOCK_LAVA) return 15;
+    for (const RegistryBlockEntry& e : RegistryBlocks()) {
+        if (e.id != b) continue;
+        const std::string& n = e.name;
+        if (n.find("torch") != std::string::npos) return (n.find("soul") != std::string::npos) ? 10 : 14;
+        if (n == "glowstone" || n == "sea_lantern" || n == "shroomlight" || n == "end_rod" ||
+            n == "jack_o_lantern" || n.find("froglight") != std::string::npos) return 15;
+        if (n.find("lava") != std::string::npos) return 15;
+        return 0;
+    }
+    return 0;
+}
+
 void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint16_t* posX,
                        const uint16_t* negZ, const uint16_t* posZ, const BlockTiles& tiles,
                        MeshData& out) {
@@ -938,6 +954,7 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         else if (d == 1) ay = airCell;
                         else az = airCell;
                         vert.sky = skyAt(ax, ay, az);
+                        vert.blockLight = float(BlockLightLevel(blk));
                         dst.vertices.push_back(vert);
                     }
                     dst.indices.push_back(base);

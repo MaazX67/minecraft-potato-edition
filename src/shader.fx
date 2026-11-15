@@ -31,6 +31,7 @@ struct VSIn
     float  light : TEXCOORD2;  // raw 0..15 block light level
     float3 color : COLOR;      // vertex tint (white = untinted)
     float  sky   : TEXCOORD3;  // raw 0..15 sky light level (0 = not sky-lit)
+    float  blockLight : TEXCOORD4; // raw 0..15 block light level (torches, glowstone)
 };
 
 struct PSIn
@@ -43,6 +44,7 @@ struct PSIn
     float3 dir   : TEXCOORD4;  // object-space direction (skybox only)
     float fogDepth : TEXCOORD5;
     float skylight : TEXCOORD6;
+    float blockLight : TEXCOORD7;
 };
 
 PSIn VSMain(VSIn input)
@@ -56,6 +58,7 @@ PSIn VSMain(VSIn input)
     o.dir   = input.pos;
     o.fogDepth = o.pos.w;
     o.skylight = input.sky / 15.0f;
+    o.blockLight = input.blockLight / 15.0f;
     return o;
 }
 
@@ -95,7 +98,7 @@ float4 PSMain(PSIn input) : SV_TARGET
     float2 atlasUV = input.tile + (floor(frac(input.uv) * tileSize) + 0.5f) * scale / 1024.0f;
     float4 tex = gAtlas.SampleLevel(gPoint, atlasUV, lod);
     clip(tex.a - 0.5f);
-    float3 light = CombineLight(0.0f, input.skylight);
+    float3 light = CombineLight(input.blockLight, input.skylight);
     float3 col = tex.rgb * light * input.tint * input.shade;
     float fog = 0.0f;
     if (gFogEnd > 0.0f) fog = saturate((input.fogDepth - gFogStart) / max(gFogEnd - gFogStart, 0.001f));
@@ -116,7 +119,7 @@ float4 PSMainWater(PSIn input) : SV_TARGET
     float tileSize = 16.0f / scale;
     float2 atlasUV = input.tile + (floor(frac(uv) * tileSize) + 0.5f) * scale / 1024.0f;
     float4 tex = gAtlas.SampleLevel(gPoint, atlasUV, lod);
-    float3 light = CombineLight(0.0f, input.skylight);
+    float3 light = CombineLight(input.blockLight, input.skylight);
     float3 col = tex.rgb * light * input.tint * input.shade;
     float fog = 0.0f;
     if (gFogEnd > 0.0f) fog = saturate((input.fogDepth - gFogStart) / max(gFogEnd - gFogStart, 0.001f));
@@ -147,7 +150,7 @@ float4 PSMainEntity(PSIn input) : SV_TARGET
 {
     float4 tex = gAtlas.Sample(gPoint, input.uv);
     clip(tex.a - 0.1f);
-    float3 light = CombineLight(0.0f, input.skylight);
+    float3 light = CombineLight(input.blockLight, input.skylight);
     float3 dark = 1.0f - light;
     light = lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
     float fog = gFogEnd > 0 ? saturate((input.fogDepth - gFogStart) / max(gFogEnd - gFogStart, 0.001f)) : 0;

@@ -3645,8 +3645,14 @@ static void DrawDebug(float scale) {
         y += int(20 * s);
     };
     row("Minecraft 26.3 (Java Edition)");
-    snprintf(line, sizeof(line), "%.0f fps  (%d chunks, %zu gpu)", double(gFps),
-             int(gWorld->ChunkCount()), gGpu.size());
+    snprintf(line, sizeof(line), "%.0f fps (%.1f ms)  (%d chunks, %zu gpu)", double(gFps),
+             double(1000.0 / (gFps > 0 ? gFps : 60)), int(gWorld->ChunkCount()), gGpu.size());
+    row(line);
+    // Light level under the player (block + sky).
+    const int lx = int(floorf(gBody.x)), ly = int(floorf(gBody.y)), lz = int(floorf(gBody.z));
+    const uint16_t lb = gWorld->GetBlock(lx, ly, lz);
+    snprintf(line, sizeof(line), "Light: block=%d sky=%d  Block: %s", int(BlockFlags(lb) & 0x0F),
+             0, BLOCK_DEFS[lb < BLOCK_COUNT ? lb : 0].name);
     row(line);
     snprintf(line, sizeof(line), "XYZ: %.2f / %.2f / %.2f", double(gBody.x), double(gBody.y), double(gBody.z));
     row(line);
