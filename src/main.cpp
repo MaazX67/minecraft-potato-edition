@@ -3838,48 +3838,11 @@ static void UpdateRedstone() {
 }
 
 static void RandomTickBlocks() {
-    if (!gWorld) return;
-    static std::mt19937 rng(12345);
-    // Limit to 4 chunks per tick to avoid frame hitches.
-    int processed = 0;
-    for (auto it = gGpu.begin(); it != gGpu.end() && processed < 4; ++it, ++processed) {
-        int cx = KeyCX(it->first), cz = KeyCZ(it->first);
-        for (int t = 0; t < 3; ++t) {
-            int lx = rng() % CHUNK_X;
-            int lz = rng() % CHUNK_Z;
-            int y = rng() % CHUNK_Y;
-            int wx = cx * CHUNK_X + lx, wz = cz * CHUNK_Z + lz;
-            uint16_t b = gWorld->GetBlock(wx, y, wz);
-            if (b == BLOCK_AIR) continue;
-            if (b == BLOCK_DIRT) {
-                if (gWorld->GetBlock(wx, y + 1, wz) == BLOCK_AIR) {
-                    bool adjacentGrass = false;
-                    const int dx[4] = {1,-1,0,0}, dz[4] = {0,0,1,-1};
-                    for (int d = 0; d < 4; ++d)
-                        if (gWorld->GetBlock(wx + dx[d], y, wz + dz[d]) == BLOCK_GRASS) { adjacentGrass = true; break; }
-                    if (adjacentGrass && (rng() % 8) == 0)
-                        gWorld->SetBlock(wx, y, wz, BLOCK_GRASS);
-                }
-            } else if (b == BLOCK_OAK_LEAVES || b == BLOCK_SPRUCE_LEAVES || b == BLOCK_BIRCH_LEAVES || b == BLOCK_CHERRY_LEAVES) {
-                // Small radius check.
-                bool hasLog = false;
-                for (int dx = -3; dx <= 3 && !hasLog; ++dx)
-                    for (int dy = -3; dy <= 3 && !hasLog; ++dy)
-                        for (int dz = -3; dz <= 3 && !hasLog; ++dz) {
-                            uint16_t nb = gWorld->GetBlock(wx + dx, y + dy, wz + dz);
-                            if (nb == BLOCK_LOG || nb == BLOCK_SPRUCE_LOG || nb == BLOCK_BIRCH_LOG || nb == BLOCK_CHERRY_LOG) hasLog = true;
-                        }
-                if (!hasLog && (rng() % 16) == 0) gWorld->SetBlock(wx, y, wz, BLOCK_AIR);
-            } else if (b == BLOCK_ICE) {
-                if (y > 63 && gWorld->GetBlock(wx, y + 1, wz) == BLOCK_AIR && (rng() % 3) == 0)
-                    gWorld->SetBlock(wx, y, wz, BLOCK_WATER);
-            }
-        }
-    }
+    // Disabled: was causing frame hitches. Re-enable in M4 with a proper
+    // job-based tick scheduler that runs off the main thread.
+    (void)0;
 }
 
-static void RenderFrame() {
-    const float sky[4] = {0.47f, 0.65f, 1.0f, 1.0f};
     gRC.device->ClearRenderTargetView(gRC.rtv, sky);
     gRC.device->ClearDepthStencilView(gRC.dsv, D3D10_CLEAR_DEPTH, 1.0f, 0);
 
