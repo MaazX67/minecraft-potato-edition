@@ -2671,7 +2671,9 @@ static void HandleGameFrame(float dt) {
         }
         const int px = hx + nx, py = hy + ny, pz = hz + nz;
         if (py >= 0 && py < CHUNK_Y && gWorld->HasChunk(FloorDiv16(px), FloorDiv16(pz)) &&
-            gWorld->GetBlock(px, py, pz) == BLOCK_AIR) {
+            (gWorld->GetBlock(px, py, pz) == BLOCK_AIR ||
+             gWorld->GetBlock(px, py, pz) == BLOCK_WATER ||
+             gWorld->GetBlock(px, py, pz) == BLOCK_LAVA)) {
             const bool insideBody =
                 px + 1 > gBody.x - PlayerBody::HALF && px < gBody.x + PlayerBody::HALF &&
                 pz + 1 > gBody.z - PlayerBody::HALF && pz < gBody.z + PlayerBody::HALF &&
@@ -2948,7 +2950,7 @@ static void DrawZombies() {
                         const float localY = pivotY + (p[1] - pivotY) * cr - p[2] * sr;
                         const float localZ = (p[1] - pivotY) * sr + p[2] * cr;
                         const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
-                        const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
+                        const float tv = uv[face][1] + (index < 2 ? 0 : uv[face][3]);
                         vertices.push_back({zombie.body.x + (cy * p[0] - sy * localZ) / 16,
                             zombie.body.y + localY / 16, zombie.body.z + (sy * p[0] + cy * localZ) / 16,
                             0, 0, tu / tw, tv / th, face == 4 ? 15.0f : 12.0f,
@@ -3081,7 +3083,7 @@ static void DrawPlayer() {
                 const float localY = pivotY + (p[1] - pivotY) * cr - p[2] * sr;
                 const float localZ = (p[1] - pivotY) * sr + p[2] * cr;
                 const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
-                const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
+                const float tv = uv[face][1] + (index < 2 ? 0 : uv[face][3]);
                 vertices.push_back({gBody.x + (cy * p[0] - sy * localZ) / 16,
                     gBody.y + localY / 16, gBody.z + (sy * p[0] + cy * localZ) / 16,
                     0, 0, tu / 64, tv / 64, face == 4 ? 15.0f : 12.0f, 1, 1, 1});
@@ -3131,7 +3133,7 @@ static void BuildHeldBlockCube(uint16_t block, std::vector<MeshVertex>& out) {
         else { ax[0] = 1; ay[1] = 1; }
         const float cx = n[f][0] * h, cy = n[f][1] * h, cz = n[f][2] * h;
         const float corner[4][2] = {{-1,-1},{1,-1},{1,1},{-1,1}};
-        const float uv[4][2] = {{0,1},{1,1},{1,0},{0,0}};
+        const float uv[4][2] = {{0,0},{1,0},{1,1},{0,1}};
         const int tri[6] = {0,1,2,0,2,3};
         for (int idx : tri) {
             const float sx = corner[idx][0] * h, sy = corner[idx][1] * h;
@@ -3183,7 +3185,7 @@ static void DrawHand() {
             const float ly = (p[1] + 12.0f) / 16.0f * armScale;
             const float lz = p[2] / 16.0f * armScale;
             const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
-            const float tv = uv[face][1] + (index < 2 ? uv[face][3] : 0);
+            const float tv = uv[face][1] + (index < 2 ? 0 : uv[face][3]);
             vertices.push_back({
                 shoulderX + sideX * lx + armX * ly + upX * lz,
                 shoulderY + armY * ly + upY * lz,
