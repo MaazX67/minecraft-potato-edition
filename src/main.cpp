@@ -3826,7 +3826,7 @@ static void UpdateRedstone() {
     }
 }
 
-static void RenderFrame() {
+static void UpdateRedstone() {
     gRedstonePower.clear();
     if (!gWorld) return;
     // Collect sources: redstone_block emits 15. (Lever/button/torch/wire handled
