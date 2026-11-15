@@ -109,6 +109,8 @@ public:
     GuiTexture texHeart[3];   // container, full, half
     GuiTexture texFood[3];    // empty, full, half
     GuiTexture texArmor[3];   // empty, full, half
+    GuiTexture texXpBg, texXpProgress, texHotbarOffhand;
+    GuiTexture texAccessibility, texLanguage;
     GuiTexture texAttackBg, texAttackProgress;
     GuiTexture texPanoramaOverlay;
     GuiTexture texSlider, texSliderHi, texSliderHandle, texSliderHandleHi;
@@ -255,7 +257,7 @@ void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint16_t* hotbar, float
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint16_t* hotbar, int health, int hunger, int armorPoints,
              const std::string& actionBar, bool creative, const ItemSlot* stacks,
-             float scale = 1.0f);
+             float scale = 1.0f, float xpProgress = 0.0f, int xpLevel = 0);
 
 // Chat log bottom-left above the hotbar. Closed: last ten lines fade out over
 // Java's ten-second window. Open: full recent log plus the input field.

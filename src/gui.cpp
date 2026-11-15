@@ -204,6 +204,11 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texArmor[0]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/armor_empty.png");
     texArmor[1]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/armor_full.png");
     texArmor[2]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/armor_half.png");
+    texXpBg           = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/experience_bar_background.png");
+    texXpProgress     = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/experience_bar_progress.png");
+    texHotbarOffhand  = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/hotbar_offhand_left.png");
+    texAccessibility  = LoadGui(rc, store, "minecraft/textures/gui/sprites/icon/accessibility.png");
+    texLanguage       = LoadGui(rc, store, "minecraft/textures/gui/sprites/icon/language.png");
     texAttackBg       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair_attack_indicator_background.png");
     texAttackProgress = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/crosshair_attack_indicator_progress.png");
     texPanoramaOverlay= LoadGui(rc, store, "minecraft/textures/gui/title/background/panorama_overlay.png");
@@ -281,6 +286,7 @@ void GuiRenderer::Shutdown() {
                         &texSlider, &texSliderHi, &texSliderHandle, &texSliderHandleHi,
                         &texInvBg, &texCraftBg, &texFurnaceBg, &texChestBg, &texMenuBg, &texHeaderSeparator, &texFooterSeparator,
                         &texTab, &texTabHi, &texTabSelected, &texTabSelectedHi, &texSkin, &texClouds,
+                        &texXpBg, &texXpProgress, &texHotbarOffhand, &texAccessibility, &texLanguage,
                         &texHeart[0], &texHeart[1], &texHeart[2],
                         &texFood[0], &texFood[1], &texFood[2],
                         &texArmor[0], &texArmor[1], &texArmor[2]};
@@ -664,9 +670,15 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         ui.DrawTextRotated(splash, cx + 246, 138, 2.0f * fit, -0.349f, 15, true, 1, 1, 0);
         mButtons.push_back({cx - 200, 288, 400, 40, "Singleplayer", ACT_SINGLEPLAYER, true});
         mButtons.push_back({cx - 200, 336, 400, 40, "Multiplayer", ACT_NONE, false});
-        mButtons.push_back({cx - 200, 384, 400, 40, "Local Profile...", ACT_PROFILE, true});
-        mButtons.push_back({cx - 200, 456, 196, 40, "Options...", ACT_OPTIONS, true});
-        mButtons.push_back({cx + 4, 456, 196, 40, "Quit Game", ACT_QUIT, true});
+        mButtons.push_back({cx - 200, 384, 400, 40, "Minecraft Realms", ACT_NONE, false});
+        mButtons.push_back({cx - 200, 432, 400, 40, "Local Profile...", ACT_PROFILE, true});
+        mButtons.push_back({cx - 200, 504, 196, 40, "Options...", ACT_OPTIONS, true});
+        mButtons.push_back({cx + 4, 504, 196, 40, "Quit Game", ACT_QUIT, true});
+        // Bottom-corner icons (vanilla 26.3): accessibility + language.
+        if (ui.texAccessibility.srv)
+            ui.DrawSprite(&ui.texAccessibility, 4, SCREEN_H - 24, 2, 15);
+        if (ui.texLanguage.srv)
+            ui.DrawSprite(&ui.texLanguage, 28, SCREEN_H - 24, 2, 15);
         ui.DrawText("Minecraft 26.3", 4, SCREEN_H - 20, 2, 15, true);
         const char* tag = "Copyright Mojang AB. Do not distribute!";
         ui.DrawText(tag, SCREEN_W - ui.TextWidth(tag, 2) - 4, SCREEN_H - 20, 2, 15, true);
@@ -1100,7 +1112,7 @@ void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint16_t* hotbar, float
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint16_t* hotbar, int health, int hunger, int armorPoints,
              const std::string& actionBar, bool creative, const ItemSlot* stacks,
-             float scale) {
+             float scale, float xpProgress, int xpLevel) {
     const float s = scale;
     const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
     ui.DrawSprite(&ui.texCrosshair, cx - 15 * s, cy - 15 * s, 2 * s, 15);
@@ -1134,6 +1146,29 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
             if (hunger >= i * 2 + 2) ui.DrawSprite(&ui.texFood[1], fx, rowY, 2 * s, 15);
             else if (hunger == i * 2 + 1) ui.DrawSprite(&ui.texFood[2], fx, rowY, 2 * s, 15);
         }
+    }
+
+    // XP bar above the hotbar (vanilla: 182 wide, 5 tall, centred).
+    if (ui.texXpBg.srv) {
+        const float xpX = cx - 91.0f * s, xpY = SCREEN_H - 57.0f * s;
+        ui.DrawSprite(&ui.texXpBg, xpX, xpY, 2 * s, 15);
+        if (xpProgress > 0.0f && ui.texXpProgress.srv) {
+            const int w = int(182.0f * s * xpProgress);
+            ui.DrawQuad(&ui.texXpProgress, xpX, xpY, float(w), 5.0f * s,
+                        0, 0, xpProgress, 1, 15);
+        }
+        if (xpLevel > 0) {
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "%d", xpLevel);
+            ui.DrawTextCentered(buf, cx, xpY - 12.0f * s, 2 * s, 15, true,
+                                0.5f, 1.0f, 0.0f);
+        }
+    }
+
+    // Off-hand slot sits to the left of the hotbar (vanilla 1.9+).
+    if (ui.texHotbarOffhand.srv) {
+        const float offX = cx - 182.0f * s - 30.0f * s, offY = SCREEN_H - 44.0f * s;
+        ui.DrawSprite(&ui.texHotbarOffhand, offX, offY, 2 * s, 15);
     }
 
     DrawHotbar(ui, selectedSlot, hotbar, s);
