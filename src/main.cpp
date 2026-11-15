@@ -3842,6 +3842,7 @@ static void RandomTickBlocks() {
     // job-based tick scheduler that runs off the main thread.
     (void)0;
 }
+static void RenderFrame() {
 
     gRC.device->ClearRenderTargetView(gRC.rtv, sky);
     gRC.device->ClearDepthStencilView(gRC.dsv, D3D10_CLEAR_DEPTH, 1.0f, 0);
