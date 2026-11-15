@@ -1085,10 +1085,13 @@ static void TestBlockLight() {
     // Since block light is stored in vert.light, check if any vertex has
     // light > 0 (glowstone emits 15, adjacent air gets 14).
     bool hasLight = false;
+    bool hasAO = false;
     for (const MeshVertex& v : md.vertices) {
-        if (v.light > 0.0f) { hasLight = true; break; }
+        if (v.light > 0.0f) { hasLight = true; }
+        if (v.cr < 1.0f && v.cr > 0.0f) { hasAO = true; }
     }
     CHECK(hasLight, "glowstone emits block light (vert.light > 0)");
+    CHECK(hasAO, "smooth lighting AO applied (some vertices have cr < 1.0)");
 }
 
 static void TestWaterFrames() {
