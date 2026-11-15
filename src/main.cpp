@@ -85,6 +85,13 @@ struct ItemEntity {
 };
 static std::vector<ItemEntity> gItemEntities;
 static void UpdateItemEntities(float dt);
+// M3.2 redstone: power levels per block position.
+static std::unordered_map<uint64_t, uint8_t> gRedstonePower; // posKey -> 0..15
+uint64_t RedstoneKey(int x, int y, int z) { return (uint64_t(uint32_t(x)) << 40) | (uint64_t(uint32_t(y)) << 20) | uint64_t(uint32_t(z)); }
+static uint16_t gRedstoneLampId = 0;
+static int gRedstoneLampOnTile = 0;
+static int gRedstoneLampOffTile = 0;
+static bool gLampPowered = false;
 static FurnaceState gFurnace;
 static int gDimension = 0; // 0 overworld, 1 nether
 static WorldGenerator gOverworldGen = WorldGenerator::Climate;
@@ -2578,6 +2585,7 @@ static void HandleGameFrame(float dt) {
             } else {
                 gWorld->SetBlock(hx, hy, hz, BLOCK_AIR);
                 ++gBrokenBlocks;
+                UpdateRedstone();
                 if (gGameMode == 0) {
                     if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 2 : 1))
                         gSound.Play(SND_TOOL_BREAK);
@@ -2665,6 +2673,7 @@ static void HandleGameFrame(float dt) {
                 const uint16_t block = gHotbar[gHotbarSlot];
                 if (block == BLOCK_AIR || !IsBlockId(block) || (gGameMode == 0 && gInventory.slots[27 + gHotbarSlot].Empty())) return;
                 gWorld->SetBlock(px, py, pz, block);
+                UpdateRedstone();
                 if (gGameMode == 0) {
                     ItemSlot& s = gInventory.slots[27 + gHotbarSlot];
                     if (--s.count <= 0) s = ItemSlot{};
@@ -3734,6 +3743,94 @@ static void UpdateItemEntities(float dt) {
     }
 }
 
+static void UpdateRedstone() {
+    gRedstonePower.clear();
+    if (!gWorld) return;
+    // Collect sources: redstone_block emits 15. (Lever/button/torch/wire handled
+    // when their meshes land in M4; their state maps are ready.)
+    std::vector<std::tuple<int,int,int>> sources;
+    // Scan loaded chunks for redstone blocks.
+    for (auto it = gGpu.begin(); it != gGpu.end(); ++it) {
+        int cx = KeyCX(it->first), cz = KeyCZ(it->first);
+        for (int lx = 0; lx < CHUNK_X; ++lx)
+            for (int lz = 0; lz < CHUNK_Z; ++lz)
+                for (int y = 0; y < CHUNK_Y; ++y) {
+                    int wx = cx * CHUNK_X + lx, wz = cz * CHUNK_Z + lz;
+                    uint16_t b = gWorld->GetBlock(wx, y, wz);
+                    if (b == BLOCK_AIR) continue;
+                    const char* nm = (b < BLOCK_COUNT) ? BLOCK_DEFS[b].name : nullptr;
+                    if (!nm) {
+                        // registry block: look up name
+                        for (const RegistryBlockEntry& e : RegistryBlocks())
+                            if (e.id == b) { nm = e.name.c_str(); break; }
+                    }
+                    if (nm && std::string(nm) == "redstone_block")
+                        sources.push_back({wx, y, wz});
+                }
+    }
+    // BFS propagation. Power decays by 1 per step through air/transparent;
+    // full cubes (non-source) receive power but don't propagate beyond 1.
+    // Simple: flood fill with max power.
+    std::deque<std::tuple<int,int,int,int>> q; // x,y,z,power
+    for (auto& s : sources) q.push_back({std::get<0>(s), std::get<1>(s), std::get<2>(s), 15});
+    const int dx[6] = {1,-1,0,0,0,0};
+    const int dy[6] = {0,0,1,-1,0,0};
+    const int dz[6] = {0,0,0,0,1,-1};
+    while (!q.empty()) {
+        auto [x,y,z,p] = q.front(); q.pop_front();
+        if (p <= 0) continue;
+        uint64_t key = RedstoneKey(x,y,z);
+        if (gRedstonePower.count(key) && gRedstonePower[key] >= (uint8_t)p) continue;
+        gRedstonePower[key] = (uint8_t)p;
+        for (int d = 0; d < 6; ++d) {
+            int nx = x + dx[d], ny = y + dy[d], nz = z + dz[d];
+            if (ny < 0 || ny >= CHUNK_Y) continue;
+            uint16_t nb = gWorld->GetBlock(nx, ny, nz);
+            // Propagate into air and into redstone_lamp (consumer) and redstone_block (already source).
+            // Skip solid opaque non-conductors (stone etc.) except they receive weak power.
+            bool canPropagate = (nb == BLOCK_AIR);
+            if (!canPropagate) {
+                const char* nnm = (nb < BLOCK_COUNT) ? BLOCK_DEFS[nb].name : nullptr;
+                if (!nnm) for (const RegistryBlockEntry& e : RegistryBlocks()) if (e.id == nb) { nnm = e.name.c_str(); break; }
+                std::string nname = nnm ? nnm : "";
+                if (nname == "redstone_lamp" || nname == "redstone_block" || nname == "redstone_wire") canPropagate = true;
+            }
+            if (!canPropagate) continue;
+            // Full cubes (non-wire) don't propagate beyond themselves; handled by only
+            // propagating into air/wire/lamp.
+            q.push_back({nx, ny, nz, p - 1});
+        }
+    }
+    // Determine if any lamp is powered, update its tile, and re-mesh those chunks.
+    bool anyLampPowered = false;
+    std::vector<std::tuple<int,int,int>> lamps;
+    for (auto it = gGpu.begin(); it != gGpu.end(); ++it) {
+        int cx = KeyCX(it->first), cz = KeyCZ(it->first);
+        for (int lx = 0; lx < CHUNK_X; ++lx)
+            for (int lz = 0; lz < CHUNK_Z; ++lz)
+                for (int y = 0; y < CHUNK_Y; ++y) {
+                    int wx = cx * CHUNK_X + lx, wz = cz * CHUNK_Z + lz;
+                    uint16_t b = gWorld->GetBlock(wx, y, wz);
+                    if (b != 0 && b == gRedstoneLampId) {
+                        lamps.push_back({wx, y, wz});
+                        if (gRedstonePower.count(RedstoneKey(wx, y, wz)) && gRedstonePower[RedstoneKey(wx, y, wz)] > 0)
+                            anyLampPowered = true;
+                    }
+                }
+    }
+    if (anyLampPowered != gLampPowered) {
+        gLampPowered = anyLampPowered;
+        if (gRedstoneLampId != 0) {
+            int tile = anyLampPowered ? gRedstoneLampOnTile : gRedstoneLampOffTile;
+            if (tile > 0) gTiles.side[gRedstoneLampId] = gTiles.top[gRedstoneLampId] = gTiles.bottom[gRedstoneLampId] = tile;
+        }
+        // Re-mesh chunks containing lamps.
+        for (auto& lp : lamps) {
+            gWorld->SetBlock(std::get<0>(lp), std::get<1>(lp), std::get<2>(lp), gRedstoneLampId);
+        }
+    }
+}
+
 static void RenderFrame() {
     const float sky[4] = {0.47f, 0.65f, 1.0f, 1.0f};
     gRC.device->ClearRenderTargetView(gRC.rtv, sky);
@@ -3957,7 +4054,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         gTiles.top[entry.id] = key(entry.textures.top);
         gTiles.side[entry.id] = key(entry.textures.side);
         gTiles.bottom[entry.id] = key(entry.textures.bottom);
+        // Remember the redstone lamp so M3.2 can toggle it.
+        if (entry.name == "redstone_lamp") {
+            gRedstoneLampId = entry.id;
+            gRedstoneLampOffTile = key(entry.textures.side);
+        }
     }
+    gRedstoneLampOnTile = ResolveAtlasKey("block/redstone_lamp_on");
+    UpdateRedstone();
     // One icon tile per id in the shared atlas (blocks + items).
     gIconsBound = BindItemIconTiles(gAtlas);
     WriteMissingTextureReport();
