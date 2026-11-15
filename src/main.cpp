@@ -3363,7 +3363,13 @@ static void DrawWorld() {
         eyeZ += gCamera.fwdZ * dir * dist;
     }
     const XMVECTOR eye = XMVectorSet(eyeX, eyeY, eyeZ, 1);
-    const XMVECTOR at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
+    XMVECTOR at;
+    if (gPerspective == 2) {
+        // Front view: look back at the player from in front of them.
+        at = XMVectorSet(gCamera.x, gCamera.y, gCamera.z, 1);
+    } else {
+        at = XMVectorAdd(eye, XMVectorSet(gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ, 0));
+    }
     const XMMATRIX view = XMMatrixLookAtRH(eye, at, XMVectorSet(0, 1, 0, 0));
     static float sFov = 70.0f;
     const float targetFov = gSettings.fov * (gBody.sprinting ? 1.15f : 1.0f) * gZoom;

@@ -1,4 +1,5 @@
 #include "gui.h"
+#include "registry.h"
 #include "json.hpp"
 #include <algorithm>
 #include <cmath>
@@ -1211,6 +1212,18 @@ void RebuildCreativeList() {
     for (int i = 1; i <= 0xFFFF; ++i) {
         const uint16_t id = uint16_t(i);
         if (!IsValidItem(id)) continue;
+        // Registry blocks that are not full cubes (slabs, stairs, doors,
+        // torches, ...) have no mesh yet: showing them in creative produces
+        // blank slots that can never be placed. Keep them addressable (recipes,
+        // /give, loot) but out of the creative grid until M4.
+        if (id >= REGISTRY_ID_BASE) {
+            bool isRegistryBlock = false, fullCube = false;
+            for (const RegistryBlockEntry& entry : RegistryBlocks()) {
+                if (entry.id == id) { isRegistryBlock = true; fullCube = entry.fullCube; break; }
+            }
+            if (isRegistryBlock && !fullCube) continue;
+            if (ItemIconTile(id) < 0) continue; // no sprite -> blank slot
+        }
         if (gCreativeTab == CTAB_SEARCH) {
             if (!ItemMatchesSearch(id, gCreativeSearch)) continue;
         } else if (ItemCreativeTab(id) != gCreativeTab) {
