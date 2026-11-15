@@ -1671,7 +1671,7 @@ int main() {
         if (v.cr == 1.0f) hasTop = true;
         if (v.cr == 0.5f) hasBottom = true;
     }
-    CHECK(hasTop && hasBottom, "face light levels present (top 15, bottom 8)");
+    CHECK(hasTop && hasBottom, "face shade present (top 1.0, bottom 0.5)");
     CheckBoxMesh(md, 0, 0, 0, float(CHUNK_X), float(CHUNK_Y), float(CHUNK_Z));
 
     std::vector<uint16_t> one(CHUNK_VOL, 0);

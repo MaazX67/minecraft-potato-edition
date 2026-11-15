@@ -148,7 +148,6 @@ float4 PSMainEntity(PSIn input) : SV_TARGET
     float4 tex = gAtlas.Sample(gPoint, input.uv);
     clip(tex.a - 0.1f);
     float3 light = CombineLight(input.shade, input.skylight);
-    float3 dark = 1.0f - light;
     float fog = gFogEnd > 0 ? saturate((input.fogDepth - gFogStart) / max(gFogEnd - gFogStart, 0.001f)) : 0;
     return float4(lerp(tex.rgb * light * input.tint, gFogColorStars.rgb, fog), tex.a);
 }
