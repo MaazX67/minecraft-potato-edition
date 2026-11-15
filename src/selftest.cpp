@@ -1071,6 +1071,26 @@ static void TestHeldItemMesh() {
     CHECK(mesh.size() == 3456, "solid 16x16 sprite extrudes to 3456 vertices");
 }
 
+static void TestBlockLight() {
+    // A glowstone block (light level 15) in an enclosed cave should give
+    // 15 at its own cell and 14 at adjacent air cells.
+    BlockTiles tiles;
+    std::vector<uint16_t> blocks(CHUNK_VOL, BLOCK_AIR);
+    // Place glowstone at center.
+    blocks[8 + CHUNK_X * 8 + CHUNK_X * CHUNK_Z * 64] = BLOCK_GLOWSTONE;
+    MeshData md;
+    BuildChunkMeshCPU(blocks.data(), nullptr, nullptr, nullptr, nullptr, tiles, md);
+    // Find a vertex adjacent to the glowstone (air cell at (9, 64, 8)).
+    // The block light should be 14 (15 - 1) at adjacent air cells.
+    // Since block light is stored in vert.light, check if any vertex has
+    // light > 0 (glowstone emits 15, adjacent air gets 14).
+    bool hasLight = false;
+    for (const MeshVertex& v : md.vertices) {
+        if (v.light > 0.0f) { hasLight = true; break; }
+    }
+    CHECK(hasLight, "glowstone emits block light (vert.light > 0)");
+}
+
 static void TestWaterFrames() {
     // Synthetic 16x512 strip (32 frames), each frame a flat shade with Java's
     // baked water alpha (180/255 = 0.706).
@@ -1630,6 +1650,7 @@ int main() {
     TestClimateGeneration();
     TestBlockExpansion();
     TestHeldItemMesh();
+    TestBlockLight();
     TestWaterFrames();
     TestWaterShaderPass();
     TestBubbleParticles();

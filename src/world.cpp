@@ -1023,7 +1023,26 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         else if (d == 1) ay = airCell;
                         else az = airCell;
                         vert.sky = skyAt(ax, ay, az);
-                        vert.light = blockLightAt(ax, ay, az);   // block light (torches, glowstone, lava)
+                        // Smooth lighting / AO: per-vertex ambient occlusion.
+                        {
+                            int t1[3] = {0,0,0}, t2[3] = {0,0,0}, nrm[3] = {0,0,0};
+                            nrm[d] = cell.sign > 0 ? 1 : -1;
+                            if (d == 0) { t1[1]=1; t2[2]=1; }
+                            else if (d == 1) { t1[0]=1; t2[2]=1; }
+                            else { t1[0]=1; t2[1]=1; }
+                            int sx = ax + nrm[0], sy = ay + nrm[1], sz = az + nrm[2];
+                            auto isSolid = [&](int x, int y, int z) -> int {
+                                if (x < 0 || x >= CHUNK_X || y < 0 || y >= CHUNK_Y || z < 0 || z >= CHUNK_Z) return 0;
+                                return (BlockFlags(sample(x, y, z)) & BF_SOLID) ? 1 : 0;
+                            };
+                            int s1 = isSolid(sx - t1[0], sy - t1[1], sz - t1[2]);
+                            int s2 = isSolid(sx - t2[0], sy - t2[1], sz - t2[2]);
+                            int cr = isSolid(sx - t1[0] - t2[0], sy - t1[1] - t2[1], sz - t1[2] - t2[2]);
+                            int ao = 3 - (s1 + s2 + ((s1 && s2) ? cr : 0));
+                            float aoFactor = (float)(ao + 1) / 4.0f;
+                            vert.cr = vert.cg = vert.cb = (float(cell.shade) / 100.0f) * aoFactor;
+                        }
+                        vert.light = blockLightAt(ax, ay, az);
                         dst.vertices.push_back(vert);
                     }
                     dst.indices.push_back(base);
