@@ -793,6 +793,24 @@ int FaceShade(int d, int sign) {
 } // namespace
 
 // Light emitted by a block (0 = none). Java values.
+// Light emitted by a block (0 = none). Java values.
+static int BlockLightLevel(uint16_t b) {
+    if (b == BLOCK_GLOWSTONE || b == BLOCK_SEA_LANTERN || b == BLOCK_SHROOMLIGHT) return 15;
+    if (b == BLOCK_LAVA) return 15;
+    // Registry blocks: check name for torches, glowstone, etc.
+    // (RegistryBlocks() available via registry.h included in world.cpp)
+    for (const RegistryBlockEntry& e : RegistryBlocks()) {
+        if (e.id != b) continue;
+        const std::string& n = e.name;
+        if (n.find("torch") != std::string::npos) return (n.find("soul") != std::string::npos) ? 10 : 14;
+        if (n == "glowstone" || n == "sea_lantern" || n == "shroomlight" || n == "end_rod" ||
+            n == "jack_o_lantern" || n.find("froglight") != std::string::npos) return 15;
+        if (n.find("lava") != std::string::npos) return 15;
+        return 0;
+    }
+    return 0;
+}
+
 void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint16_t* posX,
                        const uint16_t* negZ, const uint16_t* posZ, const BlockTiles& tiles,
                        MeshData& out) {
@@ -830,6 +848,67 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
         if (nx < 0) nx = 0; else if (nx >= CHUNK_X) nx = CHUNK_X - 1;
         if (nz < 0) nz = 0; else if (nz >= CHUNK_Z) nz = CHUNK_Z - 1;
         return ny > heights[nx + CHUNK_X * nz] ? 15.0f : 0.0f;
+    };
+
+    // Block light: flood-fill from emitters (torch 14, glowstone 15, lava 15, etc.),
+    // decreasing by 1 per block, blocked by opaque blocks. Java: block light
+    // propagates through air/transparent blocks, losing 1 level per block.
+    std::vector<uint8_t> blockLight(size_t(CHUNK_X) * CHUNK_Z * CHUNK_Y, 0);
+    // Initialize: set light level for emitters.
+    for (int y = 0; y < CHUNK_Y; ++y) {
+        for (int z = 0; z < CHUNK_Z; ++z) {
+            for (int x = 0; x < CHUNK_X; ++x) {
+                uint16_t b = sample(x, y, z);
+                int lvl = BlockLightLevel(b);
+                if (lvl > 0) {
+                    blockLight[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = (uint8_t)lvl;
+                }
+            }
+        }
+    }
+    // BFS: propagate to 6 neighbors, decreasing by 1, blocked by opaque.
+    std::vector<int> bq;
+    bq.reserve(1024);
+    for (int i = 0; i < (int)blockLight.size(); ++i) {
+        if (blockLight[i] > 0) bq.push_back(i);
+    }
+    const int bdx[6] = {1,-1,0,0,0,0};
+    const int bdy[6] = {0,0,1,-1,0,0};
+    const int bdz[6] = {0,0,0,0,1,-1};
+    size_t bqi = 0;
+    while (bqi < bq.size()) {
+        int idx = bq[bqi++];
+        int x = idx % CHUNK_X;
+        int z = (idx / CHUNK_X) % CHUNK_Z;
+        int y = idx / (CHUNK_X * CHUNK_Z);
+        uint8_t lvl = blockLight[idx];
+        if (lvl <= 1) continue;
+        for (int d = 0; d < 6; ++d) {
+            int nx = x + bdx[d], ny = y + bdy[d], nz = z + bdz[d];
+            if (ny < 0 || ny >= CHUNK_Y) continue;
+            uint16_t nb;
+            if (nx < 0 || nx >= CHUNK_X || nz < 0 || nz >= CHUNK_Z) {
+                // Boundary: check neighbor chunk.
+                nb = sample(nx, ny, nz);
+                if (BlockFlags(nb) & BF_OPAQUE) continue;
+                // Can't write to neighbor chunk's array; skip.
+                continue;
+            }
+            nb = sample(nx, ny, nz);
+            if (BlockFlags(nb) & BF_OPAQUE) continue;
+            // Also propagate through transparent blocks (glass, water, leaves)
+            // but not through solid opaque blocks.
+            int nidx = nx + CHUNK_X * nz + CHUNK_X * CHUNK_Z * ny;
+            if (blockLight[nidx] < lvl - 1) {
+                blockLight[nidx] = lvl - 1;
+                bq.push_back(nidx);
+            }
+        }
+    }
+    auto blockLightAt = [&](int nx, int ny, int nz) -> float {
+        if (ny >= CHUNK_Y || ny < 0) return 0.0f;
+        if (nx < 0 || nx >= CHUNK_X || nz < 0 || nz >= CHUNK_Z) return 0.0f;
+        return float(blockLight[nx + CHUNK_X * nz + CHUNK_X * CHUNK_Z * ny]);
     };
 
     for (int d = 0; d < 3; ++d) {
@@ -930,7 +1009,7 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                             vert.u = cell.sign > 0 ? corners[c][0] : float(w) - corners[c][0];
                             vert.v = d == 2 ? float(h) - corners[c][1] : corners[c][1];
                         }
-                        vert.light = 0.0f;   // block light emission not implemented yet
+                        vert.light = blockLightAt(ax, ay, az);   // block light (torches, glowstone, lava)
                         vert.cr = vert.cg = vert.cb = float(cell.shade) / 100.0f;
                         // Air cell on the face's normal side; p[d] is the
                         // plane coordinate (opaque cell at p[d]-1 when sign>0).
