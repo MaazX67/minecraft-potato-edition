@@ -963,9 +963,15 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                     const uint16_t b = sample(x[0] + q[0], x[1] + q[1], x[2] + q[2]);
                     const bool aOpaque = (BlockFlags(a) & BF_OPAQUE) != 0;
                     const bool bOpaque = (BlockFlags(b) & BF_OPAQUE) != 0;
+                    // Non-cube blocks (slab, torch, stair, door) are handled
+                    // by the non-cube pass below; skip them in the greedy mesher
+                    // to avoid duplicate/overlapping faces.
                     uint16_t blk = 0;
                     int sign = 0;
-                    if (aOpaque != bOpaque) {
+                    if (NonCubeShape(a) != 0 || NonCubeShape(b) != 0) {
+                        // Treat as air so no greedy face is generated.
+                        blk = 0;
+                    } else if (aOpaque != bOpaque) {
                         blk = aOpaque ? a : b;
                         sign = aOpaque ? 1 : -1;
                     } else if (!aOpaque && a != b && (a == 0 || b == 0)) {
@@ -1096,69 +1102,82 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
     // Non-cube blocks are handled by the greedy mesher as full cubes for now.
     // Proper non-cube meshes (slab, torch, stair, door) will be added in M4.
 
-    // Non-cube blocks (slabs, torches, stairs, doors) are meshed individually
-    // after the greedy pass, since they don't tile into full-cube faces.
+    // Non-cube blocks (slab, torch) are meshed individually after the greedy
+    // pass. Stairs and doors render as full cubes (greedy already handled them).
     for (int y = 0; y < CHUNK_Y; ++y) {
         for (int z = 0; z < CHUNK_Z; ++z) {
             for (int x = 0; x < CHUNK_X; ++x) {
                 uint16_t b = blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
                 if (b == BLOCK_AIR) continue;
                 int shape = NonCubeShape(b);
-                if (shape == 0) continue;
+                if (shape <= 0 || shape >= 3) continue; // only slab(1) and torch(2)
                 int tile = FaceTile(tiles, b, 1, 1);
                 if (tile <= 0) tile = 0;
                 float tileU = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
                 float tileV = float((tile / ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
                 MeshData& dst = out;
                 uint32_t base;
-                float shade = 0.8f;
-                int sky = (int)skyAt(x, y, z);
-
-                if (shape == 1) {
-                    // Slab: half-height cube (y to y+0.5)
-                    // 6 faces: bottom, top at 0.5, 4 sides from 0 to 0.5
+                float sky = skyAt(x, y, z);
+                if (shape == 1) { // Slab: half-height cube
                     const float h = 0.5f;
-                    // Bottom face (y=0, facing down)
+                    // Bottom face (facing down)
                     base = (uint32_t)dst.vertices.size();
                     for (int c = 0; c < 4; ++c) {
                         float cx = (c < 2) ? 0.0f : 1.0f;
                         float cz = (c == 1 || c == 2) ? 1.0f : 0.0f;
-                        MeshVertex v;
-                        v.x = x + cx; v.y = (float)y; v.z = z + cz;
+                        MeshVertex v; v.x = x + cx; v.y = (float)y; v.z = z + cz;
                         v.tu = tileU; v.tv = tileV; v.u = cx; v.v = cz;
                         v.light = 0; v.cr = v.cg = v.cb = 0.5f; v.sky = skyAt(x, y - 1, z);
                         dst.vertices.push_back(v);
                     }
                     dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
                     dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
-                    // Top face (y=0.5, facing up)
+                    // Top face (facing up, at y+0.5)
                     base = (uint32_t)dst.vertices.size();
                     for (int c = 0; c < 4; ++c) {
-                        float cx = (c < 2) ? 0.0f : 1.0f;
-                        float cz = (c == 1 || c == 2) ? 1.0f : 0.0f;
-                        MeshVertex v;
-                        v.x = x + (c < 2 ? 0.0f : 1.0f); v.y = y + h; v.z = (c == 1 || c == 2) ? z + 1.0f : z;
-                        // Fix: use proper corner ordering
-                        v.x = x + ((c == 0 || c == 3) ? 0.0f : 1.0f);
-                        v.y = y + h;
-                        v.z = (c == 0 || c == 1) ? z : z + 1.0f;
-                        v.tu = tileU; v.tv = tileV; v.u = (c == 0 || c == 3) ? 0.0f : 1.0f; v.v = (c == 0 || c == 1) ? 0.0f : 1.0f;
+                        float cx = (c == 0 || c == 3) ? 0.0f : 1.0f;
+                        float cz = (c == 0 || c == 1) ? 0.0f : 1.0f;
+                        MeshVertex v; v.x = x + cx; v.y = y + h; v.z = z + cz;
+                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = cz;
                         v.light = 0; v.cr = v.cg = v.cb = 1.0f; v.sky = skyAt(x, y + 1, z);
                         dst.vertices.push_back(v);
                     }
                     dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
                     dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                    // 4 side faces (from y=0 to y=0.5)
+                    for (int side = 0; side < 4; ++side) {
+                        base = (uint32_t)dst.vertices.size();
+                        float x0 = (side == 0 || side == 3) ? (float)x : x + 1.0f;
+                        float z0 = (side == 0 || side == 1) ? (float)z : z + 1.0f;
+                        float x1 = x0, z1 = z0;
+                        if (side == 0) z1 = z + 1.0f;
+                        if (side == 1) x1 = x;
+                        if (side == 2) z1 = z;
+                        if (side == 3) x1 = x + 1.0f;
+                        // Just generate a simple quad for each side
+                        MeshVertex v; 
+                        v.tu = tileU; v.tv = tileV; v.light = 0; v.cr = v.cg = v.cb = 0.7f;
+                        v.x = x0; v.y = (float)y; v.z = z0; v.u = 0; v.v = 1; v.sky = sky;
+                        dst.vertices.push_back(v);
+                        v.x = x1; v.y = (float)y; v.z = z1; v.u = 1; v.v = 1; v.sky = sky;
+                        dst.vertices.push_back(v);
+                        v.x = x1; v.y = y + 0.5f; v.z = z1; v.u = 1; v.v = 0; v.sky = sky;
+                        dst.vertices.push_back(v);
+                        v.x = x0; v.y = y + 0.5f; v.z = z0; v.u = 0; v.v = 0; v.sky = sky;
+                        dst.vertices.push_back(v);
+                        dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                        dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                    }
                 } else if (shape == 2) {
                     // Torch: vertical stick (1/16 wide, 10/16 tall)
                     float h = 10.0f / 16.0f;
                     const float cx = x + 0.5f, cz = z + 0.5f;
-                    const float hw = 1.0f / 32.0f; // half-width
-                    // 4 side faces
+                    const float hw = 1.0f / 32.0f;
                     const float faces[4][4] = {
-                        {cx - hw, cz - hw, cx + hw, cz - hw}, // north (z-)
-                        {cx + hw, cz - hw, cx + hw, cz + hw}, // east (x+)
-                        {cx + hw, cz + hw, cx - hw, cz + hw}, // south (z+)
-                        {cx - hw, cz + hw, cx - hw, cz - hw}, // west (x-)
+                        {cx - hw, cz - hw, cx + hw, cz - hw},
+                        {cx + hw, cz - hw, cx + hw, cz + hw},
+                        {cx + hw, cz + hw, cx - hw, cz + hw},
+                        {cx - hw, cz + hw, cx - hw, cz - hw},
                     };
                     for (int f = 0; f < 4; ++f) {
                         base = (uint32_t)dst.vertices.size();
@@ -1173,13 +1192,6 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
                         dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
                     }
-                } else if (shape == 3) {
-                    // Stairs: render as full cube for now (proper mesh in M4).
-                    // Skip non-cube meshing; the greedy mesher already handled it.
-                    continue;
-                } else if (shape == 4) {
-                    // Door: render as full cube for now (proper mesh in M4).
-                    continue;
                 }
             }
         }
