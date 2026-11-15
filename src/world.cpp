@@ -826,35 +826,25 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
         return blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
     };
 
-    // Sky light: flood-fill from the top of each column, propagating sideways
-    // and downward through air, decreasing by 1 per block (Java: sky light
-    // spreads through air and transparent blocks, blocked by opaque blocks).
-    // This fixes "whole black under trees" — light bleeds through gaps.
-    std::vector<uint8_t> skyLight(size_t(CHUNK_X) * CHUNK_Z * CHUNK_Y, 0);
-    // Initialize: top-down, 15 until first solid block (no decrement straight down).
+    // Sky light: per-column height of the highest solid cell. A face whose
+    // adjacent air cell sits above that height sees the full sky (15); faces
+    // under an overhang are shadowed.
+    int heights[CHUNK_X * CHUNK_Z];
     for (int z = 0; z < CHUNK_Z; ++z) {
         for (int x = 0; x < CHUNK_X; ++x) {
-            bool hitSolid = false;
+            int h = -1;
             for (int y = CHUNK_Y - 1; y >= 0; --y) {
-                uint16_t b = sample(x, y, z);
-                if (BlockFlags(b) & BF_OPAQUE) { hitSolid = true; }
-                if (!hitSolid) {
-                    skyLight[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = 15;
-                }
+                if (BlockFlags(sample(x, y, z)) & BF_SOLID) { h = y; break; }
             }
+            heights[x + CHUNK_X * z] = h;
         }
     }
-    // BFS: propagate sky light to 6 neighbors, decreasing by 1, blocked by opaque.
-    // (Disabled temporarily to pass selftest; re-enable with proper testing.)
-    (void)0;
     auto skyAt = [&](int nx, int ny, int nz) -> float {
         if (ny >= CHUNK_Y) return 15.0f;
         if (ny < 0) return 0.0f;
-        if (nx < 0 || nx >= CHUNK_X || nz < 0 || nz >= CHUNK_Z) {
-            // Boundary: approximate with 0 (neighbor chunk will have its own).
-            return 0.0f;
-        }
-        return float(skyLight[nx + CHUNK_X * nz + CHUNK_X * CHUNK_Z * ny]);
+        if (nx < 0) nx = 0; else if (nx >= CHUNK_X) nx = CHUNK_X - 1;
+        if (nz < 0) nz = 0; else if (nz >= CHUNK_Z) nz = CHUNK_Z - 1;
+        return ny > heights[nx + CHUNK_X * nz] ? 15.0f : 0.0f;
     };
 
     for (int d = 0; d < 3; ++d) {

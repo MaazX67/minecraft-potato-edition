@@ -1720,19 +1720,12 @@ int main() {
         MeshData openSky;
         BuildChunkMeshCPU(lit.data(), nullptr, nullptr, nullptr, nullptr, tiles, openSky);
         int openTop = 0, openTopSky = 0;
-        float skyVals[8] = {};
-        int si = 0;
         for (const MeshVertex& v : openSky.vertices) {
             if (v.y == 65.0f && v.cr == 1.0f) {
                 ++openTop;
                 if (v.sky == 15.0f) ++openTopSky;
-                if (si < 8) skyVals[si++] = v.sky;
             }
         }
-        // Debug: print sky values
-        printf("DEBUG openTop=%d openTopSky=%d skyVals=", openTop, openTopSky);
-        for (int i = 0; i < si; ++i) printf("%.0f ", skyVals[i]);
-        printf("\n");
         CHECK(openTop == 4 && openTopSky == 4,
               "open-sky surface quads carry full skylight (15)");
 
