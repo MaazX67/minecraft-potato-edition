@@ -375,6 +375,10 @@ int RegisterRuntimeRegistry(AssetStore& store) {
                 flags = BF_CUTOUT; // torch is not solid, but is cutout
             } else if (name.find("slab") != std::string::npos) {
                 flags = uint8_t(BF_SOLID); // slab is solid but not opaque
+            } else if (name.find("stairs") != std::string::npos) {
+                flags = uint8_t(BF_SOLID); // stairs are solid
+            } else if (name.find("door") != std::string::npos) {
+                flags = uint8_t(BF_SOLID); // doors are solid
             }
         }
         if (id < BLOCK_ID_LIMIT) REGISTRY_BLOCK_FLAGS[id] = flags;

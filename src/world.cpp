@@ -818,7 +818,8 @@ static int BlockLightLevel(uint16_t b) {
     return (b < lut.size()) ? lut[b] : 0;
 }
 
-// Non-cube block shape: 0=cube, 1=slab (half height), 2=torch (vertical stick).
+// Non-cube block shape: 0=cube, 1=slab (half height), 2=torch (vertical stick),
+// 3=stairs (two boxes), 4=door (vertical slab).
 static int NonCubeShape(uint16_t b) {
     if (b < BLOCK_COUNT) return 0;
     for (const RegistryBlockEntry& e : RegistryBlocks()) {
@@ -826,6 +827,8 @@ static int NonCubeShape(uint16_t b) {
         const std::string& n = e.name;
         if (n.find("slab") != std::string::npos) return 1;
         if (n.find("torch") != std::string::npos) return 2;
+        if (n.find("stairs") != std::string::npos) return 3;
+        if (n.find("door") != std::string::npos) return 4;
         return 0;
     }
     return 0;
