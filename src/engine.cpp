@@ -947,7 +947,18 @@ void Mob::Update(float dt, const PlayerBody& player, const std::function<uint16_
     } else {
         yaw = atan2f(dx, -dz);
         const float reach = type == MobType::Skeleton ? 14.0f : 32.0f;
-        input.keys['W'] = distance2 > 1.5f * 1.5f && distance2 < reach * reach;
+        // Line-of-sight check: only chase if no solid block between mob and player.
+        bool hasLos = true;
+        if (distance2 > 4.0f) {
+            const float step = 0.5f;
+            const float dist = sqrtf(distance2);
+            const float sx = dx / dist, sz = dz / dist;
+            for (float t = 0.5f; t < dist; t += step) {
+                uint16_t b = getBlock(int(floorf(body.x + sx * t)), int(floorf(body.y + 1.0f)), int(floorf(body.z + sz * t)));
+                if (b != BLOCK_AIR && (BlockFlags(b) & BF_SOLID)) { hasLos = false; break; }
+            }
+        }
+        input.keys['W'] = hasLos && distance2 > 1.5f * 1.5f && distance2 < reach * reach;
         if (input.keys['W'] && body.onGround && BodyHits(getBlock, body.x + sinf(yaw) * 0.5f, body.y,
                                                        body.z - cosf(yaw) * 0.5f)) input.keys[VK_SPACE] = true;
         if (type == MobType::Creeper) {

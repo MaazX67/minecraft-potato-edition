@@ -2547,7 +2547,7 @@ static void HandleGameFrame(float dt) {
         const bool critical = strength > 0.9f && !gBody.onGround && gBody.vy < 0 &&
             !gBody.inWater && !gBody.flying && !gBody.sprinting;
         const float damage = gCooldown.Swing(gNowMs) * (critical ? 1.5f : 1.0f);
-        const float knockback = strength > 0.9f && gBody.sprinting ? 8.0f : 4.0f;
+        const float knockback = (strength > 0.9f && gBody.sprinting) ? 12.0f : 8.0f;
         if (targetZombie->Hit(damage, sinf(gCamera.yaw) * knockback, -cosf(gCamera.yaw) * knockback) > 0) {
             ++gCombatHits;
             if (targetZombie->health == 0) ++gZombieKills;
@@ -2557,6 +2557,21 @@ static void HandleGameFrame(float dt) {
             }
             gSound.PlayAt(critical ? SND_CRIT : SND_HIT, targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
             gSound.PlayAt(SND_ZOMBIE_HURT, targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
+            // Sweep attack: sword, strength > 0.9, on ground, not sprinting.
+            if (tool && tool->kind == ToolKind::Sword && strength > 0.9f && gBody.onGround && !gBody.sprinting) {
+                for (Zombie& z : gZombies) {
+                    if (&z == targetZombie || z.health <= 0) continue;
+                    float dx = z.body.x - gBody.x, dz = z.body.z - gBody.z;
+                    // Check if within sweep area (in front of player, within ~2 blocks).
+                    float fwd = dx * sinf(gCamera.yaw) - dz * cosf(gCamera.yaw);
+                    float side = dx * cosf(gCamera.yaw) + dz * sinf(gCamera.yaw);
+                    if (fwd > 0 && fwd < 2.0f && fabsf(side) < 1.0f && z.body.y < gBody.y + 2.0f && z.body.y > gBody.y - 1.0f) {
+                        z.Hit(1.0f, sinf(gCamera.yaw) * 4.0f, -cosf(gCamera.yaw) * 4.0f);
+                        gParticles.SpawnCrit(z.body.x, z.body.y + 1, z.body.z);
+                        gSound.PlayAt(SND_HIT, z.body.x, z.body.y + 1, z.body.z);
+                    }
+                }
+            }
             if (gGameMode == 0) {
                 if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 1 : 2))
                     gSound.Play(SND_TOOL_BREAK);
