@@ -1095,6 +1095,28 @@ static void TestNonCubeMeshes() {
         BuildChunkMeshCPU(torchBlocks.data(), nullptr, nullptr, nullptr, nullptr, tiles, md2);
         CHECK(!md2.vertices.empty(), "torch produces mesh vertices");
     }
+    // Stairs and doors.
+    uint16_t stairId = 0, doorId = 0;
+    for (const RegistryBlockEntry& e : RegistryBlocks()) {
+        if (e.name.find("stairs") != std::string::npos) { stairId = e.id; break; }
+    }
+    for (const RegistryBlockEntry& e : RegistryBlocks()) {
+        if (e.name.find("door") != std::string::npos) { doorId = e.id; break; }
+    }
+    if (stairId != 0) {
+        std::vector<uint16_t> stairBlocks(CHUNK_VOL, BLOCK_AIR);
+        stairBlocks[8 + CHUNK_X * 8 + CHUNK_X * CHUNK_Z * 64] = stairId;
+        MeshData md3;
+        BuildChunkMeshCPU(stairBlocks.data(), nullptr, nullptr, nullptr, nullptr, tiles, md3);
+        CHECK(!md3.vertices.empty(), "stairs produce mesh vertices");
+    }
+    if (doorId != 0) {
+        std::vector<uint16_t> doorBlocks(CHUNK_VOL, BLOCK_AIR);
+        doorBlocks[8 + CHUNK_X * 8 + CHUNK_X * CHUNK_Z * 64] = doorId;
+        MeshData md4;
+        BuildChunkMeshCPU(doorBlocks.data(), nullptr, nullptr, nullptr, nullptr, tiles, md4);
+        CHECK(!md4.vertices.empty(), "door produces mesh vertices");
+    }
 }
 
 static void TestBlockLight() {
