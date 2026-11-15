@@ -1088,9 +1088,6 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                 if (tile <= 0) tile = 0;
                 float tileU = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
                 float tileV = float((tile / ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
-                float light = float(cell.light); // placeholder, will use directional
-                // Actually use FaceLight for directional shade
-                // (reuse the same shade logic as cubes)
                 MeshData& dst = out;
                 uint32_t base;
                 if (shape == 1) { // slab: half-height (y to y+0.5)
