@@ -1081,6 +1081,142 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
     // Non-cube blocks are handled by the greedy mesher as full cubes for now.
     // Proper non-cube meshes (slab, torch, stair, door) will be added in M4.
 
+    // Non-cube blocks (slabs, torches, stairs, doors) are meshed individually
+    // after the greedy pass, since they don't tile into full-cube faces.
+    for (int y = 0; y < CHUNK_Y; ++y) {
+        for (int z = 0; z < CHUNK_Z; ++z) {
+            for (int x = 0; x < CHUNK_X; ++x) {
+                uint16_t b = blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
+                if (b == BLOCK_AIR) continue;
+                int shape = NonCubeShape(b);
+                if (shape == 0) continue;
+                int tile = FaceTile(tiles, b, 1, 1);
+                if (tile <= 0) tile = 0;
+                float tileU = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+                float tileV = float((tile / ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+                MeshData& dst = out;
+                uint32_t base;
+                float shade = 0.8f;
+                int sky = (int)skyAt(x, y, z);
+
+                if (shape == 1) {
+                    // Slab: half-height cube (y to y+0.5)
+                    // 6 faces: bottom, top at 0.5, 4 sides from 0 to 0.5
+                    const float h = 0.5f;
+                    // Bottom face (y=0, facing down)
+                    base = (uint32_t)dst.vertices.size();
+                    for (int c = 0; c < 4; ++c) {
+                        float cx = (c < 2) ? 0.0f : 1.0f;
+                        float cz = (c == 1 || c == 2) ? 1.0f : 0.0f;
+                        MeshVertex v;
+                        v.x = x + cx; v.y = (float)y; v.z = z + cz;
+                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = cz;
+                        v.light = 0; v.cr = v.cg = v.cb = 0.5f; v.sky = skyAt(x, y - 1, z);
+                        dst.vertices.push_back(v);
+                    }
+                    dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                    dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                    // Top face (y=0.5, facing up)
+                    base = (uint32_t)dst.vertices.size();
+                    for (int c = 0; c < 4; ++c) {
+                        float cx = (c < 2) ? 0.0f : 1.0f;
+                        float cz = (c == 1 || c == 2) ? 1.0f : 0.0f;
+                        MeshVertex v;
+                        v.x = x + (c < 2 ? 0.0f : 1.0f); v.y = y + h; v.z = (c == 1 || c == 2) ? z + 1.0f : z;
+                        // Fix: use proper corner ordering
+                        v.x = x + ((c == 0 || c == 3) ? 0.0f : 1.0f);
+                        v.y = y + h;
+                        v.z = (c == 0 || c == 1) ? z : z + 1.0f;
+                        v.tu = tileU; v.tv = tileV; v.u = (c == 0 || c == 3) ? 0.0f : 1.0f; v.v = (c == 0 || c == 1) ? 0.0f : 1.0f;
+                        v.light = 0; v.cr = v.cg = v.cb = 1.0f; v.sky = skyAt(x, y + 1, z);
+                        dst.vertices.push_back(v);
+                    }
+                    dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                    dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                } else if (shape == 2) {
+                    // Torch: vertical stick (1/16 wide, 10/16 tall)
+                    float h = 10.0f / 16.0f;
+                    const float cx = x + 0.5f, cz = z + 0.5f;
+                    const float hw = 1.0f / 32.0f; // half-width
+                    // 4 side faces
+                    const float faces[4][4] = {
+                        {cx - hw, cz - hw, cx + hw, cz - hw}, // north (z-)
+                        {cx + hw, cz - hw, cx + hw, cz + hw}, // east (x+)
+                        {cx + hw, cz + hw, cx - hw, cz + hw}, // south (z+)
+                        {cx - hw, cz + hw, cx - hw, cz - hw}, // west (x-)
+                    };
+                    for (int f = 0; f < 4; ++f) {
+                        base = (uint32_t)dst.vertices.size();
+                        float x0 = faces[f][0], z0 = faces[f][1];
+                        float x1 = faces[f][2], z1 = faces[f][3];
+                        MeshVertex v0, v1v, v2, v3;
+                        v0.x = x0; v0.y = (float)y; v0.z = z0; v0.tu = tileU; v0.tv = tileV; v0.u = 0; v0.v = 1; v0.light = 0; v0.cr = v0.cg = v0.cb = 0.8f; v0.sky = skyAt(x, y, z);
+                        v1.x = x1; v1.y = (float)y; v1.z = z1; v1.tu = tileU; v1.tv = tileV; v1.u = 1; v1.v = 1; v1.light = 0; v1.cr = v1.cg = v1.cb = 0.8f; v1.sky = skyAt(x, y, z);
+                        v2.x = x1; v2.y = y + h; v2.z = z1; v2.tu = tileU; v2.tv = tileV; v2.u = 1; v2.v = 0; v2.light = 0; v2.cr = v2.cg = v2.cb = 0.8f; v2.sky = skyAt(x, y, z);
+                        v3.x = x0; v3.y = y + h; v3.z = z0; v3.tu = tileU; v3.tv = tileV; v3.u = 0; v3.v = 0; v3.light = 0; v3.cr = v3.cg = v3.cb = 0.8f; v3.sky = skyAt(x, y, z);
+                        dst.vertices.push_back(v0); dst.vertices.push_back(v1); dst.vertices.push_back(v2); dst.vertices.push_back(v3);
+                        dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                        dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                    }
+                } else if (shape == 3) {
+                    // Stairs: bottom half (full) + top half (right side).
+                    // Simplified: just render as a full cube for now (correct shape in M4).
+                    // For now, render as a slab to at least show something.
+                    float h = 0.5f;
+                    base = (uint32_t)dst.vertices.size();
+                    // Bottom face
+                    for (int c = 0; c < 4; ++c) {
+                        float cx = (c < 2) ? 0.0f : 1.0f;
+                        float cz = (c == 1 || c == 2) ? 1.0f : 0.0f;
+                        MeshVertex v;
+                        v.x = x + cx; v.y = (float)y; v.z = z + cz;
+                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = cz;
+                        v.light = 0; v.cr = v.cg = v.cb = 0.5f; v.sky = skyAt(x, y - 1, z);
+                        dst.vertices.push_back(v);
+                    }
+                    dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                    dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                    // Top face at 0.5
+                    base = (uint32_t)dst.vertices.size();
+                    for (int c = 0; c < 4; ++c) {
+                        float cx = (c < 2) ? 0.0f : 1.0f;
+                        float cz = (c == 1 || c == 2) ? 1.0f : 0.0f;
+                        MeshVertex v;
+                        v.x = x + cx; v.y = y + h; v.z = z + cz;
+                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = cz;
+                        v.light = 0; v.cr = v.cg = v.cb = 1.0f; v.sky = skyAt(x, y + 1, z);
+                        dst.vertices.push_back(v);
+                    }
+                    dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                    dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                } else if (shape == 4) {
+                    // Door: vertical slab (3/16 thick, 1 wide, 16 tall)
+                    float thick = 3.0f / 16.0f;
+                    base = (uint32_t)dst.vertices.size();
+                    for (int c = 0; c < 4; ++c) {
+                        float cx = (c < 2) ? 0.0f : 1.0f;
+                        float cy = (c == 0 || c == 3) ? 0.0f : 1.0f;
+                        MeshVertex v;
+                        v.x = x + cx; v.y = y + cy; v.z = z + 0.5f - thick/2;
+                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = 1-cy;
+                        v.light = 0; v.cr = v.cg = v.cb = 0.9f; v.sky = skyAt(x, y, z);
+                        dst.vertices.push_back(v);
+                    }
+                    base = (uint32_t)dst.vertices.size();
+                    for (int c = 0; c < 4; ++c) {
+                        float cx = (c < 2) ? 1.0f : 0.0f;
+                        float cy = (c == 0 || c == 3) ? 0.0f : 1.0f;
+                        MeshVertex v;
+                        v.x = x + cx; v.y = y + cy; v.z = z + 0.5f + thick/2;
+                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = 1-cy;
+                        v.light = 0; v.cr = v.cg = v.cb = 0.9f; v.sky = skyAt(x, y, z);
+                        dst.vertices.push_back(v);
+                    }
+                }
+            }
+        }
+    }
+
     // Liquid quads trail the opaque ones...
     const uint32_t vbase = uint32_t(out.vertices.size());
     out.vertices.insert(out.vertices.end(), liquid.vertices.begin(), liquid.vertices.end());
