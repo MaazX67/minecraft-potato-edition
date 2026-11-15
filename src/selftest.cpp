@@ -1071,6 +1071,32 @@ static void TestHeldItemMesh() {
     CHECK(mesh.size() == 3456, "solid 16x16 sprite extrudes to 3456 vertices");
 }
 
+static void TestNonCubeMeshes() {
+    BlockTiles tiles;
+    uint16_t slabId = 0;
+    uint16_t torchId = 0;
+    for (const RegistryBlockEntry& e : RegistryBlocks()) {
+        if (e.name.find("slab") != std::string::npos) { slabId = e.id; break; }
+    }
+    for (const RegistryBlockEntry& e : RegistryBlocks()) {
+        if (e.name.find("torch") != std::string::npos) { torchId = e.id; break; }
+    }
+    if (slabId != 0) {
+        std::vector<uint16_t> slabBlocks(CHUNK_VOL, BLOCK_AIR);
+        slabBlocks[8 + CHUNK_X * 8 + CHUNK_X * CHUNK_Z * 64] = slabId;
+        MeshData md;
+        BuildChunkMeshCPU(slabBlocks.data(), nullptr, nullptr, nullptr, nullptr, tiles, md);
+        CHECK(!md.vertices.empty(), "slab produces mesh vertices");
+    }
+    if (torchId != 0) {
+        std::vector<uint16_t> torchBlocks(CHUNK_VOL, BLOCK_AIR);
+        torchBlocks[8 + CHUNK_X * 8 + CHUNK_X * CHUNK_Z * 64] = torchId;
+        MeshData md2;
+        BuildChunkMeshCPU(torchBlocks.data(), nullptr, nullptr, nullptr, nullptr, tiles, md2);
+        CHECK(!md2.vertices.empty(), "torch produces mesh vertices");
+    }
+}
+
 static void TestBlockLight() {
     // A glowstone block (light level 15) in an enclosed cave should give
     // 15 at its own cell and 14 at adjacent air cells.
@@ -1653,6 +1679,7 @@ int main() {
     TestClimateGeneration();
     TestBlockExpansion();
     TestHeldItemMesh();
+    TestNonCubeMeshes();
     TestBlockLight();
     TestWaterFrames();
     TestWaterShaderPass();
