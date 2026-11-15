@@ -1149,7 +1149,7 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         base = (uint32_t)dst.vertices.size();
                         float x0 = faces[f][0], z0 = faces[f][1];
                         float x1 = faces[f][2], z1 = faces[f][3];
-                        MeshVertex v0, v1v, v2, v3;
+                        MeshVertex v0, v1, v2, v3;
                         v0.x = x0; v0.y = (float)y; v0.z = z0; v0.tu = tileU; v0.tv = tileV; v0.u = 0; v0.v = 1; v0.light = 0; v0.cr = v0.cg = v0.cb = 0.8f; v0.sky = skyAt(x, y, z);
                         v1.x = x1; v1.y = (float)y; v1.z = z1; v1.tu = tileU; v1.tv = tileV; v1.u = 1; v1.v = 1; v1.light = 0; v1.cr = v1.cg = v1.cb = 0.8f; v1.sky = skyAt(x, y, z);
                         v2.x = x1; v2.y = y + h; v2.z = z1; v2.tu = tileU; v2.tv = tileV; v2.u = 1; v2.v = 0; v2.light = 0; v2.cr = v2.cg = v2.cb = 0.8f; v2.sky = skyAt(x, y, z);
