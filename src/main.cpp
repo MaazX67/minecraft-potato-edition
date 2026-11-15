@@ -73,6 +73,17 @@ static ID3D10Buffer* gZombieVB = nullptr;
 static ID3D10Buffer* gHeldVB = nullptr;
 static int gIconsBound = 0; // ids that found a sprite in the shared atlas
 static std::vector<Zombie> gZombies;
+// Dropped item entities (M3.1): fall with gravity, merge stacks, get picked up.
+struct ItemEntity {
+    uint16_t id = 0;
+    int count = 1;
+    float x = 0, y = 0, z = 0;
+    float vx = 0, vy = 0, vz = 0;
+    float age = 0.0f;       // seconds since spawn
+    float pickupDelay = 0.5f;
+    bool onGround = false;
+};
+static std::vector<ItemEntity> gItemEntities;
 static FurnaceState gFurnace;
 static int gDimension = 0; // 0 overworld, 1 nether
 static WorldGenerator gOverworldGen = WorldGenerator::Climate;
@@ -2449,6 +2460,7 @@ static void HandleGameFrame(float dt) {
     }
     gPlayer.UpdateCombat(gCooldown, gNowMs);
     gParticles.Update(dt);
+    UpdateItemEntities(dt);
     gSound.SetListener(gCamera.x, gCamera.y, gCamera.z,
                        gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ,
                        gCamera.rightX, gCamera.rightZ);
@@ -2568,7 +2580,19 @@ static void HandleGameFrame(float dt) {
                 if (gGameMode == 0) {
                     if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 2 : 1))
                         gSound.Play(SND_TOOL_BREAK);
-                    if (!drop.Empty()) gInventory.Add(drop.id, drop.count);
+                    if (!drop.Empty()) {
+                        // Drop as a world entity instead of going straight into the
+                        // inventory, so the player has to walk over to pick it up
+                        // (vanilla behaviour). Picked up in UpdateItemEntities.
+                        ItemEntity e;
+                        e.id = drop.id;
+                        e.count = drop.count;
+                        e.x = float(hx) + 0.5f;
+                        e.y = float(hy) + 0.25f;
+                        e.z = float(hz) + 0.5f;
+                        e.vy = 0.18f; // small pop, like Java's entity bob
+                        gItemEntities.push_back(e);
+                    }
                     gSurvival.exhaustion = std::min(4.0f, gSurvival.exhaustion + 0.005f);
                     SyncHotbar();
                 }
@@ -3343,6 +3367,51 @@ static void DrawLodTerrain(float eyeX, float eyeZ, const XMMATRIX& vp, const Sky
     gRC.device->RSSetState(gRC.rasterizer);
 }
 
+static void DrawItemEntities() {
+    if (gItemEntities.empty()) return;
+    std::vector<MeshVertex> verts;
+    verts.reserve(gItemEntities.size() * 6);
+    const float rx = gCamera.rightX, rz = gCamera.rightZ;
+    for (const ItemEntity& e : gItemEntities) {
+        const int icon = ItemIconTile(e.id);
+        if (icon < 0) continue;
+        float u0, v0, u1, v1;
+        if (!AtlasTileRect(icon, u0, v0, u1, v1)) continue;
+        const float bob = sinf(e.age * 4.0f) * 0.05f;
+        const float cx = e.x, cy = e.y + 0.125f + bob, cz = e.z;
+        const float half = 0.125f;
+        struct C { float x, y, z, u, v; };
+        C corners[4] = {
+            {cx - rx * half, cy - half, cz - rz * half, u0, v1},
+            {cx + rx * half, cy - half, cz + rz * half, u1, v1},
+            {cx + rx * half, cy + half, cz + rz * half, u1, v0},
+            {cx - rx * half, cy + half, cz - rz * half, u0, v0},
+        };
+        const int tri[6] = {0, 1, 2, 0, 2, 3};
+        for (int t : tri) {
+            MeshVertex v;
+            v.x = corners[t].x; v.y = corners[t].y; v.z = corners[t].z;
+            v.tu = 0; v.tv = 0;
+            v.u = corners[t].u; v.v = corners[t].v;
+            v.light = 15.0f; v.cr = v.cg = v.cb = 1.0f; v.sky = 15.0f;
+            verts.push_back(v);
+        }
+    }
+    if (verts.empty()) return;
+    void* data = nullptr;
+    if (FAILED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+    memcpy(data, verts.data(), verts.size() * sizeof(MeshVertex));
+    gHeldVB->Unmap();
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gHeldVB, &stride, &offset);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+    gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+    gRC.device->PSSetShader(gRC.psUI);
+    gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
+    gRC.device->Draw(UINT(verts.size()), 0);
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+}
+
 static void DrawWorld() {
     float eyeX = gCamera.x, eyeY = gCamera.y, eyeZ = gCamera.z;
     if (gPerspective != 0) {
@@ -3433,6 +3502,7 @@ static void DrawWorld() {
     DrawEntityShadows();
     DrawZombies();
     DrawPlayer();
+    DrawItemEntities();
     DrawHand();
     DrawClouds(eyeX, eyeY, eyeZ);
     SetViewProj(gRC, vp, fogDist, &sky, 1.0f, 0.0f, waterTime);
@@ -3584,6 +3654,82 @@ static void DrawDebug(float scale) {
         row(line);
     } else {
         row("Target: -");
+    }
+}
+
+static void UpdateItemEntities(float dt) {
+    const float gravity = 16.0f;
+    for (auto& e : gItemEntities) {
+        e.age += dt;
+        if (e.pickupDelay > 0) e.pickupDelay -= dt;
+        e.vy -= gravity * dt;
+        // X
+        {
+            float nx = e.x + e.vx * dt;
+            uint16_t b = gWorld->GetBlock(int(floorf(nx)), int(floorf(e.y)), int(floorf(e.z)));
+            if (b != BLOCK_AIR && !(BlockFlags(b) & BF_LIQUID)) e.vx = 0;
+            else e.x = nx;
+        }
+        // Z
+        {
+            float nz = e.z + e.vz * dt;
+            uint16_t b = gWorld->GetBlock(int(floorf(e.x)), int(floorf(e.y)), int(floorf(nz)));
+            if (b != BLOCK_AIR && !(BlockFlags(b) & BF_LIQUID)) e.vz = 0;
+            else e.z = nz;
+        }
+        // Y
+        {
+            float ny = e.y + e.vy * dt;
+            if (e.vy < 0) {
+                int by = int(floorf(ny));
+                uint16_t b = gWorld->GetBlock(int(floorf(e.x)), by, int(floorf(e.z)));
+                if (b != BLOCK_AIR) { e.y = float(by + 1); e.vy = 0; e.onGround = true; }
+                else { e.y = ny; e.onGround = false; }
+            } else {
+                e.y = ny;
+            }
+        }
+        e.vx *= 0.98f;
+        e.vz *= 0.98f;
+        if (e.onGround) { if (e.vy < 0) e.vy = 0; }
+    }
+    // Merge nearby stacks of the same id.
+    for (size_t i = 0; i < gItemEntities.size(); ++i) {
+        for (size_t j = i + 1; j < gItemEntities.size();) {
+            ItemEntity& a = gItemEntities[i];
+            ItemEntity& b = gItemEntities[j];
+            if (a.id == b.id) {
+                float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+                if (dx * dx + dy * dy + dz * dz < 0.36f) {
+                    int space = 64 - a.count;
+                    if (space > 0) {
+                        int take = std::min(space, b.count);
+                        a.count += take;
+                        b.count -= take;
+                        if (b.count <= 0) { gItemEntities.erase(gItemEntities.begin() + j); continue; }
+                    }
+                }
+            }
+            ++j;
+        }
+    }
+    // Pickup.
+    for (auto it = gItemEntities.begin(); it != gItemEntities.end();) {
+        if (it->age > 300.0f) { it = gItemEntities.erase(it); continue; }
+        if (it->pickupDelay <= 0.0f) {
+            float dx = gBody.x - it->x;
+            float dy = (gBody.y + 0.5f) - it->y;
+            float dz = gBody.z - it->z;
+            if (dx * dx + dy * dy + dz * dz < 1.44f) {
+                if (gInventory.Capacity(it->id) >= it->count) {
+                    gInventory.Add(it->id, it->count);
+                    SyncHotbar();
+                    it = gItemEntities.erase(it);
+                    continue;
+                }
+            }
+        }
+        ++it;
     }
 }
 
