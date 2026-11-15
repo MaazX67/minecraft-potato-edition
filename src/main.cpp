@@ -85,6 +85,16 @@ struct ItemEntity {
 };
 static std::vector<ItemEntity> gItemEntities;
 static void UpdateItemEntities(float dt);
+static void UpdateArrows(float dt);
+// Arrow entities (M3.5): shot by skeletons, gravity, collision, damage player.
+struct ArrowEntity {
+    float x = 0, y = 0, z = 0;
+    float vx = 0, vy = 0, vz = 0;
+    float age = 0.0f;
+    bool onGround = false;
+    bool inBlock = false;
+};
+static std::vector<ArrowEntity> gArrows;
 static void UpdateRedstone();
 static void RandomTickBlocks();
 // M3.2 redstone: power levels per block position.
@@ -2417,6 +2427,28 @@ static void HandleGameFrame(float dt) {
     }
     for (Zombie& zombie : gZombies) {
         zombie.Update(dt, gBody, getBlock);
+        // Skeleton shooting: spawn arrow when in range and attack delay ready.
+        if (zombie.type == MobType::Skeleton && zombie.health > 0) {
+            const float dx = gBody.x - zombie.body.x, dz = gBody.z - zombie.body.z;
+            const float dist2 = dx*dx + dz*dz;
+            if (dist2 > 4.0f && dist2 < 16.0f*16.0f && zombie.attackDelay <= 0) {
+                // Line of sight check.
+                bool los = true;
+                float dist = sqrtf(dist2);
+                for (float t = 0.5f; t < dist; t += 0.5f) {
+                    uint16_t b = getBlock(int(floorf(zombie.body.x + dx/dist*t)), int(floorf(zombie.body.y + 1.0f)), int(floorf(zombie.body.z + dz/dist*t)));
+                    if (b != BLOCK_AIR && (BlockFlags(b) & BF_SOLID)) { los = false; break; }
+                }
+                if (los) {
+                    ArrowEntity a;
+                    a.x = zombie.body.x; a.y = zombie.body.y + 1.4f; a.z = zombie.body.z;
+                    a.vx = (dx/dist) * 1.6f; a.vy = 0.1f; a.vz = (dz/dist) * 1.6f;
+                    gArrows.push_back(a);
+                    zombie.attackDelay = 2.0f; // 2 second cooldown
+                    gSound.PlayAt(SND_HIT, zombie.body.x, zombie.body.y + 1, zombie.body.z);
+                }
+            }
+        }
         const float dx = gBody.x - zombie.body.x, dz = gBody.z - zombie.body.z;
         const float distance2 = dx * dx + dz * dz;
         if (zombie.type == MobType::Creeper && zombie.fuse >= 0 && zombie.fuse <= 0 && zombie.health > 0) {
@@ -2471,6 +2503,7 @@ static void HandleGameFrame(float dt) {
     gPlayer.UpdateCombat(gCooldown, gNowMs);
     gParticles.Update(dt);
     UpdateItemEntities(dt);
+    UpdateArrows(dt);
     static float sTickAcc = 0.0f;
     sTickAcc += dt;
     if (sTickAcc >= 0.05f) { sTickAcc -= 0.05f; RandomTickBlocks(); }
@@ -3450,6 +3483,47 @@ static void DrawItemEntities() {
     gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 }
 
+static void DrawArrows() {
+    if (gArrows.empty()) return;
+    std::vector<MeshVertex> verts;
+    verts.reserve(gArrows.size() * 6);
+    const float rx = gCamera.rightX, rz = gCamera.rightZ;
+    for (const ArrowEntity& a : gArrows) {
+        // Simple quad facing camera, 0.5 wide.
+        float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
+        const float half = 0.05f;
+        struct C { float x, y, z, u, v; };
+        C corners[4] = {
+            {a.x - rx*half, a.y - half, a.z - rz*half, u0, v1},
+            {a.x + rx*half, a.y - half, a.z + rz*half, u1, v1},
+            {a.x + rx*half, a.y + half, a.z + rz*half, u1, v0},
+            {a.x - rx*half, a.y + half, a.z - rz*half, u0, v0},
+        };
+        const int tri[6] = {0, 1, 2, 0, 2, 3};
+        for (int t : tri) {
+            MeshVertex v;
+            v.x = corners[t].x; v.y = corners[t].y; v.z = corners[t].z;
+            v.tu = 0; v.tv = 0;
+            v.u = corners[t].u; v.v = corners[t].v;
+            v.light = 15.0f; v.cr = v.cg = v.cb = 1.0f; v.sky = 0;
+            verts.push_back(v);
+        }
+    }
+    if (verts.empty()) return;
+    void* data = nullptr;
+    if (FAILED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+    memcpy(data, verts.data(), verts.size() * sizeof(MeshVertex));
+    gHeldVB->Unmap();
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gHeldVB, &stride, &offset);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+    gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+    gRC.device->PSSetShader(gRC.psUI);
+    gRC.device->PSSetShaderResources(0, 1, &gRC.atlasSRV);
+    gRC.device->Draw(UINT(verts.size()), 0);
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+}
+
 static void DrawWorld() {
     float eyeX = gCamera.x, eyeY = gCamera.y, eyeZ = gCamera.z;
     if (gPerspective != 0) {
@@ -3541,6 +3615,7 @@ static void DrawWorld() {
     DrawZombies();
     DrawPlayer();
     DrawItemEntities();
+    DrawArrows();
     DrawHand();
     DrawClouds(eyeX, eyeY, eyeZ);
     SetViewProj(gRC, vp, fogDist, &sky, 1.0f, 0.0f, waterTime);
@@ -3701,7 +3776,38 @@ static void DrawDebug(float scale) {
     }
 }
 
-static void UpdateItemEntities(float dt) {
+static void UpdateArrows(float dt) {
+    const float gravity = 16.0f;
+    for (auto it = gArrows.begin(); it != gArrows.end();) {
+        it->age += dt;
+        if (it->age > 60.0f) { it = gArrows.erase(it); continue; }
+        if (!it->onGround) {
+            it->vy -= gravity * dt;
+            it->x += it->vx * dt;
+            it->y += it->vy * dt;
+            it->z += it->vz * dt;
+            // Collision with blocks
+            uint16_t b = gWorld->GetBlock(int(floorf(it->x)), int(floorf(it->y)), int(floorf(it->z)));
+            if (b != BLOCK_AIR && (BlockFlags(b) & BF_SOLID)) {
+                it->onGround = true;
+                it->vx = it->vy = it->vz = 0;
+            }
+        }
+        // Hit player?
+        if (!it->onGround) {
+            float dx = gBody.x + 0.3f - it->x;
+            float dy = gBody.y + 0.9f - it->y;
+            float dz = gBody.z + 0.3f - it->z;
+            if (dx*dx + dy*dy + dz*dz < 0.5f) {
+                gSurvival.health = std::max(0, gSurvival.health - 3); // arrow damage
+                gSound.Play(SND_HURT);
+                it = gArrows.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+}
     const float gravity = 16.0f;
     for (auto& e : gItemEntities) {
         e.age += dt;

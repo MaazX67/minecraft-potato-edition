@@ -944,6 +944,12 @@ void Mob::Update(float dt, const PlayerBody& player, const std::function<uint16_
         if (input.keys['W'] && body.onGround &&
             BodyHits(getBlock, body.x + sinf(yaw) * 0.5f, body.y, body.z - cosf(yaw) * 0.5f))
             input.keys[VK_SPACE] = true;
+        // Spider wall climbing: spiders can climb any solid wall.
+        if (type == MobType::Spider && input.keys['W']) {
+            if (BodyHits(getBlock, body.x + sinf(yaw) * 0.5f, body.y, body.z - cosf(yaw) * 0.5f) ||
+                BodyHits(getBlock, body.x + sinf(yaw) * 0.5f, body.y + 1.0f, body.z - cosf(yaw) * 0.5f))
+                input.keys[VK_SPACE] = true;
+        }
     } else {
         yaw = atan2f(dx, -dz);
         const float reach = type == MobType::Skeleton ? 14.0f : 32.0f;
@@ -982,6 +988,18 @@ float Mob::Hit(float damage, float knockX, float knockZ) {
     body.impulseX = knockX; body.impulseZ = knockZ;
     body.vy = 4;
     body.onGround = false;
+    // Enderman teleport: when hit, teleport away.
+    if (type == MobType::Enderman) {
+        // Simple teleport: move 8 blocks in a random direction.
+        // (Full implementation would check for valid teleport targets.)
+        float ty = body.y;
+        float tx = body.x + (float)((int)(body.x * 7 + body.z * 13) % 16 - 8);
+        float tz = body.z + (float)((int)(body.z * 31 - body.x * 17) % 16 - 8);
+        // Clamp to world bounds.
+        if (tx < 1) tx = 1; if (tx > 254) tx = 254;
+        if (tz < 1) tz = 1; if (tz > 254) tz = 254;
+        body.x = tx; body.y = ty; body.z = tz;
+    }
     return applied;
 }
 

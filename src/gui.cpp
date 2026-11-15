@@ -1279,7 +1279,10 @@ void RebuildCreativeList() {
         const uint16_t id = uint16_t(i);
         if (!IsValidItem(id)) continue;
         if (id >= REGISTRY_ID_BASE) {
-            if (!sPlaceable.count(id)) continue;
+            // Show all registry items with icons. Full-cube blocks are placeable;
+            // non-cube items (slabs, stairs, doors, torches) are inventory-only
+            // but still show in creative for parity.
+            if (ItemIconTile(id) < 0) continue;
         }
         if (gCreativeTab == CTAB_SEARCH) {
             if (!ItemMatchesSearch(id, gCreativeSearch)) continue;
