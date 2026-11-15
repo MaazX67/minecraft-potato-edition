@@ -84,6 +84,7 @@ struct ItemEntity {
     bool onGround = false;
 };
 static std::vector<ItemEntity> gItemEntities;
+static void UpdateItemEntities(float dt);
 static FurnaceState gFurnace;
 static int gDimension = 0; // 0 overworld, 1 nether
 static WorldGenerator gOverworldGen = WorldGenerator::Climate;
