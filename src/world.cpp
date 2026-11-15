@@ -1174,59 +1174,12 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
                     }
                 } else if (shape == 3) {
-                    // Stairs: bottom half (full) + top half (right side).
-                    // Simplified: just render as a full cube for now (correct shape in M4).
-                    // For now, render as a slab to at least show something.
-                    float h = 0.5f;
-                    base = (uint32_t)dst.vertices.size();
-                    // Bottom face
-                    for (int c = 0; c < 4; ++c) {
-                        float cx = (c < 2) ? 0.0f : 1.0f;
-                        float cz = (c == 1 || c == 2) ? 1.0f : 0.0f;
-                        MeshVertex v;
-                        v.x = x + cx; v.y = (float)y; v.z = z + cz;
-                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = cz;
-                        v.light = 0; v.cr = v.cg = v.cb = 0.5f; v.sky = skyAt(x, y - 1, z);
-                        dst.vertices.push_back(v);
-                    }
-                    dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
-                    dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
-                    // Top face at 0.5
-                    base = (uint32_t)dst.vertices.size();
-                    for (int c = 0; c < 4; ++c) {
-                        float cx = (c < 2) ? 0.0f : 1.0f;
-                        float cz = (c == 1 || c == 2) ? 1.0f : 0.0f;
-                        MeshVertex v;
-                        v.x = x + cx; v.y = y + h; v.z = z + cz;
-                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = cz;
-                        v.light = 0; v.cr = v.cg = v.cb = 1.0f; v.sky = skyAt(x, y + 1, z);
-                        dst.vertices.push_back(v);
-                    }
-                    dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
-                    dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                    // Stairs: render as full cube for now (proper mesh in M4).
+                    // Skip non-cube meshing; the greedy mesher already handled it.
+                    continue;
                 } else if (shape == 4) {
-                    // Door: vertical slab (3/16 thick, 1 wide, 16 tall)
-                    float thick = 3.0f / 16.0f;
-                    base = (uint32_t)dst.vertices.size();
-                    for (int c = 0; c < 4; ++c) {
-                        float cx = (c < 2) ? 0.0f : 1.0f;
-                        float cy = (c == 0 || c == 3) ? 0.0f : 1.0f;
-                        MeshVertex v;
-                        v.x = x + cx; v.y = y + cy; v.z = z + 0.5f - thick/2;
-                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = 1-cy;
-                        v.light = 0; v.cr = v.cg = v.cb = 0.9f; v.sky = skyAt(x, y, z);
-                        dst.vertices.push_back(v);
-                    }
-                    base = (uint32_t)dst.vertices.size();
-                    for (int c = 0; c < 4; ++c) {
-                        float cx = (c < 2) ? 1.0f : 0.0f;
-                        float cy = (c == 0 || c == 3) ? 0.0f : 1.0f;
-                        MeshVertex v;
-                        v.x = x + cx; v.y = y + cy; v.z = z + 0.5f + thick/2;
-                        v.tu = tileU; v.tv = tileV; v.u = cx; v.v = 1-cy;
-                        v.light = 0; v.cr = v.cg = v.cb = 0.9f; v.sky = skyAt(x, y, z);
-                        dst.vertices.push_back(v);
-                    }
+                    // Door: render as full cube for now (proper mesh in M4).
+                    continue;
                 }
             }
         }
