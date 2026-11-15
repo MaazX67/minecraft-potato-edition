@@ -258,13 +258,13 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
         return LoadGui(rc, store, *paths.begin());
     };
     texMob[int(MobType::Zombie)]   = texZombie;
-    texMob[int(MobType::Pig)]      = loadEntity({"minecraft/textures/entity/pig/pig.png",
-                                                 "minecraft/textures/entity/pig/temperate/pig.png"});
-    texMob[int(MobType::Cow)]      = loadEntity({"minecraft/textures/entity/cow/temperate/cow.png",
-                                                 "minecraft/textures/entity/cow/cow.png"});
+    texMob[int(MobType::Pig)]      = loadEntity({"minecraft/textures/entity/pig/pig_temperate.png",
+                                                 "minecraft/textures/entity/pig/pig_temperate.png"});
+    texMob[int(MobType::Cow)]      = loadEntity({"minecraft/textures/entity/cow/cow_temperate.png",
+                                                 "minecraft/textures/entity/cow/cow_temperate.png"});
     texMob[int(MobType::Sheep)]    = loadEntity({"minecraft/textures/entity/sheep/sheep.png"});
-    texMob[int(MobType::Chicken)]  = loadEntity({"minecraft/textures/entity/chicken/chicken.png",
-                                                 "minecraft/textures/entity/chicken/temperate/chicken.png"});
+    texMob[int(MobType::Chicken)]  = loadEntity({"minecraft/textures/entity/chicken/chicken_temperate.png",
+                                                 "minecraft/textures/entity/chicken/chicken_temperate.png"});
     texMob[int(MobType::Creeper)]  = loadEntity({"minecraft/textures/entity/creeper/creeper.png"});
     texMob[int(MobType::Skeleton)] = loadEntity({"minecraft/textures/entity/skeleton/skeleton.png"});
     texMob[int(MobType::Spider)]   = loadEntity({"minecraft/textures/entity/spider/spider.png"});
