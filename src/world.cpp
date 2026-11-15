@@ -1009,7 +1009,6 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                             vert.u = cell.sign > 0 ? corners[c][0] : float(w) - corners[c][0];
                             vert.v = d == 2 ? float(h) - corners[c][1] : corners[c][1];
                         }
-                        vert.light = blockLightAt(ax, ay, az);   // block light (torches, glowstone, lava)
                         vert.cr = vert.cg = vert.cb = float(cell.shade) / 100.0f;
                         // Air cell on the face's normal side; p[d] is the
                         // plane coordinate (opaque cell at p[d]-1 when sign>0).
@@ -1019,6 +1018,7 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         else if (d == 1) ay = airCell;
                         else az = airCell;
                         vert.sky = skyAt(ax, ay, az);
+                        vert.light = blockLightAt(ax, ay, az);   // block light (torches, glowstone, lava)
                         dst.vertices.push_back(vert);
                     }
                     dst.indices.push_back(base);
