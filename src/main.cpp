@@ -3844,6 +3844,7 @@ static void RandomTickBlocks() {
 }
 static void RenderFrame() {
 
+    const float sky[4] = {0.47f, 0.65f, 1.0f, 1.0f};
     gRC.device->ClearRenderTargetView(gRC.rtv, sky);
     gRC.device->ClearDepthStencilView(gRC.dsv, D3D10_CLEAR_DEPTH, 1.0f, 0);
 
