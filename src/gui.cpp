@@ -1150,11 +1150,11 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
 
     // XP bar above the hotbar (vanilla: 182 wide, 5 tall, centred).
     if (ui.texXpBg.srv) {
-        const float xpX = cx - 91.0f * s, xpY = SCREEN_H - 57.0f * s;
+        const float xpX = cx - 182.0f * s, xpY = SCREEN_H - 58.0f * s;
         ui.DrawSprite(&ui.texXpBg, xpX, xpY, 2 * s, 15);
         if (xpProgress > 0.0f && ui.texXpProgress.srv) {
-            const int w = int(182.0f * s * xpProgress);
-            ui.DrawQuad(&ui.texXpProgress, xpX, xpY, float(w), 5.0f * s,
+            const int w = int(364.0f * s * xpProgress);
+            ui.DrawQuad(&ui.texXpProgress, xpX, xpY, float(w), 10.0f * s,
                         0, 0, xpProgress, 1, 15);
         }
         if (xpLevel > 0) {
