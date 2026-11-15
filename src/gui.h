@@ -20,7 +20,7 @@ struct GuiTexture {
 enum class Screen {
     Title, CreateWorld, Options, Pause, Game, Inventory, Death,
     VideoOptions, SoundOptions, ControlsOptions, Profile, SelectWorld, Furnace, Chest,
-    ConfirmDelete, EditWorld, GameRules
+    ConfirmDelete, EditWorld, GameRules, Achievements
 };
 
 struct PlayerProfile {

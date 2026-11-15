@@ -943,6 +943,11 @@ void MenuSystem::Draw(GuiRenderer& ui, Screen screen, Settings& settings, WorldC
         ui.DrawTextCentered("Preview", cx + 222, 488, 2, 15, true, 0.627f, 0.627f, 0.627f);
         mButtons.push_back({cx - 200, MENU_FOOTER_Y, 196, 40, "Done", ACT_PROFILE_DONE, validName});
         mButtons.push_back({cx + 4, MENU_FOOTER_Y, 196, 40, "Cancel", ACT_PROFILE_CANCEL, true});
+    } else if (screen == Screen::Achievements) {
+        DrawMenuFrame(ui, "Advancements");
+        ui.DrawTextCentered("Advancements are not yet implemented.", cx, 200, 2, 15, true,
+                            0.627f, 0.627f, 0.627f);
+        mButtons.push_back({cx - 200, MENU_FOOTER_Y, 400, 40, "Done", ACT_CANCEL_CREATE, true});
     } else if (screen == Screen::Pause) {
         ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
         ui.DrawTextCentered("Game Menu", cx, 60, 2, 15, true);
@@ -1576,6 +1581,27 @@ void DrawSurvivalInventory(GuiRenderer& ui, const InventoryState& model, bool ta
     if (!message.empty())
         ui.DrawTextCentered(message, SCREEN_W * 0.5f, py + SURV_INV_H + 12,
                             INV_S, 15, true, 1.0f, 0.8f, 0.4f);
+
+    // Recipe book panel (left of crafting table, Java 26.3 style).
+    if (table) {
+        const float rbX = px - 140 * INV_S, rbY = py;
+        const float rbW = 130 * INV_S, rbH = SURV_INV_H;
+        ui.DrawQuad(&ui.texWhite, rbX, rbY, rbW, rbH, 0, 0, 1, 1, 15, 0.15f, 0.15f, 0.15f);
+        ui.DrawText("Recipes", rbX + 8 * INV_S, rbY + 6 * INV_S, INV_S, 15, true,
+                    0.878f, 0.878f, 0.878f);
+        // Show first 45 craftable items as icons.
+        const std::vector<CraftingRecipe>& recipes = RegistryRecipes();
+        int shown = 0;
+        for (size_t ri = 0; ri < recipes.size() && shown < 45; ++ri) {
+            const uint16_t rid = recipes[ri].result.id;
+            if (rid == BLOCK_AIR || !IsValidItem(rid)) continue;
+            const int col = shown % 7, row = shown / 7;
+            const float ix = rbX + 8 * INV_S + col * 18 * INV_S;
+            const float iy = rbY + 24 * INV_S + row * 18 * INV_S;
+            DrawItemIcon(ui, rid, ix, iy, 0.5f);
+            ++shown;
+        }
+    }
 
     const ItemSlot result = model.Result(table);
     const int hovered = SurvivalInvHitTest(mouseX, mouseY, table);
