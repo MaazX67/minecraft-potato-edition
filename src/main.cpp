@@ -85,6 +85,7 @@ struct ItemEntity {
 };
 static std::vector<ItemEntity> gItemEntities;
 static void UpdateItemEntities(float dt);
+static void UpdateRedstone();
 // M3.2 redstone: power levels per block position.
 static std::unordered_map<uint64_t, uint8_t> gRedstonePower; // posKey -> 0..15
 uint64_t RedstoneKey(int x, int y, int z) { return (uint64_t(uint32_t(x)) << 40) | (uint64_t(uint32_t(y)) << 20) | uint64_t(uint32_t(z)); }
