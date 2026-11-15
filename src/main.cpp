@@ -3246,10 +3246,7 @@ static void DrawHand() {
                 float hz = rz2 - 0.72f - swing * 0.08f;
                 // Follow the camera pitch so the hand doesn't go through blocks
                 // when looking down.
-                const float ccp = cosf(gCamera.pitch), csp = sinf(gCamera.pitch);
-                const float hy2 = hy * ccp - hz * csp;
-                const float hz2 = hy * csp + hz * ccp;
-                v.x = hx; v.y = hy2; v.z = hz2;
+                v.x = hx; v.y = hy; v.z = hz;
             }
             void* hd = nullptr;
             if (SUCCEEDED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &hd))) {
