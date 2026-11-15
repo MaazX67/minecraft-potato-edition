@@ -134,6 +134,7 @@ static bool gRunning = true;
 static bool gDebug = false;
 static bool gHideHud = false;
 static int gPerspective = 0; // 0 first person, 1 third person back, 2 third person front
+static float gArmSwingMs = -1000.0f; // arm swing timer (ms), -1000 = no swing
 static float gZoom = 1.0f;    // C-key spyglass-style zoom factor
 static bool gFlyHook = false;
 static bool gSpawned = false;
@@ -2625,6 +2626,8 @@ static void HandleGameFrame(float dt) {
             (gGameMode == 1 ? 0 : MiningSeconds(old, held, gBody.onGround, gBody.inWater));
         gMiningElapsed += dt;
         gMiningProgress = required == 0 ? 1 : std::min(1.0f, gMiningElapsed / required);
+        // Swing every 300ms while mining.
+        if (gNowMs - gArmSwingMs >= 300.0f) gArmSwingMs = gNowMs;
         if (gGameMode == 0 && std::isfinite(required)) {
             gMiningSound -= dt;
             if (gMiningSound <= 0) {
@@ -2641,6 +2644,7 @@ static void HandleGameFrame(float dt) {
             } else {
                 gWorld->SetBlock(hx, hy, hz, BLOCK_AIR);
                 ++gBrokenBlocks;
+                gArmSwingMs = gNowMs;
                 if (gGameMode == 0) {
                     if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 2 : 1))
                         gSound.Play(SND_TOOL_BREAK);
@@ -2737,6 +2741,7 @@ static void HandleGameFrame(float dt) {
                 }
                 gSound.PlayAt(SoundEngine::BlockSound(block),
                               float(px) + 0.5f, float(py) + 0.5f, float(pz) + 0.5f);
+                gArmSwingMs = gNowMs;
             }
         }
     }
@@ -3202,7 +3207,7 @@ static void DrawHand() {
     if (gPerspective != 0 || !gZombieVB || !gGui.texSkin.srv) return;
     std::vector<MeshVertex> vertices;
     vertices.reserve(36);
-    const float swing = gPlayer.attackCooldownProgress > 0 ? sinf(gPlayer.attackCooldownProgress * 3.14159265f) : 0.0f;
+    const float swing = (gNowMs - gArmSwingMs < 300.0f) ? sinf((gNowMs - gArmSwingMs) / 300.0f * 3.14159265f) : 0.0f;
     const float bob = (fabsf(gBody.vx) + fabsf(gBody.vz) > 0.1f && gBody.onGround) ? sinf(gTimeSec * 5.0f) * 0.4f : 0.0f;
     // Java renderPlayerArm: the arm enters from the bottom-right corner and
     // reaches forward-inward (45 deg yaw, ~30 deg pitch) rather than sideways.
@@ -3237,10 +3242,7 @@ static void DrawHand() {
             const float px = shoulderX + sideX * lx + armX * ly + upX * lz;
             const float py = shoulderY + armY * ly + upY * lz;
             const float pz = shoulderZ + sideZ * lx + armZ * ly + upZ * lz;
-            const float cp = cosf(gCamera.pitch), sp = sinf(gCamera.pitch);
-            const float ry = py * cp - pz * sp;
-            const float rz = py * sp + pz * cp;
-            vertices.push_back({px, ry, rz, 0, 0, tu / 64, tv / 64, 15, 1, 1, 1});
+            vertices.push_back({px, py, pz, 0, 0, tu / 64, tv / 64, 15, 1, 1, 1});
         }
     }
     void* data = nullptr;

@@ -1075,7 +1075,16 @@ int MenuSystem::HitTest(int mouseX, int mouseY) const {
 static void DrawItemIcon(GuiRenderer& ui, int id, float x, float y, float scale = 1.0f) {
     if (!IsValidItem(id)) return;
     const int tile = ItemIconTile(uint16_t(id));
-    if (tile < 0) return;
+    if (tile < 0) {
+        // Log missing icon once.
+        static std::unordered_set<int> logged;
+        if (logged.find(id) == logged.end()) {
+            logged.insert(id);
+            FILE* f = fopen("hotbarlog.txt", "a");
+            if (f) { fprintf(f, "missing icon id=%d name=%s\n", id, ItemName(uint16_t(id))); fclose(f); }
+        }
+        return;
+    }
     float u0, v0, u1, v1;
     if (!AtlasTileRect(tile, u0, v0, u1, v1)) return;
     ui.DrawQuad(&ui.texItemAtlas, x, y, 32 * scale, 32 * scale, u0, v0, u1, v1, 15);
