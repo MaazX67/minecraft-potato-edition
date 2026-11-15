@@ -59,17 +59,23 @@ PSIn VSMain(VSIn input)
     return o;
 }
 
-// Java's light curve: block/sky light levels (0..15) map through a gamma
-// curve so caves and shadows fall off gradually instead of linearly.
+// Java's light curve: block/sky light levels (0..1, already normalized) map
+// through a gamma curve so caves and shadows fall off gradually.
 float JavaLightCurve(float l) {
-    l = saturate(l / 15.0f);
-    return 0.003921569f + 0.99607843f * l * l;
+    l = saturate(l);
+    float g = l / (4.0f - 3.0f * l);
+    return saturate(g);
 }
 
 float3 CombineLight(float blockLight, float skyLight)
 {
-    float l = JavaLightCurve(max(blockLight, skyLight));
-    float3 light = l * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f;
+    // Block light is constant (torches don't dim at night). Sky light is
+    // scaled by the daylight factor (time of day). Java combines them as
+    // max(blockLight, skyLight * daylight) + small ambient.
+    float bl = JavaLightCurve(blockLight);
+    float sl = JavaLightCurve(skyLight) * gSkyColorDaylight.w;
+    float l = max(bl, sl);
+    float3 light = l * gLightColorOpacity.rgb + 0.02f;
     float3 dark = 1.0f - light;
     return lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
 }
@@ -141,7 +147,7 @@ float4 PSMainEntity(PSIn input) : SV_TARGET
 {
     float4 tex = gAtlas.Sample(gPoint, input.uv);
     clip(tex.a - 0.1f);
-    float3 light = saturate(input.shade * gSkyColorDaylight.w * gLightColorOpacity.rgb + 0.02f);
+    float3 light = CombineLight(input.shade, input.skylight);
     float3 dark = 1.0f - light;
     light = lerp(light, 1.0f - dark * dark * dark * dark, saturate(gBrightness));
     float fog = gFogEnd > 0 ? saturate((input.fogDepth - gFogStart) / max(gFogEnd - gFogStart, 0.001f)) : 0;
