@@ -3808,6 +3808,7 @@ static void UpdateArrows(float dt) {
         ++it;
     }
 }
+static void UpdateItemEntities(float dt) {
     const float gravity = 16.0f;
     for (auto& e : gItemEntities) {
         e.age += dt;
