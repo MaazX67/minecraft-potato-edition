@@ -86,6 +86,7 @@ struct ItemEntity {
 static std::vector<ItemEntity> gItemEntities;
 static void UpdateItemEntities(float dt);
 static void UpdateRedstone();
+static void RandomTickBlocks();
 // M3.2 redstone: power levels per block position.
 static std::unordered_map<uint64_t, uint8_t> gRedstonePower; // posKey -> 0..15
 uint64_t RedstoneKey(int x, int y, int z) { return (uint64_t(uint32_t(x)) << 40) | (uint64_t(uint32_t(y)) << 20) | uint64_t(uint32_t(z)); }
@@ -2470,6 +2471,9 @@ static void HandleGameFrame(float dt) {
     gPlayer.UpdateCombat(gCooldown, gNowMs);
     gParticles.Update(dt);
     UpdateItemEntities(dt);
+    static float sTickAcc = 0.0f;
+    sTickAcc += dt;
+    if (sTickAcc >= 0.05f) { sTickAcc -= 0.05f; RandomTickBlocks(); }
     gSound.SetListener(gCamera.x, gCamera.y, gCamera.z,
                        gCamera.fwdX, gCamera.fwdY, gCamera.fwdZ,
                        gCamera.rightX, gCamera.rightZ);
@@ -3828,6 +3832,53 @@ static void UpdateRedstone() {
         // Re-mesh chunks containing lamps.
         for (auto& lp : lamps) {
             gWorld->SetBlock(std::get<0>(lp), std::get<1>(lp), std::get<2>(lp), gRedstoneLampId);
+        }
+    }
+}
+
+static void RandomTickBlocks() {
+    if (!gWorld) return;
+    static std::mt19937 rng(12345);
+    // 3 random ticks per loaded chunk per call (Java: 3 per chunk per game tick).
+    for (auto it = gGpu.begin(); it != gGpu.end(); ++it) {
+        int cx = KeyCX(it->first), cz = KeyCZ(it->first);
+        for (int t = 0; t < 3; ++t) {
+            int lx = rng() % CHUNK_X;
+            int lz = rng() % CHUNK_Z;
+            int y = rng() % CHUNK_Y;
+            int wx = cx * CHUNK_X + lx, wz = cz * CHUNK_Z + lz;
+            uint16_t b = gWorld->GetBlock(wx, y, wz);
+            if (b == BLOCK_AIR) continue;
+            // Grass spread: dirt -> grass if exposed to sky light and adjacent grass.
+            if (b == BLOCK_DIRT) {
+                // Check sky exposure (block above is air) and adjacent grass.
+                if (gWorld->GetBlock(wx, y + 1, wz) == BLOCK_AIR) {
+                    bool adjacentGrass = false;
+                    const int dx[4] = {1,-1,0,0}, dz[4] = {0,0,1,-1};
+                    for (int d = 0; d < 4; ++d) {
+                        if (gWorld->GetBlock(wx + dx[d], y, wz + dz[d]) == BLOCK_GRASS) { adjacentGrass = true; break; }
+                    }
+                    if (adjacentGrass && (rng() % 8) == 0) // Java: 1/8 chance (with light check omitted)
+                        gWorld->SetBlock(wx, y, wz, BLOCK_GRASS);
+                }
+            }
+            // Leaf decay: leaves with no wood within 4 blocks decay.
+            else if (b == BLOCK_OAK_LEAVES || b == BLOCK_SPRUCE_LEAVES || b == BLOCK_BIRCH_LEAVES || b == BLOCK_CHERRY_LEAVES) {
+                // Simple: decay if no log within 4 (check 6 neighbors-ish). Use 1/64 chance.
+                bool hasLog = false;
+                for (int dx = -4; dx <= 4 && !hasLog; ++dx)
+                    for (int dy = -4; dy <= 4 && !hasLog; ++dy)
+                        for (int dz = -4; dz <= 4 && !hasLog; ++dz) {
+                            uint16_t nb = gWorld->GetBlock(wx + dx, y + dy, wz + dz);
+                            if (nb == BLOCK_LOG || nb == BLOCK_SPRUCE_LOG || nb == BLOCK_BIRCH_LOG || nb == BLOCK_CHERRY_LOG) hasLog = true;
+                        }
+                if (!hasLog && (rng() % 10) == 0) gWorld->SetBlock(wx, y, wz, BLOCK_AIR);
+            }
+            // Ice melting: ice -> water if light. Simplified: melt if block above is air and y > 63.
+            else if (b == BLOCK_ICE) {
+                if (y > 63 && gWorld->GetBlock(wx, y + 1, wz) == BLOCK_AIR && (rng() % 3) == 0)
+                    gWorld->SetBlock(wx, y, wz, BLOCK_WATER);
+            }
         }
     }
 }
