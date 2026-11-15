@@ -836,25 +836,57 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
         return blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
     };
 
-    // Sky light: per-column height of the highest solid cell. A face whose
-    // adjacent air cell sits above that height sees the full sky (15); faces
-    // under an overhang are shadowed.
-    int heights[CHUNK_X * CHUNK_Z];
+    // Sky light: flood-fill from the top of each column, propagating sideways
+    // and downward through air/transparent blocks, decreasing by 1 per block.
+    // Java: sky light spreads through air, losing 1 level per block, blocked
+    // by opaque blocks. This fixes "whole black under trees/overhangs".
+    std::vector<uint8_t> skyLight(size_t(CHUNK_X) * CHUNK_Z * CHUNK_Y, 0);
+    // Initialize: 15 for air above first solid, 0 below.
     for (int z = 0; z < CHUNK_Z; ++z) {
         for (int x = 0; x < CHUNK_X; ++x) {
-            int h = -1;
+            bool hitSolid = false;
             for (int y = CHUNK_Y - 1; y >= 0; --y) {
-                if (BlockFlags(sample(x, y, z)) & BF_SOLID) { h = y; break; }
+                uint16_t b = sample(x, y, z);
+                if (BlockFlags(b) & BF_OPAQUE) hitSolid = true;
+                if (!hitSolid) skyLight[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y] = 15;
             }
-            heights[x + CHUNK_X * z] = h;
+        }
+    }
+    // BFS: propagate to 6 neighbors through air/transparent, -1 per block.
+    // Out-of-bounds = opaque (no cross-chunk leak for now).
+    std::vector<int> sq;
+    sq.reserve(4096);
+    for (int i = 0; i < (int)skyLight.size(); ++i)
+        if (skyLight[i] > 0) sq.push_back(i);
+    const int sdx[6] = {1,-1,0,0,0,0};
+    const int sdy[6] = {0,0,1,-1,0,0};
+    const int sdz[6] = {0,0,0,0,1,-1};
+    size_t sqi = 0;
+    while (sqi < sq.size()) {
+        int idx = sq[sqi++];
+        int x = idx % CHUNK_X;
+        int z = (idx / CHUNK_X) % CHUNK_Z;
+        int y = idx / (CHUNK_X * CHUNK_Z);
+        uint8_t lvl = skyLight[idx];
+        if (lvl <= 1) continue;
+        for (int d = 0; d < 6; ++d) {
+            int nx = x + sdx[d], ny = y + sdy[d], nz = z + sdz[d];
+            if (ny < 0 || ny >= CHUNK_Y) continue;
+            if (nx < 0 || nx >= CHUNK_X || nz < 0 || nz >= CHUNK_Z) continue; // boundary: treat as opaque
+            uint16_t nb = sample(nx, ny, nz);
+            if (BlockFlags(nb) & BF_OPAQUE) continue; // blocked by opaque
+            int nidx = nx + CHUNK_X * nz + CHUNK_X * CHUNK_Z * ny;
+            if (skyLight[nidx] < lvl - 1) {
+                skyLight[nidx] = lvl - 1;
+                sq.push_back(nidx);
+            }
         }
     }
     auto skyAt = [&](int nx, int ny, int nz) -> float {
         if (ny >= CHUNK_Y) return 15.0f;
         if (ny < 0) return 0.0f;
-        if (nx < 0) nx = 0; else if (nx >= CHUNK_X) nx = CHUNK_X - 1;
-        if (nz < 0) nz = 0; else if (nz >= CHUNK_Z) nz = CHUNK_Z - 1;
-        return ny > heights[nx + CHUNK_X * nz] ? 15.0f : 0.0f;
+        if (nx < 0 || nx >= CHUNK_X || nz < 0 || nz >= CHUNK_Z) return 0.0f;
+        return float(skyLight[nx + CHUNK_X * nz + CHUNK_X * CHUNK_Z * ny]);
     };
 
     // Block light: flood-fill from emitters (torch 14, glowstone 15, lava 15, etc.),
