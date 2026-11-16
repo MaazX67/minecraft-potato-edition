@@ -1081,11 +1081,11 @@ static void TestJavaRandom() {
     potato::SplitMix64 sm(0);
     uint64_t a1 = sm.NextLong();
     uint64_t a2 = sm.NextLong();
-    SplitMix64 sm2(0);
+    potato::SplitMix64 sm2(0);
     CHECK(sm2.NextLong() == a1, "SplitMix64 same seed -> same first value");
     CHECK(sm2.NextLong() == a2, "SplitMix64 same seed -> same second value");
     CHECK(a1 != 0 || a2 != 0, "SplitMix64 is non-degenerate");
-    SplitMix64 sm3(12345);
+    potato::SplitMix64 sm3(12345);
     CHECK(sm3.NextLong() != a1, "SplitMix64 different seed -> different value");
     for (int i = 0; i < 100; ++i) {
         int32_t v = sm.NextIntBounded(10);
