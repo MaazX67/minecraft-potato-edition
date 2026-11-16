@@ -19,8 +19,16 @@ enum SoundCat {
     SND_STEP_SNOW, SND_STEP_WOOL,
     SND_GLASS, SND_WOOL, SND_SNOW, SND_TOOL_BREAK,
     SND_ZOMBIE_SAY, SND_ZOMBIE_HURT, SND_ZOMBIE_DEATH,
-    SND_COUNT
+    // Reserve say/hurt/death for every mob type; zombie occupies index 0 above.
+    SND_MOB_RESERVED = SND_ZOMBIE_SAY + 3 * int(MobType::Count),
+    SND_COUNT = SND_MOB_RESERVED
 };
+
+// kind: 0 = ambient/say, 1 = hurt, 2 = death. Each mob gets its own vanilla
+// voice instead of every mob borrowing the zombie sound.
+inline SoundCat MobSoundCat(MobType type, int kind) {
+    return SoundCat(int(SND_ZOMBIE_SAY) + int(type) * 3 + kind);
+}
 
 // Native audio architecture: every vanilla sound is located through the
 // launcher's SHA-1 object index, decoded to PCM at boot, and packed into one

@@ -116,6 +116,11 @@ public:
     GuiTexture texSlider, texSliderHi, texSliderHandle, texSliderHandleHi;
     GuiTexture texMenuBg, texHeaderSeparator, texFooterSeparator;
     GuiTexture texTab, texTabHi, texTabSelected, texTabSelectedHi;
+    // Java creative inventory: the real panel background, per-tab sprites and
+    // scrollbar knob, so the screen reads as Minecraft rather than gray boxes.
+    GuiTexture texCreativeItems, texCreativeSearch, texCreativeScroller;
+    GuiTexture texCreativeTabTop[2][7];    // [selected][shape 1..7]
+    GuiTexture texCreativeTabBottom[2][7];
     GuiTexture texSkin;
     // One shared block+item atlas (M1 step 1.3): every icon is a UV rect into
     // it, so ~2,300 sprites cost one GPU texture instead of ~1,100.

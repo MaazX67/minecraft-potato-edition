@@ -4,6 +4,7 @@
 #include "commands.h"
 #include "world.h"
 #include "ui_layout.h"
+#include "sound.h"
 #include "shader_embed.h"
 #include "json.hpp"
 #include <d3dcompiler.h>
@@ -1166,6 +1167,18 @@ static void TestSkyCrevice() {
     CHECK(dimUnderOverhang, "sky bleeds sideways under the overhang (0 < sky < 15), no black crevice");
 }
 
+static void TestMobSound() {
+    CHECK(MobSoundCat(MobType::Zombie, 0) == SND_ZOMBIE_SAY, "zombie ambient keeps its legacy category");
+    CHECK(MobSoundCat(MobType::Zombie, 1) == SND_ZOMBIE_HURT, "zombie hurt keeps its legacy category");
+    CHECK(MobSoundCat(MobType::Zombie, 2) == SND_ZOMBIE_DEATH, "zombie death keeps its legacy category");
+    CHECK(MobSoundCat(MobType::Pig, 0) == SoundCat(int(SND_ZOMBIE_SAY) + 3), "pig ambient is its own category");
+    CHECK(MobSoundCat(MobType::Pig, 0) != MobSoundCat(MobType::Zombie, 0), "pig no longer borrows the zombie voice");
+    CHECK(MobSoundCat(MobType::Enderman, 2) == SoundCat(int(SND_ZOMBIE_SAY) + 8 * 3 + 2), "enderman death lands in its own slot");
+    for (int m = 0; m < int(MobType::Count); ++m)
+        for (int k = 0; k < 3; ++k)
+            CHECK(MobSoundCat(MobType(m), k) < SND_COUNT, "every mob sound category is inside the arena");
+}
+
 static void TestCombatMath() {
     // Mace (MaceItem.class): smash needs fallDistance > 1.5 and no elytra glide.
     CHECK(!MaceCanSmash(1.5f, false) && MaceCanSmash(1.6f, false) && !MaceCanSmash(5.0f, true),
@@ -1815,6 +1828,7 @@ int main() {
     TestBlockLight();
     TestSkyCrevice();
     TestCombatMath();
+    TestMobSound();
     TestWaterFrames();
     TestWaterShaderPass();
     TestBubbleParticles();

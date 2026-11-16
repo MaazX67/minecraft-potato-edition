@@ -81,16 +81,22 @@ bool SoundEngine::Init(AssetStore& store) {
         ++mNext[SND_HURT];
         candidates.push_back({name, SND_HURT});
     }
-    const std::vector<std::string> zomb = store.ListPrefix("minecraft/sounds/mob/zombie/");
-    for (const std::string& name : zomb) {
-        if (!EndsWith(name, ".ogg")) continue;
-        SoundCat cat = SND_COUNT;
-        if (name.find("say") != std::string::npos) cat = SND_ZOMBIE_SAY;
-        else if (name.find("hurt") != std::string::npos) cat = SND_ZOMBIE_HURT;
-        else if (name.find("death") != std::string::npos) cat = SND_ZOMBIE_DEATH;
-        if (cat == SND_COUNT || mNext[cat] >= 4) continue;
-        ++mNext[cat];
-        candidates.push_back({name, cat});
+    for (int m = 0; m < int(MobType::Count); ++m) {
+        const std::string prefix = std::string("minecraft/sounds/mob/") + MobId(MobType(m)) + "/";
+        const std::vector<std::string> mob = store.ListPrefix(prefix);
+        for (const std::string& name : mob) {
+            if (!EndsWith(name, ".ogg")) continue;
+            int kind = -1;
+            if (name.find("say") != std::string::npos || name.find("ambient") != std::string::npos ||
+                name.find("idle") != std::string::npos) kind = 0;
+            else if (name.find("hurt") != std::string::npos) kind = 1;
+            else if (name.find("death") != std::string::npos) kind = 2;
+            if (kind < 0) continue;
+            const SoundCat cat = MobSoundCat(MobType(m), kind);
+            if (mNext[cat] >= 4) continue;
+            ++mNext[cat];
+            candidates.push_back({name, cat});
+        }
     }
     candidates.push_back({"minecraft/sounds/random/click.ogg", SND_CLICK});
     candidates.push_back({"minecraft/sounds/random/glass1.ogg", SND_GLASS});
@@ -269,7 +275,13 @@ void SoundEngine::Dispatch(const PlayRequest& req) {
                 pitch = 0.9f + r * 0.2f; break;
             case SND_ZOMBIE_SAY:
                 volume *= 0.8f; pitch = 0.9f + r * 0.2f; break;
-            default: break;
+            default:
+                if (cat >= SND_ZOMBIE_SAY && cat < SND_COUNT) {
+                    const int kind = (int(cat) - int(SND_ZOMBIE_SAY)) % 3;
+                    if (kind == 0) volume *= 0.8f;
+                    pitch = 0.9f + r * 0.2f;
+                }
+                break;
         }
     }
     voice->SetFrequencyRatio(pitch);

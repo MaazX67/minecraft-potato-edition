@@ -229,6 +229,17 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texTabHi          = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/tab_highlighted.png");
     texTabSelected    = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/tab_selected.png");
     texTabSelectedHi  = LoadGui(rc, store, "minecraft/textures/gui/sprites/widget/tab_selected_highlighted.png");
+    texCreativeItems  = LoadGui(rc, store, "minecraft/textures/gui/container/creative_inventory/tab_items.png");
+    texCreativeSearch = LoadGui(rc, store, "minecraft/textures/gui/container/creative_inventory/tab_item_search.png");
+    texCreativeScroller = LoadGui(rc, store, "minecraft/textures/gui/sprites/container/creative_inventory/scroller.png");
+    for (int i = 0; i < 7; ++i) {
+        const std::string n = std::to_string(i + 1);
+        const std::string base = "minecraft/textures/gui/sprites/container/creative_inventory/";
+        texCreativeTabTop[0][i]    = LoadGui(rc, store, (base + "tab_top_unselected_" + n + ".png").c_str());
+        texCreativeTabTop[1][i]    = LoadGui(rc, store, (base + "tab_top_selected_" + n + ".png").c_str());
+        texCreativeTabBottom[0][i] = LoadGui(rc, store, (base + "tab_bottom_unselected_" + n + ".png").c_str());
+        texCreativeTabBottom[1][i] = LoadGui(rc, store, (base + "tab_bottom_selected_" + n + ".png").c_str());
+    }
 
     const uint8_t white[4] = {255, 255, 255, 255};
     texWhite.w = texWhite.h = 1;
@@ -1397,24 +1408,30 @@ bool CreativeSearchFieldHitTest(int mouseX, int mouseY) {
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
     ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
 
-    // Tabs sit above the panel, as in Java's CreativeModeInventoryScreen.
+    // Tabs sit above the panel using Java's own creative tab sprites (the
+    // shaped tabs that merge into the panel edge), not generic widget tabs.
     for (int tab = 0; tab < CTAB_COUNT; ++tab) {
         float x, y;
         TabRect(tab, x, y);
         const bool selected = tab == gCreativeTab;
-        const bool hover = CreativeTabHitTest(mouseX, mouseY) == tab;
-        const GuiTexture* tex = selected ? (hover ? &ui.texTabSelectedHi : &ui.texTabSelected)
-                                         : (hover ? &ui.texTabHi : &ui.texTab);
-        ui.DrawNineSlice(tex, x, y, TAB_W, TAB_H, 2, 15);
+        const GuiTexture* tex = &ui.texCreativeTabTop[selected ? 1 : 0][tab % 7];
+        if (tex->srv) ui.DrawQuad(tex, x, y, TAB_W, TAB_H, 0, 0, 1, 1, 15);
+        else ui.DrawNineSlice(selected ? &ui.texTabSelected : &ui.texTab, x, y, TAB_W, TAB_H, 2, 15);
         DrawScaledIcon(ui, CreativeTabIcon(tab), x + 4, y + 2, TAB_W - 8);
     }
 
-    // Beveled gray panel (light top/left, dark bottom/right).
-    ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, INV_W, INV_H, 0, 0, 1, 1, 15, 0.78f, 0.78f, 0.78f);
-    ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, INV_W, 2, 0, 0, 1, 1, 15, 1, 1, 1);
-    ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 1, 1, 1);
-    ui.DrawQuad(&ui.texWhite, INV_X, INV_Y + INV_H - 2, INV_W, 2, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
-    ui.DrawQuad(&ui.texWhite, INV_X + INV_W - 2, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
+    // Java's real creative panel background (the 195x136 region of a 256x256
+    // sheet); the search tab swaps in the sheet that carries the search field.
+    const GuiTexture* bg = (gCreativeTab == CTAB_SEARCH) ? &ui.texCreativeSearch : &ui.texCreativeItems;
+    if (bg->srv) {
+        ui.DrawQuad(bg, INV_X, INV_Y, INV_W, INV_H, 0, 0, 195.0f / 256.0f, 136.0f / 256.0f, 15);
+    } else {
+        ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, INV_W, INV_H, 0, 0, 1, 1, 15, 0.78f, 0.78f, 0.78f);
+        ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, INV_W, 2, 0, 0, 1, 1, 15, 1, 1, 1);
+        ui.DrawQuad(&ui.texWhite, INV_X, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 1, 1, 1);
+        ui.DrawQuad(&ui.texWhite, INV_X, INV_Y + INV_H - 2, INV_W, 2, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
+        ui.DrawQuad(&ui.texWhite, INV_X + INV_W - 2, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
+    }
 
     // Java draws no title on the creative panel. The search tab shows a
     // borderless white-text EditBox at (82,6) sized 80x9, maxLength 50
@@ -1442,18 +1459,22 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState
         const uint16_t b = items[i];
         float x, y;
         CellRect(i, x, y);
-        DrawSlot(ui, x, y, b == hovered);
+        if (bg->srv) { if (b == hovered) ui.DrawQuad(&ui.texHotbarSel, x, y, INV_CELL, INV_CELL, 0, 0, 1, 1, 15); }
+        else DrawSlot(ui, x, y, b == hovered);
         DrawItemIcon(ui, b, x + CreativeLayout::IconInset, y + CreativeLayout::IconInset);
     }
 
     // Scrollbar track right of the picker (exact knob geometry UNVERIFIED).
     const float sbX = INV_X + INV_W - 40;
-    ui.DrawQuad(&ui.texWhite, sbX, INV_GY, 24, INV_GRID_H, 0, 0, 1, 1, 15, 0.4f, 0.4f, 0.4f);
+    if (!bg->srv) ui.DrawQuad(&ui.texWhite, sbX, INV_GY, 24, INV_GRID_H, 0, 0, 1, 1, 15, 0.4f, 0.4f, 0.4f);
     const int totalRows = (total + INV_COLS - 1) / INV_COLS;
     if (totalRows > INV_PICK_ROWS) {
         const float thumbH = std::max(30.0f, INV_GRID_H * INV_PICK_ROWS / totalRows);
         const float thumbY = INV_GY + (INV_GRID_H - thumbH) * gCreativeScroll / CreativeMaxScroll();
-        ui.DrawQuad(&ui.texWhite, sbX, thumbY, 24, thumbH, 0, 0, 1, 1, 15, 0.85f, 0.85f, 0.85f);
+        if (ui.texCreativeScroller.srv)
+            ui.DrawQuad(&ui.texCreativeScroller, sbX, thumbY, 24, 30, 0, 0, 1, 1, 15);
+        else
+            ui.DrawQuad(&ui.texWhite, sbX, thumbY, 24, thumbH, 0, 0, 1, 1, 15, 0.85f, 0.85f, 0.85f);
     }
 
     // Java's creative menu carries only the 9 hotbar slots, as the last row
@@ -1462,7 +1483,8 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState
     for (int i = 0; i < 9; ++i) {
         float x, y;
         SlotRect(i, x, y);
-        DrawSlot(ui, x, y, i == hoveredSlot);
+        if (bg->srv) { if (i == hoveredSlot) ui.DrawQuad(&ui.texHotbarSel, x, y, INV_CELL, INV_CELL, 0, 0, 1, 1, 15); }
+        else DrawSlot(ui, x, y, i == hoveredSlot);
         const ItemSlot& s = inv.slots[27 + i];
         DrawItemIcon(ui, s.id, x + CreativeLayout::IconInset, y + CreativeLayout::IconInset);
         DrawStackCount(ui, x + CreativeLayout::IconInset, y + CreativeLayout::IconInset, s);

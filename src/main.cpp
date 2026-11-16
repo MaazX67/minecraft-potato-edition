@@ -2378,7 +2378,7 @@ static void HandleGameFrame(float dt) {
     for (const Zombie& mob : gZombies) {
         if (mob.health > 0) continue;
         DropMobLoot(mob);
-        const SoundCat sound = mob.type == MobType::Zombie ? SND_ZOMBIE_DEATH : SND_HIT;
+        const SoundCat sound = MobSoundCat(mob.type, 2);
         gSound.PlayAt(sound, mob.body.x, mob.body.y, mob.body.z);
     }
     gZombies.erase(std::remove_if(gZombies.begin(), gZombies.end(), [](const Zombie& zombie) {
@@ -2391,7 +2391,7 @@ static void HandleGameFrame(float dt) {
         sSayTimer = 0;
         const Zombie& z = gZombies[gWorldClock.Ticks() % gZombies.size()];
         if (z.type == MobType::Zombie)
-            gSound.PlayAt(SND_ZOMBIE_SAY, z.body.x, z.body.y, z.body.z);
+            gSound.PlayAt(MobSoundCat(z.type, 0), z.body.x, z.body.y, z.body.z);
     }
     if (!gAutomation && gRuleMobSpawning && gSettings.difficulty != 0) {
         gMobSpawnTimer += dt;
@@ -2606,7 +2606,7 @@ static void HandleGameFrame(float dt) {
                 gParticles.SpawnCrit(targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
             }
             gSound.PlayAt(critical ? SND_CRIT : SND_HIT, targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
-            gSound.PlayAt(SND_ZOMBIE_HURT, targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
+            gSound.PlayAt(MobSoundCat(targetZombie->type, 1), targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
             if (smash) { gFallStartY = gBody.y; gBody.vy = std::max(gBody.vy, 0.01f); } // no fall damage + bounce
             // Sweep attack: sword, strength > 0.9, on ground, not sprinting.
             if (tool && tool->kind == ToolKind::Sword && strength > 0.9f && gBody.onGround && !gBody.sprinting) {
