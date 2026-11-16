@@ -988,8 +988,8 @@ static void TestClimateGeneration() {
 }
 
 static void TestBlockExpansion() {
-    CHECK(BLOCK_COUNT == 138 && ITEM_STICK >= BLOCK_COUNT && ITEM_RAW_COPPER == ITEM_COAL + 10,
-          "block registry grows to 138 entries with items relocated above the block range");
+    CHECK(BLOCK_COUNT == 140 && ITEM_STICK >= BLOCK_COUNT && ITEM_RAW_COPPER == ITEM_COAL + 10,
+          "block registry grows to 140 entries with items relocated above the block range");
     bool solid = true;
     for (int b = BLOCK_DEEPSLATE; b < BLOCK_LAVA; ++b) {
         if (BlockFlags(uint16_t(b)) != (BF_SOLID | BF_OPAQUE) || !BLOCK_DEFS[b].name || !BLOCK_DEFS[b].side) solid = false;

@@ -900,9 +900,9 @@ const MobStats kMobStats[int(MobType::Count)] = {
     {"skeleton", "Skeleton", 20, 1.20f, 1.95f, 0.30f, 2, true, "bone", 0, 2, "arrow", 0, 2},
     {"spider", "Spider", 16, 1.35f, 0.90f, 0.70f, 2, true, "string", 0, 2, "", 0, 0},
     {"enderman", "Enderman", 40, 1.45f, 2.90f, 0.30f, 7, true, "ender_pearl", 0, 1, "", 0, 0},
-    {"ender_dragon", "Ender Dragon", 200, 0.00f, 1.00f, 1.00f, 10, true, "dragon_egg", 0, 1, "", 0, 0},
-    {"wither", "Wither", 300, 0.00f, 1.00f, 1.00f, 8, true, "nether_star", 0, 1, "", 0, 0},
-    {"elder_guardian", "Elder Guardian", 80, 0.00f, 1.00f, 1.00f, 8, true, "prismarine_shard", 0, 2, "", 0, 0},
+    {"ender_dragon", "Ender Dragon", 200, 0.60f, 8.00f, 8.00f, 10, true, "dragon_egg", 0, 1, "", 0, 0},
+    {"wither", "Wither", 300, 0.60f, 3.50f, 0.90f, 8, true, "nether_star", 0, 1, "", 0, 0},
+    {"elder_guardian", "Elder Guardian", 80, 0.50f, 2.00f, 1.00f, 8, true, "prismarine_shard", 0, 2, "", 0, 0},
 };
 } // namespace
 
