@@ -1866,6 +1866,8 @@ int main() {
     BuildChunkMeshCPU(solid.data(), nullptr, nullptr, nullptr, nullptr, tiles, md);
     CHECK(md.vertices.size() == 24 && md.indices.size() == 36,
           "solid chunk greedy-meshes to exactly 6 quads");
+    CHECK(md.opaqueIndexCount == md.indices.size(),
+          "stone-only chunk: opaqueIndexCount == indices.size() (no liquid)");
     bool hasTop = false, hasBottom = false;
     for (const MeshVertex& v : md.vertices) {
         if (v.cr == 1.0f) hasTop = true;
@@ -1954,6 +1956,24 @@ int main() {
             if (v.y == 71.0f && v.cr == 1.0f && v.sky == 15.0f) ++roofSky;
         }
         CHECK(roofSky == 4, "roof top surface is fully sky-lit above the shadowed floor");
+    }
+
+    // --- Opaque/liquid index split (P0 fix) ---
+    {
+        std::vector<uint16_t> stoneWater(CHUNK_VOL, BLOCK_STONE);
+        // Replace a column with water so the chunk has both opaque and liquid faces.
+        for (int z = 0; z < CHUNK_Z; ++z)
+            for (int x = 0; x < CHUNK_X; ++x)
+                stoneWater[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * 64] = BLOCK_WATER;
+        MeshData sw;
+        BuildChunkMeshCPU(stoneWater.data(), nullptr, nullptr, nullptr, nullptr, tiles, sw);
+        CHECK(sw.indices.size() > 0, "stone+water chunk produces indices");
+        CHECK(sw.opaqueIndexCount > 0 && sw.opaqueIndexCount < sw.indices.size(),
+              "stone+water chunk splits opaque and liquid index ranges");
+        // Indices in [0, opaqueIndexCount) must be opaque; the rest liquid.
+        CHECK(sw.opaqueIndexCount % 3 == 0, "opaque index count is a multiple of 3");
+        CHECK((sw.indices.size() - sw.opaqueIndexCount) % 3 == 0,
+              "liquid index count is a multiple of 3");
     }
 
     // --- Raycast ---
