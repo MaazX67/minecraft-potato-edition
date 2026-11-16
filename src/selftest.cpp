@@ -3,6 +3,7 @@
 #include "registry.h"
 #include "commands.h"
 #include "world.h"
+#include "ui_layout.h"
 #include "shader_embed.h"
 #include "json.hpp"
 #include <d3dcompiler.h>
@@ -1330,6 +1331,53 @@ static void TestRegistryParsing() {
           "creative search is a case-insensitive substring with spaces as underscores");
 }
 
+static void TestCreativeLayout() {
+    using L = CreativeLayout;
+    const float W = 1366.0f, H = 768.0f;
+    CHECK(L::PanelW == 390.0f && L::PanelH == 272.0f && L::Cell == 36.0f,
+          "creative panel is Java 195x136 at GUI scale 2");
+    CHECK(L::PanelX(W) == 488.0f && L::PanelY(H) == 248.0f,
+          "creative panel is centred like AbstractContainerScreen.init");
+    CHECK(L::PickerX(W) == 506.0f && L::PickerY(H) == 284.0f,
+          "picker origin is Java (9,18) scaled");
+    CHECK(L::HotbarRowY(H) == 472.0f && L::HotbarX(W) == 506.0f,
+          "hotbar row is Java (9,112) scaled, inside the panel");
+    CHECK(L::HotbarRowY(H) + L::Cell <= L::PanelY(H) + L::PanelH,
+          "hotbar row fits inside the panel bottom");
+    bool hotOk = true;
+    for (int i = 0; i < 9; ++i) {
+        const float cx = L::HotbarX(W) + i * L::Cell + L::Cell * 0.5f;
+        const float cy = L::HotbarRowY(H) + L::Cell * 0.5f;
+        if (L::HitHotbar(cx, cy, W, H) != i) hotOk = false;
+    }
+    CHECK(hotOk, "every in-panel hotbar cell hit-tests to its own slot");
+    CHECK(L::HitHotbar(506.0f, 460.0f, W, H) == -1 &&
+          L::HitHotbar(506.0f, 510.0f, W, H) == -1,
+          "above and below the hotbar row is not a hotbar click");
+    CHECK(L::HitPicker(524.0f, 302.0f, W, H, 0) == 0 &&
+          L::HitPicker(524.0f, 302.0f, W, H, 2) == 18,
+          "picker hit-test maps to the scrolled flat index");
+    CHECK(L::HitPicker(524.0f, 470.0f, W, H, 0) == -1,
+          "the old storage-row area below the picker is not clickable");
+    CHECK(L::HitSearch(656.0f, 264.0f, W, H) &&
+          !L::HitSearch(651.0f, 264.0f, W, H),
+          "search box is the Java (82,6) 80x9 EditBox rect");
+    CHECK(L::SearchMaxLen == 50, "search maxLength matches Java EditBox.setMaxLength(50)");
+
+    // The creative pick -> place -> mirror chain that bug C broke.
+    InventoryState inv;
+    inv.cursor = {BLOCK_STONE, 64, 0};
+    CHECK(inv.Click(27 + 3, false, false, false) && inv.cursor.Empty() &&
+          inv.slots[30].id == BLOCK_STONE && inv.slots[30].count == 64,
+          "creative cursor stack lands in hotbar slot 3 via Click(27+3)");
+    bool mirrorOk = true;
+    for (int i = 0; i < 9; ++i) {
+        const uint16_t id = inv.slots[27 + i].Empty() ? uint16_t(BLOCK_AIR) : inv.slots[27 + i].id;
+        if (i == 3 ? id != BLOCK_STONE : id != BLOCK_AIR) mirrorOk = false;
+    }
+    CHECK(mirrorOk, "hotbar mirror reads exactly the placed slot and air elsewhere");
+}
+
 static void TestShiftClickParity() {
     InventoryState inv;
     inv.slots[0] = {BLOCK_STONE, 32};
@@ -1707,6 +1755,7 @@ int main() {
     TestWaterShaderPass();
     TestBubbleParticles();
     TestRegistryParsing();
+    TestCreativeLayout();
     TestShiftClickParity();
     TestChatCommands();
     TestSeedsAndStructures();

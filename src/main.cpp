@@ -3938,7 +3938,7 @@ static void RenderFrame() {
             DrawHUD(gGui, gPlayer.attackCooldownProgress, gHotbarSlot, gHotbar,
                     gSurvival.health, gSurvival.hunger, gInventory.Defense(),
                     gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1,
-                    gGameMode == 0 ? gInventory.slots + 27 : nullptr, uiScale);
+                    gInventory.slots + 27, uiScale);
         DrawChat(gGui, gChat.entries, gChat.open, gChat.input, gTimeSec, uiScale);
         if (gDebug) DrawDebug(uiScale);
     } else if (gScreen == Screen::Inventory) {
@@ -3946,7 +3946,7 @@ static void RenderFrame() {
             DrawSurvivalInventory(gGui, gInventory, gCraftTable, gInput.mouseX,
                                   gInput.mouseY, gInventoryMessage);
         else
-            DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gHotbarSlot, gHotbar, gInventory);
+            DrawInventory(gGui, gInput.mouseX, gInput.mouseY, gInventory);
     } else if (gScreen == Screen::Furnace) {
         DrawFurnace(gGui, gFurnace, gInventory, gInput.mouseX, gInput.mouseY);
     } else if (gScreen == Screen::Chest) {
@@ -4398,8 +4398,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                         gSound.Play(SND_CLICK);
                     } else {
                         const int hot = CreativeHotbarHitTest(gInput.mouseX, gInput.mouseY);
-                        const int slot = CreativeSlotHitTest(gInput.mouseX, gInput.mouseY);
-                        const int index = hot >= 0 ? 27 + hot : slot;
+                        const int index = hot >= 0 ? 27 + hot : -1;
                         gDragSlot = index;
                         if (index >= 0 && gInventory.Click(index, gInput.rightClick, false,
                                                            gInput.keys[VK_SHIFT])) {
@@ -4411,8 +4410,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                     gDragSlot = -1;
                 } else if (gDragSlot >= 0) {
                     const int hot = CreativeHotbarHitTest(gInput.mouseX, gInput.mouseY);
-                    const int slot = CreativeSlotHitTest(gInput.mouseX, gInput.mouseY);
-                    const int index = hot >= 0 ? 27 + hot : slot;
+                    const int index = hot >= 0 ? 27 + hot : -1;
                     if (index >= 0 && index != gDragSlot && !gInventory.cursor.Empty()) {
                         gDragSlot = index;
                         if (gInventory.Click(index, true, false, false)) SyncHotbar();
