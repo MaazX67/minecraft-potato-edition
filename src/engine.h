@@ -282,6 +282,10 @@ struct SurvivalState {
     int health = 20, hunger = 20;
     float exhaustion = 0, saturation = 5, regenTimer = 0, starveTimer = 0;
     bool dead = false;
+    // Tutorial system (Java: tutorial hints/toasts)
+    int tutorialStep = 0; // 0 = not started, 1+ = current step
+    float tutorialTimer = 0; // time since last hint
+    bool tutorialComplete = false;
     float xpProgress = 0; int xpLevel = 0;
     int airTicks = 300; float drownTimer = 0, voidTimer = 0;
 
@@ -340,6 +344,10 @@ struct HurtResistance {
 
 enum class MobType {
     Zombie, Pig, Cow, Sheep, Chicken, Creeper, Skeleton, Spider, Enderman,
+    Slime, Allay, Axolotl, Bat, Bee, Blaze, Camel, Cat, Dolphin, Fox, Frog,
+    Ghast, Goat, Horse, IronGolem, Llama, Panda, Parrot, Phantom, Piglin,
+    Rabbit, Shulker, Silverfish, Sniffer, SnowGolem, Squid, Strider, Turtle,
+    Villager, WanderingTrader, Warden, Witch, Wolf, ZombieVillager, Endermite,
     EnderDragon, Wither, ElderGuardian, Count
 };
 

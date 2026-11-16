@@ -31,6 +31,21 @@ struct CreativeLayout {
     static constexpr int SearchMaxLen = 50;
     static constexpr float IconInset = 2.0f; // 16px icon in an 18px cell, scaled
 
+    // CreativeModeTab rows/columns (JAR sprite files tab_top_*_1..7 and
+    // tab_bottom_*_1..7 = column+1). CTAB order: building, colored, natural,
+    // functional, redstone, tools, combat, food, ingredients, search.
+    // Java puts combat/food/ingredients on the bottom row, search top-right.
+    static constexpr float TabW = 28.0f * GuiScale;
+    static constexpr float TabH = 32.0f * GuiScale;
+    static constexpr float TabOverlap = 4.0f * GuiScale;
+    static constexpr int TabRow(int tab) { return (tab >= 6 && tab <= 8) ? 1 : 0; }
+    static constexpr int TabCol(int tab) { return tab == 9 ? 6 : (tab >= 6 ? tab - 6 : tab); }
+    static constexpr float TabX(float screenW, int tab) { return PanelX(screenW) + TabCol(tab) * TabW; }
+    static constexpr float TabY(float screenH, int tab) {
+        return TabRow(tab) == 0 ? PanelY(screenH) - TabH + TabOverlap
+                                : PanelY(screenH) + PanelH - TabOverlap;
+    }
+
     static constexpr float PanelX(float screenW) { return (screenW - PanelW) * 0.5f; }
     static constexpr float PanelY(float screenH) { return (screenH - PanelH) * 0.5f; }
 

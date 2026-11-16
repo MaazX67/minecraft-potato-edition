@@ -1444,16 +1444,30 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
     if (mGenerator == WorldGenerator::End) {
         // End generation: end stone platform, chorus trees, end portal
         const int height = 64;
-        for (int x = 0; x < CHUNK_X; ++x)
+        // Perlin noise for island shape
+        PerlinNoise endNoise(mSeed ^ 0x5EED);
+        for (int x = 0; x < CHUNK_X; ++x) {
             for (int z = 0; z < CHUNK_Z; ++z) {
-                raw[(height - 1) * CHUNK_X * CHUNK_Z + x * CHUNK_Z + z] = BLOCK_END_STONE;
-                raw[(height - 2) * CHUNK_X * CHUNK_Z + x * CHUNK_Z + z] = BLOCK_END_STONE;
+                const float wx = float(cx * CHUNK_X + x);
+                const float wz = float(cz * CHUNK_Z + z);
+                const float dist = sqrtf(wx * wx + wz * wz);
+                const float noise = endNoise.Noise2(wx * 0.05f, wz * 0.05f);
+                const int surface = height + int(noise * 4.0f);
+                if (dist < 128.0f + noise * 16.0f) {
+                    // Java End islands float over the void: no bedrock floor,
+                    // end stone shell roughly 8-18 blocks thick.
+                    int bottom = surface - 13 + int(noise * 5.0f);
+                    if (bottom < 1) bottom = 1;
+                    for (int y = bottom; y <= surface && y < CHUNK_Y; ++y)
+                        raw[y * CHUNK_X * CHUNK_Z + x + CHUNK_X * z] = BLOCK_END_STONE;
+                }
             }
+        }
         // Central island at (0,0) with end portal at center
         if (cx == 0 && cz == 0) {
             for (int x = 4; x <= 11; ++x)
                 for (int z = 4; z <= 11; ++z) {
-                    raw[(height - 1) * CHUNK_X * CHUNK_Z + x * CHUNK_Z + z] = BLOCK_END_PORTAL_FRAME;
+                    raw[(height - 1) * CHUNK_X * CHUNK_Z + x + CHUNK_X * z] = BLOCK_END_PORTAL_FRAME;
                 }
         }
         c.SetRaw(raw.data());

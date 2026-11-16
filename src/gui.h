@@ -20,7 +20,10 @@ struct GuiTexture {
 enum class Screen {
     Title, CreateWorld, Options, Pause, Game, Inventory, Death,
     VideoOptions, SoundOptions, ControlsOptions, Profile, SelectWorld, Furnace, Chest,
-    ConfirmDelete, EditWorld, GameRules, Achievements
+    ConfirmDelete, EditWorld, GameRules, Achievements,
+    Enchanting, Anvil, Smithing, Brewing, Hopper, Shulker, Stonecutter, Loom,
+    Cartography, Grindstone, Beacon, VillagerTrade, Dispenser, BlastFurnace, Smoker,
+    Crafter
 };
 
 struct PlayerProfile {
@@ -285,6 +288,12 @@ struct ChatEntry {
 void DrawChat(GuiRenderer& ui, const std::vector<ChatEntry>& entries, bool open,
               const std::string& input, float timeSec, float scale = 1.0f);
 
+// Tutorial hint toast (Java 26.3 tutorial hints)
+void DrawTutorialHint(GuiRenderer& ui, const std::string& hint, float timeSec, float scale);
+
+// Advancement toast (Java 26.3 advancement notifications)
+void DrawAdvancementToast(GuiRenderer& ui, const std::string& title, const std::string& desc, float timeSec, float scale);
+
 // Tabbed creative inventory (E in creative). Java 26.3 layout: 195x136 panel,
 // 9x5 picker at (9,18), the 9 hotbar slots as the last row at (9,112), no
 // storage rows and no HUD hotbar while the screen is open (see ui_layout.h).
@@ -312,5 +321,23 @@ void DrawChest(GuiRenderer& ui, const ChestState& chest, const InventoryState& i
 void DrawSurvivalInventory(GuiRenderer& ui, const InventoryState& model, bool table,
                            int mouseX, int mouseY, const std::string& message);
 int SurvivalInvHitTest(int mouseX, int mouseY, bool table);
+
+// Java 26.3 container GUIs
+void DrawEnchanting(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv, int playerLevel);
+void DrawAnvil(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawSmithing(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawBrewing(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawHopper(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawShulker(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawStonecutter(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawLoom(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawCartography(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawGrindstone(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawBeacon(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawVillagerTrade(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawDispenser(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawBlastFurnace(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawSmoker(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
+void DrawCrafter(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv);
 
 } // namespace potato

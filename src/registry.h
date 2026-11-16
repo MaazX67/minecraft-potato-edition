@@ -67,7 +67,8 @@ struct RegistryBlockEntry {
 // many ids were appended (0 without a jar, or on a second call).
 int RegisterRuntimeRegistry(AssetStore& store);
 const std::vector<RegistryBlockEntry>& RegistryBlocks();
-const std::vector<uint16_t>& RegistryIds(); // every appended id, ascending
+const std::vector<uint16_t>& RegistryIds();
+const std::vector<uint16_t>& RegistryItems(); // every appended id, ascending
 void ResetRuntimeRegistry();                // test seam: back to built-ins only
 
 // One machine-readable parity line for the loaded registry:

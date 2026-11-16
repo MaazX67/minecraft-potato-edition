@@ -900,6 +900,41 @@ const MobStats kMobStats[int(MobType::Count)] = {
     {"skeleton", "Skeleton", 20, 1.20f, 1.95f, 0.30f, 2, true, "bone", 0, 2, "arrow", 0, 2},
     {"spider", "Spider", 16, 1.35f, 0.90f, 0.70f, 2, true, "string", 0, 2, "", 0, 0},
     {"enderman", "Enderman", 40, 1.45f, 2.90f, 0.30f, 7, true, "ender_pearl", 0, 1, "", 0, 0},
+    {"slime", "Slime", 4, 0.50f, 0.60f, 0.40f, 0, true, "slime_ball", 0, 2, "", 0, 0},
+    {"allay", "Allay", 20, 0.10f, 0.60f, 0.35f, 0, false, "", 0, 0, "", 0, 0},
+    {"axolotl", "Axolotl", 10, 1.00f, 0.60f, 0.40f, 2, false, "", 0, 0, "", 0, 0},
+    {"bat", "Bat", 6, 0.10f, 0.90f, 0.50f, 0, false, "", 0, 0, "", 0, 0},
+    {"bee", "Bee", 10, 0.30f, 0.60f, 0.40f, 2, false, "honeycomb", 0, 1, "", 0, 0},
+    {"blaze", "Blaze", 20, 0.23f, 1.80f, 0.60f, 6, true, "blaze_rod", 0, 1, "", 0, 0},
+    {"camel", "Camel", 32, 0.90f, 2.375f, 0.90f, 0, false, "", 0, 0, "", 0, 0},
+    {"cat", "Cat", 10, 0.30f, 0.70f, 0.30f, 0, false, "", 0, 0, "", 0, 0},
+    {"dolphin", "Dolphin", 10, 1.20f, 0.60f, 0.40f, 0, false, "", 0, 0, "", 0, 0},
+    {"fox", "Fox", 10, 0.30f, 0.50f, 0.40f, 0, false, "", 0, 0, "", 0, 0},
+    {"frog", "Frog", 10, 0.40f, 0.55f, 0.50f, 0, false, "", 0, 0, "", 0, 0},
+    {"ghast", "Ghast", 10, 0.70f, 4.00f, 4.00f, 0, true, "gunpowder", 0, 2, "ghast_tear", 0, 1},
+    {"goat", "Goat", 10, 0.40f, 1.30f, 0.45f, 0, false, "", 0, 0, "", 0, 0},
+    {"horse", "Horse", 15, 1.60f, 1.60f, 0.75f, 0, false, "leather", 0, 2, "", 0, 0},
+    {"iron_golem", "Iron Golem", 100, 0.25f, 2.70f, 1.40f, 21, false, "iron_ingot", 3, 5, "poppy", 0, 1},
+    {"llama", "Llama", 15, 1.00f, 1.87f, 0.45f, 0, false, "leather", 0, 2, "", 0, 0},
+    {"panda", "Panda", 20, 0.80f, 1.25f, 0.70f, 0, false, "bamboo", 1, 2, "", 0, 0},
+    {"parrot", "Parrot", 6, 0.20f, 0.90f, 0.50f, 0, false, "feather", 1, 2, "", 0, 0},
+    {"phantom", "Phantom", 20, 0.50f, 0.50f, 0.90f, 6, true, "phantom_membrane", 0, 1, "", 0, 0},
+    {"piglin", "Piglin", 16, 0.35f, 1.95f, 0.40f, 0, true, "gold_nugget", 2, 4, "", 0, 0},
+    {"rabbit", "Rabbit", 3, 0.30f, 0.40f, 0.40f, 0, false, "rabbit", 0, 1, "rabbit_foot", 0, 1},
+    {"shulker", "Shulker", 30, 0.20f, 1.00f, 1.00f, 4, true, "shulker_shell", 0, 1, "", 0, 0},
+    {"silverfish", "Silverfish", 8, 0.25f, 0.30f, 0.40f, 1, true, "", 0, 0, "", 0, 0},
+    {"sniffer", "Sniffer", 14, 0.10f, 1.90f, 1.60f, 0, false, "", 0, 0, "", 0, 0},
+    {"snow_golem", "Snow Golem", 4, 0.20f, 1.90f, 0.70f, 0, false, "snowball", 0, 15, "", 0, 0},
+    {"squid", "Squid", 10, 0.70f, 0.80f, 0.80f, 0, false, "ink_sac", 1, 3, "", 0, 0},
+    {"strider", "Strider", 20, 0.18f, 1.70f, 0.90f, 0, false, "string", 2, 5, "", 0, 0},
+    {"turtle", "Turtle", 30, 0.25f, 0.40f, 0.75f, 0, false, "seagrass", 0, 2, "", 0, 0},
+    {"villager", "Villager", 20, 0.90f, 1.95f, 0.60f, 0, false, "", 0, 0, "", 0, 0},
+    {"wandering_trader", "Wandering Trader", 20, 0.50f, 1.95f, 0.60f, 0, false, "", 0, 0, "", 0, 0},
+    {"warden", "Warden", 500, 0.30f, 2.90f, 0.90f, 30, true, "sculk_catalyst", 1, 1, "", 0, 0},
+    {"witch", "Witch", 26, 0.25f, 1.95f, 0.60f, 0, true, "glass_bottle", 0, 2, "", 0, 0},
+    {"wolf", "Wolf", 8, 0.30f, 0.85f, 0.60f, 4, false, "", 0, 0, "", 0, 0},
+    {"zombie_villager", "Zombie Villager", 20, 1.30f, 1.95f, 0.30f, 3, true, "rotten_flesh", 0, 2, "", 0, 0},
+    {"endermite", "Endermite", 8, 1.00f, 0.30f, 0.40f, 0, true, "", 0, 0, "", 0, 0},
     {"ender_dragon", "Ender Dragon", 200, 0.60f, 8.00f, 8.00f, 10, true, "dragon_egg", 0, 1, "", 0, 0},
     {"wither", "Wither", 300, 0.60f, 3.50f, 0.90f, 8, true, "nether_star", 0, 1, "", 0, 0},
     {"elder_guardian", "Elder Guardian", 80, 0.50f, 2.00f, 1.00f, 8, true, "prismarine_shard", 0, 2, "", 0, 0},
@@ -946,6 +981,69 @@ void Mob::Update(float dt, const PlayerBody& player, const std::function<uint16_
     const float dx = player.x - body.x, dz = player.z - body.z;
     const float distance2 = dx * dx + dz * dz;
     const MobStats& stats = GetMobStats(type);
+    // Boss AI
+    if (type == MobType::EnderDragon) {
+        // Ender Dragon: fly toward player, perch on portal, shoot fireballs
+        const float dist = sqrtf(distance2);
+        yaw = atan2f(dx, -dz);
+        if (dist > 8.0f) {
+            // Fly toward player
+            body.vx = dx / dist * 0.5f;
+            body.vy = (player.y - body.y) * 0.1f;
+            body.vz = dz / dist * 0.5f;
+            body.flying = true;
+        } else {
+            // Perch and attack
+            body.vx = 0; body.vz = 0;
+            body.vy = -0.1f;
+            body.flying = false;
+            if (distance2 < 4.0f && attackDelay <= 0) {
+                attackDelay = 2.0f;
+                // Deal damage to player (handled in main.cpp)
+            }
+        }
+        body.Update(input, dt, camera, getBlock);
+        return;
+    }
+    if (type == MobType::Wither) {
+        // Wither: fly, shoot skulls, spawn wither skeletons
+        const float dist = sqrtf(distance2);
+        yaw = atan2f(dx, -dz);
+        if (dist > 6.0f) {
+            body.vx = dx / dist * 0.3f;
+            body.vy = (player.y - body.y) * 0.05f;
+            body.vz = dz / dist * 0.3f;
+            body.flying = true;
+        } else {
+            body.vx = 0; body.vz = 0;
+            body.vy = 0;
+            body.flying = false;
+            if (attackDelay <= 0) {
+                attackDelay = 1.5f;
+                // Shoot skull projectile (handled in main.cpp)
+            }
+        }
+        body.Update(input, dt, camera, getBlock);
+        return;
+    }
+    if (type == MobType::ElderGuardian) {
+        // Elder Guardian: laser attack, mining fatigue
+        const float dist = sqrtf(distance2);
+        yaw = atan2f(dx, -dz);
+        if (dist > 5.0f) {
+            body.vx = dx / dist * 0.2f;
+            body.vy = 0;
+            body.vz = dz / dist * 0.2f;
+        } else {
+            body.vx = 0; body.vz = 0;
+            if (attackDelay <= 0) {
+                attackDelay = 3.0f;
+                // Laser attack (handled in main.cpp)
+            }
+        }
+        body.Update(input, dt, camera, getBlock);
+        return;
+    }
     if (passive) {
         // Java-pig-style calm wander: pick a heading every few seconds and
         // flee briefly after taking damage.

@@ -310,7 +310,45 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texMob[int(MobType::Creeper)]  = loadEntity({"minecraft/textures/entity/creeper/creeper.png"});
     texMob[int(MobType::Skeleton)] = loadEntity({"minecraft/textures/entity/skeleton/skeleton.png"});
     texMob[int(MobType::Spider)]   = loadEntity({"minecraft/textures/entity/spider/spider.png"});
+    texMob[int(MobType::Slime)]    = loadEntity({"minecraft/textures/entity/slime/slime.png"});
     texMob[int(MobType::Enderman)] = loadEntity({"minecraft/textures/entity/enderman/enderman.png"});
+    texMob[int(MobType::Endermite)] = loadEntity({"minecraft/textures/entity/endermite/endermite.png"});
+    texMob[int(MobType::EnderDragon)] = loadEntity({"minecraft/textures/entity/enderdragon/dragon.png"});
+    texMob[int(MobType::Wither)] = loadEntity({"minecraft/textures/entity/wither/wither.png"});
+    texMob[int(MobType::ElderGuardian)] = loadEntity({"minecraft/textures/entity/guardian/guardian_elder.png"});
+    texMob[int(MobType::Allay)] = loadEntity({"minecraft/textures/entity/allay/allay.png"});
+    texMob[int(MobType::Axolotl)] = loadEntity({"minecraft/textures/entity/axolotl/axolotl_blue.png"});
+    texMob[int(MobType::Bat)] = loadEntity({"minecraft/textures/entity/bat.png"});
+    texMob[int(MobType::Bee)] = loadEntity({"minecraft/textures/entity/bee/bee.png"});
+    texMob[int(MobType::Blaze)] = loadEntity({"minecraft/textures/entity/blaze.png"});
+    texMob[int(MobType::Camel)] = loadEntity({"minecraft/textures/entity/camel/camel.png"});
+    texMob[int(MobType::Cat)] = loadEntity({"minecraft/textures/entity/cat/cat_all_black.png"});
+    texMob[int(MobType::Dolphin)] = loadEntity({"minecraft/textures/entity/dolphin.png"});
+    texMob[int(MobType::Fox)] = loadEntity({"minecraft/textures/entity/fox/fox.png"});
+    texMob[int(MobType::Frog)] = loadEntity({"minecraft/textures/entity/frog/frog_cold.png"});
+    texMob[int(MobType::Ghast)] = loadEntity({"minecraft/textures/entity/ghast/ghast.png"});
+    texMob[int(MobType::Goat)] = loadEntity({"minecraft/textures/entity/goat/goat.png"});
+    texMob[int(MobType::Horse)] = loadEntity({"minecraft/textures/entity/horse/horse_brown.png"});
+    texMob[int(MobType::IronGolem)] = loadEntity({"minecraft/textures/entity/iron_golem/iron_golem.png"});
+    texMob[int(MobType::Llama)] = loadEntity({"minecraft/textures/entity/llama/llama_brown.png"});
+    texMob[int(MobType::Panda)] = loadEntity({"minecraft/textures/entity/panda/panda.png"});
+    texMob[int(MobType::Parrot)] = loadEntity({"minecraft/textures/entity/parrot/parrot_red_blue.png"});
+    texMob[int(MobType::Phantom)] = loadEntity({"minecraft/textures/entity/phantom.png"});
+    texMob[int(MobType::Piglin)] = loadEntity({"minecraft/textures/entity/piglin/piglin.png"});
+    texMob[int(MobType::Rabbit)] = loadEntity({"minecraft/textures/entity/rabbit/rabbit_black.png"});
+    texMob[int(MobType::Shulker)] = loadEntity({"minecraft/textures/entity/shulker/shulker.png"});
+    texMob[int(MobType::Silverfish)] = loadEntity({"minecraft/textures/entity/silverfish.png"});
+    texMob[int(MobType::Sniffer)] = loadEntity({"minecraft/textures/entity/sniffer/sniffer.png"});
+    texMob[int(MobType::SnowGolem)] = loadEntity({"minecraft/textures/entity/snow_golem.png"});
+    texMob[int(MobType::Squid)] = loadEntity({"minecraft/textures/entity/squid/squid.png"});
+    texMob[int(MobType::Strider)] = loadEntity({"minecraft/textures/entity/strider/strider.png"});
+    texMob[int(MobType::Turtle)] = loadEntity({"minecraft/textures/entity/turtle/turtle.png"});
+    texMob[int(MobType::Villager)] = loadEntity({"minecraft/textures/entity/villager/villager.png"});
+    texMob[int(MobType::WanderingTrader)] = loadEntity({"minecraft/textures/entity/wandering_trader.png"});
+    texMob[int(MobType::Warden)] = loadEntity({"minecraft/textures/entity/warden/warden.png"});
+    texMob[int(MobType::Witch)] = loadEntity({"minecraft/textures/entity/witch.png"});
+    texMob[int(MobType::Wolf)] = loadEntity({"minecraft/textures/entity/wolf/wolf.png"});
+    texMob[int(MobType::ZombieVillager)] = loadEntity({"minecraft/textures/entity/zombie_villager/zombie_villager.png"});
     texClouds = loadEntity({"minecraft/textures/environment/clouds.png",
                             "minecraft/textures/environment/clouds/clouds.png"});
 
@@ -1269,6 +1307,29 @@ void DrawChat(GuiRenderer& ui, const std::vector<ChatEntry>& entries, bool open,
         DrawTextField(ui, input, 4 * s, inputY, 560 * s, 26 * s, true, timeSec, s);
 }
 
+void DrawTutorialHint(GuiRenderer& ui, const std::string& hint, float timeSec, float scale) {
+    const float s = scale;
+    const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
+    if (hint.empty()) return;
+    const float tw = ui.TextWidth(hint, 2 * s);
+    const float x = cx - tw * 0.5f - 10 * s;
+    const float y = SCREEN_H - 120 * s;
+    ui.DrawQuad(&ui.texBlack, x, y, tw + 20 * s, 30 * s, 0, 0, 1, 1, 15, 0.1f, 0.1f, 0.1f);
+    ui.DrawText(hint, x + 10 * s, y + 8 * s, 2 * s, 15, true);
+}
+
+void DrawAdvancementToast(GuiRenderer& ui, const std::string& title, const std::string& desc, float timeSec, float scale) {
+    const float s = scale;
+    const float cx = SCREEN_W * 0.5f;
+    if (title.empty()) return;
+    const float tw = ui.TextWidth(title, 2 * s);
+    const float x = cx - tw * 0.5f - 20 * s;
+    const float y = 10 * s;
+    ui.DrawQuad(&ui.texBlack, x, y, tw + 40 * s, 50 * s, 0, 0, 1, 1, 15, 0.1f, 0.1f, 0.3f);
+    ui.DrawText(title, x + 20 * s, y + 8 * s, 2 * s, 15, true);
+    ui.DrawText(desc, x + 20 * s, y + 28 * s, 1.5f * s, 15, true);
+}
+
 // ---------------------------------------------------------------------------
 // Creative inventory: Java 26.3 tabs, search, picker grid and player inventory
 // ---------------------------------------------------------------------------
@@ -1285,10 +1346,8 @@ constexpr float INV_GX = CreativeLayout::PickerX(float(SCREEN_W));
 constexpr float INV_GY = CreativeLayout::PickerY(float(SCREEN_H));
 constexpr float INV_GRID_H = INV_PICK_ROWS * INV_CELL;
 constexpr float INV_HOT_Y = CreativeLayout::HotbarRowY(float(SCREEN_H));
-constexpr float TAB_W = 36;
-constexpr float TAB_H = 28;
-constexpr float TAB_GAP = 2;
-constexpr float TAB_Y = INV_Y - TAB_H;
+constexpr float TAB_W = CreativeLayout::TabW;
+constexpr float TAB_H = CreativeLayout::TabH;
 
 int gCreativeScroll = 0;
 int gCreativeTab = CTAB_BUILDING;
@@ -1349,9 +1408,16 @@ void CellRect(int i, float& x, float& y) {
     y = INV_GY + (i / INV_COLS - gCreativeScroll) * INV_CELL;
 }
 
+// Java CreativeModeTabs rows: seven top tabs (search rightmost), combat/food/
+// ingredients on the bottom row. Sprite shape index = column (files 1..7).
+void TabRowCol(int tab, int& row, int& col) {
+    row = CreativeLayout::TabRow(tab);
+    col = CreativeLayout::TabCol(tab);
+}
+
 void TabRect(int tab, float& x, float& y) {
-    x = INV_X + TAB_GAP + tab * (TAB_W + TAB_GAP);
-    y = TAB_Y;
+    x = CreativeLayout::TabX(float(SCREEN_W), tab);
+    y = CreativeLayout::TabY(float(SCREEN_H), tab);
 }
 
 void SlotRect(int index, float& x, float& y) {
@@ -1431,11 +1497,10 @@ int CreativeHotbarHitTest(int mouseX, int mouseY) {
 }
 
 int CreativeTabHitTest(int mouseX, int mouseY) {
-    if (mouseY < TAB_Y || mouseY >= TAB_Y + TAB_H) return -1;
     for (int tab = 0; tab < CTAB_COUNT; ++tab) {
         float x, y;
         TabRect(tab, x, y);
-        if (mouseX >= x && mouseX < x + TAB_W) return tab;
+        if (mouseX >= x && mouseX < x + TAB_W && mouseY >= y && mouseY < y + TAB_H) return tab;
     }
     return -1;
 }
@@ -1449,17 +1514,22 @@ bool CreativeSearchFieldHitTest(int mouseX, int mouseY) {
 void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
     ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
 
-    // Tabs sit above the panel using Java's own creative tab sprites (the
-    // shaped tabs that merge into the panel edge), not generic widget tabs.
-    for (int tab = 0; tab < CTAB_COUNT; ++tab) {
+    // Java's shaped creative tab sprites, two rows; the selected tab is drawn
+    // AFTER the panel so its edge merges into the panel border.
+    auto drawTab = [&](int tab) {
         float x, y;
         TabRect(tab, x, y);
+        int row, col;
+        TabRowCol(tab, row, col);
         const bool selected = tab == gCreativeTab;
-        const GuiTexture* tex = &ui.texCreativeTabTop[selected ? 1 : 0][tab % 7];
+        const GuiTexture* tex = row == 0 ? &ui.texCreativeTabTop[selected ? 1 : 0][col]
+                                         : &ui.texCreativeTabBottom[selected ? 1 : 0][col];
         if (tex->srv) ui.DrawQuad(tex, x, y, TAB_W, TAB_H, 0, 0, 1, 1, 15);
         else ui.DrawNineSlice(selected ? &ui.texTabSelected : &ui.texTab, x, y, TAB_W, TAB_H, 2, 15);
-        DrawScaledIcon(ui, CreativeTabIcon(tab), x + 4, y + 2, TAB_W - 8);
-    }
+        DrawScaledIcon(ui, CreativeTabIcon(tab), x + 12, y + (row == 0 ? 10 : 22), 32);
+    };
+    for (int tab = 0; tab < CTAB_COUNT; ++tab)
+        if (tab != gCreativeTab) drawTab(tab);
 
     // Java's real creative panel background (the 195x136 region of a 256x256
     // sheet); the search tab swaps in the sheet that carries the search field.
@@ -1473,6 +1543,8 @@ void DrawInventory(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState
         ui.DrawQuad(&ui.texWhite, INV_X, INV_Y + INV_H - 2, INV_W, 2, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
         ui.DrawQuad(&ui.texWhite, INV_X + INV_W - 2, INV_Y, 2, INV_H, 0, 0, 1, 1, 15, 0.33f, 0.33f, 0.33f);
     }
+
+    drawTab(gCreativeTab);
 
     // Java draws no title on the creative panel. The search tab shows a
     // borderless white-text EditBox at (82,6) sized 80x9, maxLength 50
@@ -1817,6 +1889,225 @@ void DrawChest(GuiRenderer& ui, const ChestState& chest, const InventoryState& i
             ui.DrawQuad(&ui.texBlack, tx - 6, ty - 6, tw + 12, 28, 0, 0, 1, 1, 15, 0.1f, 0.05f, 0.2f);
             ui.DrawText(name, tx, ty, INV_S, 15, true);
         }
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+// Java 26.3 container GUIs - basic implementations using real JAR textures
+void DrawEnchanting(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv, int playerLevel) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texEnchantBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Enchanting", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    char buf[16]; std::snprintf(buf, sizeof(buf), "Level %d", playerLevel);
+    ui.DrawText(buf, px + 8 * INV_S, py + 20 * INV_S, INV_S, 15, true);
+    DrawStack(ui, px + 20 * INV_S, py + 40 * INV_S, inv.slots[0]);
+    DrawStack(ui, px + 20 * INV_S, py + 70 * INV_S, inv.slots[1]);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawAnvil(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texAnvilBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Anvil", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    DrawStack(ui, px + 20 * INV_S, py + 35 * INV_S, inv.slots[0]);
+    DrawStack(ui, px + 20 * INV_S, py + 70 * INV_S, inv.slots[1]);
+    DrawStack(ui, px + 100 * INV_S, py + 50 * INV_S, inv.slots[2]);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawSmithing(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texSmithingBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Smithing", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    DrawStack(ui, px + 20 * INV_S, py + 35 * INV_S, inv.slots[0]);
+    DrawStack(ui, px + 20 * INV_S, py + 70 * INV_S, inv.slots[1]);
+    DrawStack(ui, px + 100 * INV_S, py + 50 * INV_S, inv.slots[2]);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawBrewing(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texBrewingBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Brewing Stand", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawHopper(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texHopperBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Hopper", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawShulker(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texShulkerBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Shulker Box", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawStonecutter(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texStonecutterBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Stonecutter", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawLoom(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texLoomBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Loom", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawCartography(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texCartographyBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Cartography Table", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawGrindstone(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texGrindstoneBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Grindstone", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawBeacon(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texBeaconBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Beacon", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawVillagerTrade(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texVillagerBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Villager", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawDispenser(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texDispenserBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Dispenser", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawBlastFurnace(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texBlastFurnaceBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Blast Furnace", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawSmoker(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texSmokerBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Smoker", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
+    }
+    DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
+}
+
+void DrawCrafter(GuiRenderer& ui, int mouseX, int mouseY, const InventoryState& inv) {
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    const float px = (SCREEN_W - SURV_INV_W) * 0.5f, py = (SCREEN_H - SURV_INV_H) * 0.5f;
+    const GuiTexture& bg = ui.texCrafterBg;
+    ui.DrawQuad(&bg, px, py, SURV_INV_W, SURV_INV_H, 0, 0, 176.0f / bg.w, 166.0f / bg.h, 15);
+    ui.DrawText("Crafter", px + 8 * INV_S, py + 6 * INV_S, INV_S, 15, false, 0.25f, 0.25f, 0.25f);
+    for (int i = 0; i < 36; ++i) {
+        float x, y; SlotPos(i, false, x, y); x += px; y += py;
+        DrawStack(ui, x, y, inv.slots[i]);
     }
     DrawStack(ui, float(mouseX) - 8 * INV_S, float(mouseY) - 8 * INV_S, inv.cursor);
 }

@@ -839,8 +839,8 @@ static void TestMobCatalog() {
         MobType parsed;
         CHECK(ParseMobId(MobId(type), parsed) && parsed == type, "every mob id round-trips through the parser");
         const MobStats& stats = GetMobStats(type);
-        CHECK(stats.health > 0 && stats.speed > 0 && stats.height > 0 && stats.drop[0] && stats.name[0],
-              "mob stats carry vanilla health/speed/height/drops");
+        CHECK(stats.health > 0 && stats.speed > 0 && stats.height > 0 && stats.name[0],
+              "mob stats carry vanilla health/speed/height (drops may be empty: Java allay/bat/villager drop nothing)");
     }
     MobType parsed;
     CHECK(ParseMobId("minecraft:pig", parsed) && parsed == MobType::Pig, "namespaced mob ids are accepted");
@@ -1469,6 +1469,21 @@ static void TestCreativeLayout() {
           !L::HitSearch(651.0f, 264.0f, W, H),
           "search box is the Java (82,6) 80x9 EditBox rect");
     CHECK(L::SearchMaxLen == 50, "search maxLength matches Java EditBox.setMaxLength(50)");
+
+    // Java two-row creative tab strip: 7 top columns, combat/food/ingredients
+    // bottom, search top-right; sprite shape index = column (files 1..7).
+    CHECK(L::TabRow(CTAB_COMBAT) == 1 && L::TabRow(CTAB_FOOD) == 1 &&
+          L::TabRow(CTAB_INGREDIENTS) == 1 && L::TabRow(CTAB_BUILDING) == 0 &&
+          L::TabRow(CTAB_SEARCH) == 0,
+          "combat/food/ingredients sit on the bottom tab row like Java");
+    CHECK(L::TabCol(CTAB_SEARCH) == 6 && L::TabCol(CTAB_COMBAT) == 0 &&
+          L::TabCol(CTAB_TOOLS) == 5,
+          "search is the rightmost top tab; columns match sprite numbers 1..7");
+    CHECK(L::TabY(H, CTAB_BUILDING) + L::TabH == L::PanelY(H) + L::TabOverlap &&
+          L::TabY(H, CTAB_COMBAT) == L::PanelY(H) + L::PanelH - L::TabOverlap,
+          "tab rows overlap the panel edge by 4 gui px so shapes merge");
+    CHECK(L::TabX(W, CTAB_SEARCH) + L::TabW <= L::PanelX(W) + L::PanelW + L::GuiScale,
+          "seven 28px tab columns span the 195px panel width");
 
     // The creative pick -> place -> mirror chain that bug C broke.
     InventoryState inv;

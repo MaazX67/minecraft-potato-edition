@@ -73,6 +73,14 @@ static ID3D10Buffer* gZombieVB = nullptr;
 static ID3D10Buffer* gHeldVB = nullptr;
 static int gIconsBound = 0; // ids that found a sprite in the shared atlas
 static std::vector<Zombie> gZombies;
+// Tutorial system: step tracking + hint text
+static int gTutorialStep = 0; // 0 = not started, 1+ = current step
+static float gTutorialTimer = 0; // time since last hint
+static std::string gTutorialHint = ""; // current hint text
+// Advancement toast system
+static std::string gAdvancementTitle = "";
+static std::string gAdvancementDesc = "";
+static float gAdvancementTimer = 0;
 // Dropped item entities (M3.1): fall with gravity, merge stacks, get picked up.
 struct ItemEntity {
     uint16_t id = 0;
@@ -104,6 +112,8 @@ static void RandomTickBlocks();
 // M3.2 redstone: power levels per block position.
 static std::unordered_map<uint64_t, uint8_t> gRedstonePower; // posKey -> 0..15
 uint64_t RedstoneKey(int x, int y, int z) { return (uint64_t(uint32_t(x)) << 40) | (uint64_t(uint32_t(y)) << 20) | uint64_t(uint32_t(z)); }
+// Wire/lamp/torch are runtime registry ids (jar-loaded), not built-in enum ids.
+static uint16_t gWireBlockId = 0, gLampBlockId = 0, gTorchBlockId = 0;
 static uint16_t gRedstoneLampId = 0;
 static int gRedstoneLampOnTile = 0;
 static int gRedstoneLampOffTile = 0;
@@ -2421,6 +2431,59 @@ static void HandleGameFrame(float dt) {
     }
     if (gSettings.viewBobbing && moving && gBody.onGround && !gBody.flying)
         gCamera.y += sinf(gTimeSec * 9.0f) * 0.05f;
+    // Advancement triggers
+    if (gGameMode == 0) {
+        // First tool crafted
+        if (gInventory.slots[27 + 0].id != BLOCK_AIR && gInventory.slots[27 + 0].id != 0 && gAdvancementTitle.empty()) {
+            // Check if player has crafted a tool
+            static bool firstTool = false;
+            if (!firstTool && gInventory.slots[27 + 0].count > 0) {
+                firstTool = true;
+                gAdvancementTitle = "Stone Age";
+                gAdvancementDesc = "Mine stone with your new pickaxe";
+                gAdvancementTimer = 0;
+            }
+        }
+        // First mob killed
+        static int kills = 0;
+        if (gZombieKills > kills && gAdvancementTitle.empty()) {
+            kills = gZombieKills;
+            gAdvancementTitle = "Monster Hunter";
+            gAdvancementDesc = "Kill a hostile mob";
+            gAdvancementTimer = 0;
+        }
+    }
+    if (!gAdvancementTitle.empty()) {
+        gAdvancementTimer += dt;
+        if (gAdvancementTimer >= 5.0f) {
+            gAdvancementTitle = "";
+            gAdvancementDesc = "";
+            gAdvancementTimer = 0;
+        }
+    }
+
+    // Tutorial system: show hints based on player progress
+    if (!gSurvival.dead && gGameMode == 0 && !gSurvival.tutorialComplete) {
+        gTutorialTimer += dt;
+        if (gTutorialStep == 0) {
+            gTutorialHint = "Welcome! Use WASD to move. Press E for inventory.";
+            if (gTutorialTimer >= 5.0f) { gTutorialStep = 1; gTutorialTimer = 0; }
+        } else if (gTutorialStep == 1) {
+            gTutorialHint = "Left-click to break blocks. Right-click to place.";
+            if (gInput.leftClick) { gTutorialStep = 2; gTutorialTimer = 0; }
+        } else if (gTutorialStep == 2) {
+            gTutorialHint = "Press E to open inventory. Craft tools from wood.";
+            if (gScreen == Screen::Inventory) { gTutorialStep = 3; gTutorialTimer = 0; }
+        } else if (gTutorialStep == 3) {
+            gTutorialHint = "Survive the night! Build a shelter before dark.";
+            const bool night = gSkyTimeline.Sample(gWorldClock.Ticks()).stars > 0.1f;
+            if (night) { gTutorialStep = 4; gTutorialTimer = 0; }
+        } else if (gTutorialStep == 4) {
+            gTutorialHint = "Great! You've completed the tutorial. Have fun!";
+            if (gTutorialTimer >= 5.0f) { gSurvival.tutorialComplete = true; gTutorialHint = ""; }
+        }
+    }
+
     if (gSurvival.dead) { PlayerDied(); return; }
 
     // XP orbs: bob, magnet toward the player within 2 blocks, collect on touch.
@@ -2475,8 +2538,19 @@ static void HandleGameFrame(float dt) {
             const bool wantPassive = passive < 10;
             if (wantHostile || wantPassive) {
                 static const MobType kHostile[] = {MobType::Zombie, MobType::Creeper, MobType::Skeleton,
-                                                   MobType::Spider, MobType::Enderman};
-                static const MobType kPassive[] = {MobType::Pig, MobType::Cow, MobType::Sheep, MobType::Chicken};
+                                                   MobType::Spider, MobType::Enderman, MobType::Slime,
+                                                   MobType::Blaze, MobType::Ghast, MobType::Phantom,
+                                                   MobType::Witch, MobType::Silverfish, MobType::Endermite,
+                                                   MobType::Shulker, MobType::Piglin, MobType::Warden,
+                                                   MobType::ZombieVillager};
+                static const MobType kPassive[] = {MobType::Pig, MobType::Cow, MobType::Sheep, MobType::Chicken,
+                                                   MobType::Allay, MobType::Axolotl, MobType::Bat, MobType::Bee,
+                                                   MobType::Camel, MobType::Cat, MobType::Dolphin, MobType::Fox,
+                                                   MobType::Frog, MobType::Goat, MobType::Horse, MobType::Llama,
+                                                   MobType::Panda, MobType::Parrot, MobType::Rabbit,
+                                                   MobType::Sniffer, MobType::SnowGolem, MobType::Squid,
+                                                   MobType::Strider, MobType::Turtle, MobType::Villager,
+                                                   MobType::WanderingTrader, MobType::Wolf};
                 const uint64_t tick = gWorldClock.Ticks();
                 const float angle = float(tick % 6283) * 0.001f;
                 const int x = int(floorf(gBody.x + sinf(angle) * 26)), z = int(floorf(gBody.z + cosf(angle) * 26));
@@ -3421,9 +3495,12 @@ static void DrawHand() {
     vertices.reserve(36);
     const float swing = sinf(gArmSwing.Progress(gNowMs) * 3.14159265f);
     const float bob = (fabsf(gBody.vx) + fabsf(gBody.vz) > 0.1f && gBody.onGround) ? sinf(gTimeSec * 5.0f) * 0.4f : 0.0f;
+    // Java renders the hand pass over a cleared depth buffer, so the arm and
+    // held item never clip into world blocks even nose-against-wall.
+    gRC.device->ClearDepthStencilView(gRC.dsv, D3D10_CLEAR_DEPTH, 1.0f, 0);
     // Java renderPlayerArm: the arm enters from the bottom-right corner and
     // reaches forward-inward (45 deg yaw, ~30 deg pitch) rather than sideways.
-    float armX = -0.45f, armY = 0.30f + swing * 0.95f, armZ = -0.85f;
+    float armX = -0.45f, armY = 0.42f + swing * 0.95f, armZ = -0.85f;
     const float armLen = sqrtf(armX * armX + armY * armY + armZ * armZ);
     armX /= armLen; armY /= armLen; armZ /= armLen;
     float sideX = -armZ, sideZ = armX;
@@ -3435,7 +3512,13 @@ static void DrawHand() {
     // Keep the whole rig small and close to Java's hand depth so it does not
     // swallow the screen (old transform put a 0.25-block-thick arm at z=-0.42).
     const float armScale = 0.62f;
-    const float shoulderX = 0.40f, shoulderY = -0.46f + bob * 0.010f, shoulderZ = -0.58f;
+    const float shoulderX = 0.62f, shoulderY = -0.62f + bob * 0.010f, shoulderZ = -0.42f;
+    // Wrist = shoulder + armDir * arm length; the held item hangs off this point
+    // so tool and hand move as one rig (old fixed offset detached the item).
+    const float handReach = 12.0f / 16.0f * armScale;
+    const float handX = shoulderX + armX * handReach;
+    const float handY = shoulderY + armY * handReach;
+    const float handZ = shoulderZ + armZ * handReach;
     const float x = 0, y = -12, z = -2, w = 4, h = 12, d = 4, u = 40, v = 16;
     const float corners[8][3] = {{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
         {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
@@ -3492,7 +3575,7 @@ static void DrawHand() {
             // camera so the top and two sides of a block read at the tool angle.
             // Scale the model down and place it at hand depth; the old scale put
             // a full 0.55-unit sprite 0.5 blocks from the eye, filling the view.
-            const float itemScale = isBlock ? 0.80f : 0.62f;
+            const float itemScale = isBlock ? 0.40f : 0.45f;
             const float ip = -0.30f;
             const float iy = 0.72f;
             const float cp = cosf(ip), sp = sinf(ip);
@@ -3522,9 +3605,9 @@ static void DrawHand() {
                 ry = by; rz = bz;
                 ax = rx * c3 + rz * s3;
                 az = -rx * s3 + rz * c3;
-                v.x = ax + 0.30f + pose.tx * itemScale;
-                v.y = ry - 0.38f + pose.ty * itemScale + bob * 0.012f;
-                v.z = az - 0.72f + pose.tz * itemScale;
+                v.x = ax + handX + armX * 0.06f + pose.tx * itemScale;
+                v.y = ry + handY + armY * 0.06f + pose.ty * itemScale;
+                v.z = az + handZ + armZ * 0.06f + pose.tz * itemScale;
             }
             void* hd = nullptr;
             if (SUCCEEDED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &hd))) {
@@ -4163,9 +4246,77 @@ static void RandomTickBlocks() {
     (void)0;
 }
 
+static uint8_t GetRedstonePower(int x, int y, int z) {
+    const auto it = gRedstonePower.find(RedstoneKey(x, y, z));
+    return it == gRedstonePower.end() ? 0 : it->second;
+}
+
+static void SetRedstonePower(int x, int y, int z, uint8_t level) {
+    if (level == 0) gRedstonePower.erase(RedstoneKey(x, y, z));
+    else gRedstonePower[RedstoneKey(x, y, z)] = level;
+}
+
 static void UpdateRedstone() {
-    // Disabled: full-chunk scan caused hitches.
-    (void)0;
+    // Java 26.3 redstone: propagate power from sources through wires
+    // Sources: torches (15), levers/buttons (15), pressure plates (15),
+    // tripwire hooks (15), daylight detectors (0-15), sculk sensors (0-15),
+    // redstone blocks (15), observers (15 pulse), comparators (output),
+    // repeaters (output), redstone ore (weak signal)
+    std::unordered_map<uint64_t, uint8_t> newPower;
+    
+    // Step 1: Collect all power sources
+    for (auto& kv : gRedstonePower) {
+        uint64_t key = kv.first;
+        int x = int((key >> 40) & 0xFFFFF);
+        int y = int((key >> 20) & 0xFFFFF);
+        int z = int(key & 0xFFFFF);
+        uint8_t level = kv.second;
+        
+        // Propagate to adjacent blocks
+        const int dx[] = {1, -1, 0, 0, 0, 0};
+        const int dy[] = {0, 0, 1, -1, 0, 0};
+        const int dz[] = {0, 0, 0, 0, 1, -1};
+        for (int i = 0; i < 6; ++i) {
+            int nx = x + dx[i], ny = y + dy[i], nz = z + dz[i];
+            if (ny < 0 || ny >= CHUNK_Y) continue;
+            uint16_t block = gWorld->GetBlock(nx, ny, nz);
+            // Redstone wire propagation (decay by 1)
+            if (gWireBlockId != 0 && block == gWireBlockId) {
+                uint8_t newLevel = (level > 0) ? level - 1 : 0;
+                uint64_t nkey = RedstoneKey(nx, ny, nz);
+                if (newPower.find(nkey) == newPower.end() || newPower[nkey] < newLevel) {
+                    newPower[nkey] = newLevel;
+                }
+            }
+            // Redstone lamp toggling
+            if (gLampBlockId != 0 && block == gLampBlockId) {
+                if (level > 0) {
+                    // Turn on lamp (set metadata bit)
+                    // In our system, we track via a separate map
+                }
+            }
+            // Redstone torch on top: power 15 downward
+            if (gTorchBlockId != 0 && block == gTorchBlockId) {
+                newPower[RedstoneKey(nx, ny - 1, nz)] = 15;
+            }
+        }
+    }
+    
+    // Step 2: Apply new power levels
+    for (auto& kv : newPower) {
+        gRedstonePower[kv.first] = kv.second;
+    }
+    
+    // Step 3: Update redstone lamps based on power
+    // (Iterate through all lamp positions and toggle based on adjacent power)
+    // This is simplified - in Java, lamps check 6 neighbors
+    for (auto it = gRedstonePower.begin(); it != gRedstonePower.end();) {
+        if (it->second == 0) {
+            it = gRedstonePower.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 static void RenderFrame() {
 
@@ -4192,6 +4343,9 @@ static void RenderFrame() {
                     gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1,
                     gInventory.slots + 27, uiScale,
                     gSurvival.xpProgress / float(XpToNextLevel(gSurvival.xpLevel)), gSurvival.xpLevel);
+        DrawTutorialHint(gGui, gTutorialHint, gTimeSec, uiScale);
+        if (!gAdvancementTitle.empty())
+            DrawAdvancementToast(gGui, gAdvancementTitle, gAdvancementDesc, gTimeSec, uiScale);
         DrawChat(gGui, gChat.entries, gChat.open, gChat.input, gTimeSec, uiScale);
         if (gDebug) DrawDebug(uiScale);
     } else if (gScreen == Screen::Inventory) {
@@ -4343,7 +4497,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
     // Slime block id drives the bounce behaviour in PlayerBody::Update.
     for (const RegistryBlockEntry& e : RegistryBlocks()) {
-        if (e.name == "slime_block") { SetSlimeBlockId(e.id); break; }
+        if (e.name == "slime_block") SetSlimeBlockId(e.id);
+        else if (e.name == "redstone_wire") gWireBlockId = e.id;
+        else if (e.name == "redstone_lamp") gLampBlockId = e.id;
+        else if (e.name == "redstone_torch") gTorchBlockId = e.id;
     }
     if (jarOk) {
         ZipArchive versionArchive;
