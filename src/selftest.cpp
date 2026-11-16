@@ -1078,6 +1078,7 @@ static void TestJavaRandom() {
     // Java 26.3 worldgen PRNGs (jrand.h). Exact bit parity with Java is
     // UNVERIFIED (needs a Java oracle); these checks prove determinism,
     // non-degeneracy and range correctness.
+    using potato::SplitMix64;
     SplitMix64 sm(0);
     uint64_t a1 = sm.NextLong();
     uint64_t a2 = sm.NextLong();
@@ -1091,6 +1092,7 @@ static void TestJavaRandom() {
         int32_t v = sm.NextIntBounded(10);
         CHECK(v >= 0 && v < 10, "SplitMix64 bounded in range");
     }
+    using potato::Xoroshiro128PlusPlus;
     Xoroshiro128PlusPlus xr(0, 0);
     uint64_t x1 = xr.NextLong();
     Xoroshiro128PlusPlus xr2(0, 0);
