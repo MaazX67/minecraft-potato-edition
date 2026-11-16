@@ -589,8 +589,8 @@ void ApplyStructures(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed,
             if (!c.present || IsNetherStructure(c.type) != nether) continue;
             const int gy = StructureGroundY(noise, c);
             // Surface structures need dry land: never stamp a village/pyramid/
-            // temple/outpost into an ocean or river bed (gy at/below sea level).
-            if (!nether && gy <= 62 &&
+            // temple/outpost into submerged terrain (ground below sea level 62).
+            if (!nether && gy < 62 &&
                 (c.type == StructureType::Village || c.type == StructureType::PillagerOutpost ||
                  c.type == StructureType::DesertPyramid || c.type == StructureType::JungleTemple))
                 continue;

@@ -1728,16 +1728,25 @@ static void TestSeedsAndStructures() {
     CHECK(FindStructure(1337 + 0x100000000ull, 0, 0, StructureType::Village, x2, z2, d2) &&
           (x2 != ax || z2 != az), "the upper 32 seed bits move structure placement");
 
-    PerlinNoise noise(1337);
+    // The water guard suppresses submerged village sites, so pick a seed whose
+    // nearest village is on dry land (ground >= sea level 62) before stamping.
+    uint64_t vseed = 1337; int vx = ax, vz = az, vdist = 0;
+    for (int k = 0; k < 32; ++k) {
+        PerlinNoise probe(vseed);
+        if (SampleTerrain(probe, vx, vz).height >= 62) break;
+        vseed += 0x100000000ull;
+        FindStructure(vseed, 0, 0, StructureType::Village, vx, vz, vdist);
+    }
+    PerlinNoise noise(vseed);
     static uint16_t first[CHUNK_VOL], second[CHUNK_VOL];
-    const int cx = FloorDiv16(ax), cz = FloorDiv16(az);
-    GenerateClimateChunk(first, noise, 1337, cx, cz);
-    GenerateClimateChunk(second, noise, 1337, cx, cz);
+    const int cx = FloorDiv16(vx), cz = FloorDiv16(vz);
+    GenerateClimateChunk(first, noise, vseed, cx, cz);
+    GenerateClimateChunk(second, noise, vseed, cx, cz);
     CHECK(std::memcmp(first, second, sizeof(first)) == 0, "structure stamping is deterministic per chunk");
     bool planks = false, chest = false;
     for (int dz = -1; dz <= 1; ++dz)
         for (int dx = -1; dx <= 1; ++dx) {
-            GenerateClimateChunk(first, noise, 1337, cx + dx, cz + dz);
+            GenerateClimateChunk(first, noise, vseed, cx + dx, cz + dz);
             for (int i = 0; i < CHUNK_VOL; ++i) {
                 if (first[i] == BLOCK_PLANKS) planks = true;
                 if (first[i] == BLOCK_CHEST) chest = true;
