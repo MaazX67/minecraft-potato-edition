@@ -190,6 +190,10 @@ public:
 // substepping (no tunneling at terminal velocity). Vanilla speeds: walk
 // 4.317, sprint 5.612, sneak 1.31 m/s; gravity 32, jump ~1.25 blocks.
 // Flying (creative) keeps the old noclip-style free movement but still
+// Slime block id (set at boot from the registry) for the bounce behaviour.
+void SetSlimeBlockId(uint16_t id);
+uint16_t SlimeBlockId();
+
 // collides. The camera follows at eye height and inherits vy for crits.
 struct PlayerBody {
     float x = 8.5f, y = 90.0f, z = 8.5f; // feet position

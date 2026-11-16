@@ -1,13 +1,14 @@
 #include "world.h"
 #include "assets.h"
 #include "registry.h"
+#include "jrand.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <numeric>
-#include <random>
+#include <algorithm>
 
 namespace potato {
 
@@ -33,8 +34,11 @@ static float Grad2(int h, float x, float y) {
 PerlinNoise::PerlinNoise(uint64_t seed) {
     uint8_t base[256];
     std::iota(base, base + 256, 0);
-    std::mt19937_64 rng(MixSeed64(seed));
-    std::shuffle(base, base + 256, rng);
+    potato::Xoroshiro128PlusPlus rng(seed, 0);
+    for (int i = 0; i < 256; ++i) {
+        int j = rng.NextIntBounded(256 - i) + i;
+        std::swap(base[i], base[j]);
+    }
     for (int i = 0; i < 512; ++i) mP[i] = base[i & 255];
 }
 

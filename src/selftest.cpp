@@ -6,6 +6,7 @@
 #include "ui_layout.h"
 #include "sound.h"
 #include "shader_embed.h"
+#include "jrand.h"
 #include "json.hpp"
 #include <d3dcompiler.h>
 #include <algorithm>
@@ -1073,6 +1074,38 @@ static void TestHeldItemMesh() {
     CHECK(mesh.size() == 3456, "solid 16x16 sprite extrudes to 3456 vertices");
 }
 
+static void TestJavaRandom() {
+    // Java 26.3 worldgen PRNGs (jrand.h). Exact bit parity with Java is
+    // UNVERIFIED (needs a Java oracle); these checks prove determinism,
+    // non-degeneracy and range correctness.
+    SplitMix64 sm(0);
+    uint64_t a1 = sm.NextLong();
+    uint64_t a2 = sm.NextLong();
+    SplitMix64 sm2(0);
+    CHECK(sm2.NextLong() == a1, "SplitMix64 same seed -> same first value");
+    CHECK(sm2.NextLong() == a2, "SplitMix64 same seed -> same second value");
+    CHECK(a1 != 0 || a2 != 0, "SplitMix64 is non-degenerate");
+    SplitMix64 sm3(12345);
+    CHECK(sm3.NextLong() != a1, "SplitMix64 different seed -> different value");
+    for (int i = 0; i < 100; ++i) {
+        int32_t v = sm.NextIntBounded(10);
+        CHECK(v >= 0 && v < 10, "SplitMix64 bounded in range");
+    }
+    Xoroshiro128PlusPlus xr(0, 0);
+    uint64_t x1 = xr.NextLong();
+    Xoroshiro128PlusPlus xr2(0, 0);
+    CHECK(xr2.NextLong() == x1, "Xoroshiro128++ same seed -> same value");
+    CHECK(x1 != 0, "Xoroshiro128++ is non-degenerate");
+    Xoroshiro128PlusPlus xr3(1, 2);
+    CHECK(xr3.NextLong() != x1, "Xoroshiro128++ different seed -> different value");
+    for (int i = 0; i < 100; ++i) {
+        int32_t v = xr.NextIntBounded(10);
+        CHECK(v >= 0 && v < 10, "Xoroshiro128++ bounded in range");
+    }
+    double d = xr.NextDouble();
+    CHECK(d >= 0.0 && d < 1.0, "Xoroshiro128++ double in [0,1)");
+}
+
 static void TestNonCubeMeshes() {
     BlockTiles tiles;
     uint16_t slabId = 0;
@@ -1826,6 +1859,7 @@ int main() {
     TestHeldItemMesh();
     TestNonCubeMeshes();
     TestBlockLight();
+    TestJavaRandom();
     TestSkyCrevice();
     TestCombatMath();
     TestMobSound();

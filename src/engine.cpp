@@ -9,6 +9,11 @@
 
 namespace potato {
 
+// Slime block id (set at boot from the registry) for the bounce behaviour.
+static uint16_t gSlimeBlockId = 0;
+void SetSlimeBlockId(uint16_t id) { gSlimeBlockId = id; }
+uint16_t SlimeBlockId() { return gSlimeBlockId; }
+
 KeyBinds gBinds;
 
 void WorldClock::Set(uint64_t ticks) {
@@ -389,6 +394,15 @@ void PlayerBody::Update(const InputState& in, float dt, FlyCamera& cam,
                 const float ly = floorf(ny) + 1.0f;
                 if (!BodyHits(getBlock, x, ly, z)) y = ly;
                 onGround = true;
+                // Slime block bounce (Java: vy = -vy * 0.8 when falling).
+                if (gSlimeBlockId != 0) {
+                    uint16_t below = getBlock(int(floorf(x)), int(floorf(y - 0.1f)), int(floorf(z)));
+                    if (below == gSlimeBlockId) {
+                        vy = -vy * 0.8f;
+                        if (vy < 1.0f) vy = 0.0f;
+                        onGround = false;
+                    }
+                }
             } else if (vy > 0) {
                 const float ly = floorf(ny + HEIGHT) - HEIGHT - 0.001f;
                 if (!BodyHits(getBlock, x, ly, z)) y = ly;

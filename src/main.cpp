@@ -2797,6 +2797,22 @@ static void HandleGameFrame(float dt) {
                 py + 1 > gBody.y && py < gBody.y + PlayerBody::HEIGHT;
             if (!insideBody) {
                 const uint16_t block = gHotbar[gHotbarSlot];
+                // Buckets: a water/lava bucket places the fluid.
+                const std::string heldName = ItemName(block);
+                if (heldName.find("water_bucket") != std::string::npos) {
+                    gWorld->SetBlock(px, py, pz, BLOCK_WATER);
+                    gSound.PlayAt(SoundEngine::BlockSound(BLOCK_WATER),
+                                  float(px) + 0.5f, float(py) + 0.5f, float(pz) + 0.5f);
+                    gArmSwing.Trigger(gNowMs);
+                    return;
+                }
+                if (heldName.find("lava_bucket") != std::string::npos) {
+                    gWorld->SetBlock(px, py, pz, BLOCK_LAVA);
+                    gSound.PlayAt(SoundEngine::BlockSound(BLOCK_LAVA),
+                                  float(px) + 0.5f, float(py) + 0.5f, float(pz) + 0.5f);
+                    gArmSwing.Trigger(gNowMs);
+                    return;
+                }
                 if (block == BLOCK_AIR || !IsBlockId(block) || (gGameMode == 0 && gInventory.slots[27 + gHotbarSlot].Empty())) return;
                 gWorld->SetBlock(px, py, pz, block);
                 if (gGameMode == 0) {
@@ -4149,6 +4165,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         gActionBar = "Recipe and loot data could not be read from the client jar.";
         gActionBarUntil = SystemTimeMs() + 6000;
     }
+    // Slime block id drives the bounce behaviour in PlayerBody::Update.
+    for (const RegistryBlockEntry& e : RegistryBlocks()) {
+        if (e.name == "slime_block") { SetSlimeBlockId(e.id); break; }
+    }
     if (jarOk) {
         ZipArchive versionArchive;
         std::vector<uint8_t> versionBytes;
@@ -4413,8 +4433,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             }
         } else if (gScreen == Screen::Inventory) {
             if (gInput.KeyPressed(gSettings.bindInventory)) {
-                if (gGameMode == 0 || gCraftTable) CloseInventory();
-                else CloseCreativeInventory();
+                // While the creative search field is focused, E is a character
+                // in the query, not "close inventory".
+                const bool searching = (gGameMode != 0 && !gCraftTable && CreativeTab() == CTAB_SEARCH);
+                if (!searching) {
+                    if (gGameMode == 0 || gCraftTable) CloseInventory();
+                    else CloseCreativeInventory();
+                }
             } else if (gGameMode == 0 || gCraftTable) {
                 const int hover = SurvivalInvHitTest(gInput.mouseX, gInput.mouseY, gCraftTable);
                 if (gInput.leftClick || gInput.rightClick) {
