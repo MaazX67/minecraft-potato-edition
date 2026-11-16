@@ -1192,11 +1192,6 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
     }
 
     DrawHotbar(ui, selectedSlot, hotbar, s, stacks);
-    if (stacks) {
-        const float hotbarX = cx - 182 * s, hotbarY = SCREEN_H - 44.0f * s;
-        for (int i = 0; i < 9; ++i)
-            DrawStackCount(ui, hotbarX + i * 40 * s + 4 * s, hotbarY + 6 * s, stacks[i], s);
-    }
     if (!actionBar.empty()) {
         ui.DrawTextCentered(actionBar, cx, SCREEN_H - 112.0f * s, 2 * s, 15, true);
     }
