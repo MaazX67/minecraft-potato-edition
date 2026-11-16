@@ -101,7 +101,10 @@ hardcoded subsets**, proven by a probe that counts and hashes the loaded registr
 | Creative hidden blocks | done (set) / UNVERIFIED (order) | `IsCreativeHidden` removes operator/technical blocks (command/structure/jigsaw/barrier/light/debug_stick/spawner/trial_spawner/vault/ominous_vault/knowledge_book/reinforced_deepslate/budding_amethyst) from every tab AND search, matching Java's permission-gated Operator Utilities tab. Exact per-tab membership/order pending a full `CreativeModeTabs` parse |
 | XP bar hidden in creative | done (parity) | `DrawHUD` gates the experience bar on `!creative`, same as hearts/hunger (Java hides XP in creative/spectator) |
 | Creative Java textures (C visual) | written, pending CI | `DrawInventory` draws the real JAR `creative_inventory/tab_items.png` / `tab_item_search.png` panel (195x136 of 256x256), the shaped `tab_top/bottom_selected/unselected_1..7` sprites and `scroller.png` knob instead of gray boxes + generic widget tabs; gray bevel fallback only when the jar is absent. Picker/hotbar slot outlines come from the background, hover uses the selection frame |
-| Per-mob sounds | written, pending CI | `MobSoundCat(type,kind)` gives every mob its own say/hurt/death triple (zombie = legacy index 0); `sound.cpp` loads `sounds/mob/<id>/` per type; `main.cpp` ambient/hurt/death call sites use it. `TestMobSound` pins the mapping. Fixes "every mob sounds like zombie" |
+| Per-mob sounds | each mob loads its own say/hurt/death from `sounds/mob/<id>/`; `MobSoundCat(type,kind)`; ambient/hurt/death call sites use the mob's voice. `TestMobSound` pins mapping | DONE (pending user audio check) |
+| XP orbs + Java curve | mobs drop orbs (hostile 5, animal 1-3) that magnet+collect; `XpToNextLevel`=2L+7/5L-38/9L-158; HUD XP bar+level wired. `TestXpCurve` | DONE (pending user visual check) |
+| Void + drowning damage | void 4 dmg/0.5 s below y=0; air 300 ticks then 1 heart/s underwater (Java) | DONE (pending user check) |
+| Village water guard | surface structures rejected at gy<=62 (no village/pyramid/temple/outpost in ocean/river beds); tree-clearing still pending | PARTIAL |
 
 `--parity` runs the same probe as `PotatoSelfTest.exe` but inside the shipped executable: it loads the user's own
 26.3 JAR from `%APPDATA%\Migurinth\meta`, prints `PARITY-REGISTRY: ...` and exits before creating a window. CI has no

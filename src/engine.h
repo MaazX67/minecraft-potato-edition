@@ -271,10 +271,27 @@ const char* CreativeTabName(int tab);
 uint16_t CreativeTabIcon(int tab);
 bool ItemMatchesSearch(uint16_t id, const std::string& query);
 
+// Java experience curve: points needed to advance from `level` to level+1.
+inline int XpToNextLevel(int level) {
+    if (level >= 31) return 9 * level - 158;
+    if (level >= 16) return 5 * level - 38;
+    return 2 * level + 7;
+}
+
 struct SurvivalState {
     int health = 20, hunger = 20;
     float exhaustion = 0, saturation = 5, regenTimer = 0, starveTimer = 0;
     bool dead = false;
+    float xpProgress = 0; int xpLevel = 0;
+    int airTicks = 300; float drownTimer = 0, voidTimer = 0;
+
+    void AddXp(int amount) {
+        xpProgress += float(amount);
+        while (xpLevel < 255 && xpProgress >= float(XpToNextLevel(xpLevel))) {
+            xpProgress -= float(XpToNextLevel(xpLevel));
+            ++xpLevel;
+        }
+    }
 
     void OnLand(float fallDistance) {
         const int dmg = int(fallDistance) - 3;

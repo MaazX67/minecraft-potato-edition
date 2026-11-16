@@ -84,6 +84,10 @@ struct ItemEntity {
     bool onGround = false;
 };
 static std::vector<ItemEntity> gItemEntities;
+// Experience orbs: dropped by mobs, drift toward the player, grant XP on touch.
+struct XpOrb { float x = 0, y = 0, z = 0; int value = 1; float age = 0; };
+static std::vector<XpOrb> gXpOrbs;
+static void DrawXpOrbs();
 static void UpdateItemEntities(float dt);
 static void UpdateArrows(float dt);
 // Arrow entities (M3.5): shot by skeletons, gravity, collision, damage player.
@@ -2217,6 +2221,11 @@ static void DropMobLoot(const Mob& mob) {
     };
     give(stats.drop, stats.dropMin, stats.dropMax);
     give(stats.drop2, stats.drop2Min, stats.drop2Max);
+    // Java: hostile mobs drop 5 XP, animals 1-3. Spawn an orb at the corpse.
+    XpOrb orb;
+    orb.x = mob.body.x; orb.y = mob.body.y + 0.4f; orb.z = mob.body.z;
+    orb.value = stats.attackDamage > 0 ? 5 : 1 + int(rand()) % 3;
+    gXpOrbs.push_back(orb);
     SyncHotbar();
 }
 
@@ -2338,6 +2347,15 @@ static void HandleGameFrame(float dt) {
             sLavaTimer += dt;
             if (sLavaTimer >= 0.5f) { sLavaTimer -= 0.5f; gSurvival.health -= 2; gSound.Play(SND_HURT); }
         }
+        // Java void: 4 damage every half second below the world floor.
+        if (gBody.y < 0) {
+            gSurvival.voidTimer += dt;
+            if (gSurvival.voidTimer >= 0.5f) {
+                gSurvival.voidTimer -= 0.5f;
+                gSurvival.health -= 4;
+                gSound.Play(SND_HURT);
+            }
+        } else gSurvival.voidTimer = 0;
         if (gBody.gliding) {
             gElytraWear += dt;
             if (gElytraWear >= 1.0f) { gElytraWear -= 1.0f; WearTool(gInventory.armor[1], 1); }
@@ -2369,9 +2387,47 @@ static void HandleGameFrame(float dt) {
     } else {
         sBubbleTimer = 0.10f;
     }
+    // Java drowning: 300 ticks (15 s) of air, then 1 heart per second underwater.
+    const uint16_t eyeBlock = getBlock(int(floorf(gCamera.x)), int(floorf(gCamera.y)),
+                                       int(floorf(gCamera.z)));
+    if (eyeBlock == BLOCK_WATER) {
+        if (gSurvival.airTicks > 0) {
+            gSurvival.airTicks -= int(dt * 20.0f);
+        } else {
+            gSurvival.drownTimer += dt;
+            if (gSurvival.drownTimer >= 1.0f) {
+                gSurvival.drownTimer -= 1.0f;
+                gSurvival.health -= 2;
+                gSound.Play(SND_HURT);
+            }
+        }
+    } else {
+        gSurvival.airTicks = 300;
+        gSurvival.drownTimer = 0;
+    }
     if (gSettings.viewBobbing && moving && gBody.onGround && !gBody.flying)
         gCamera.y += sinf(gTimeSec * 9.0f) * 0.05f;
     if (gSurvival.dead) { PlayerDied(); return; }
+
+    // XP orbs: bob, magnet toward the player within 2 blocks, collect on touch.
+    for (auto it = gXpOrbs.begin(); it != gXpOrbs.end();) {
+        it->age += dt;
+        if (it->age > 300.0f) { it = gXpOrbs.erase(it); continue; }
+        const float dx = gBody.x - it->x, dy = (gBody.y + 0.9f) - it->y, dz = gBody.z - it->z;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < 4.0f && d2 > 0.0001f) {
+            const float d = sqrtf(d2);
+            it->x += dx / d * dt * 4.0f;
+            it->y += dy / d * dt * 4.0f;
+            it->z += dz / d * dt * 4.0f;
+        }
+        if (d2 < 0.6f) {
+            gSurvival.AddXp(it->value);
+            it = gXpOrbs.erase(it);
+            continue;
+        }
+        ++it;
+    }
 
     gWorld->Update(gCamera.x, gCamera.z);
     gPlayerResistance.Advance(dt);
@@ -3537,6 +3593,49 @@ static void DrawLodTerrain(float eyeX, float eyeZ, const XMMATRIX& vp, const Sky
     gRC.device->RSSetState(gRC.rasterizer);
 }
 
+// XP orbs as small glowing billboard quads (green small / yellow large).
+static void DrawXpOrbs() {
+    if (gXpOrbs.empty() || !gGui.texWhite.srv) return;
+    std::vector<MeshVertex> verts;
+    verts.reserve(gXpOrbs.size() * 6);
+    const float rx = gCamera.rightX, rz = gCamera.rightZ;
+    for (const XpOrb& o : gXpOrbs) {
+        const float bob = sinf(o.age * 4.0f) * 0.05f;
+        const float cx = o.x, cy = o.y + 0.15f + bob, cz = o.z;
+        const float half = o.value >= 5 ? 0.14f : 0.10f;
+        const float cr = o.value >= 5 ? 1.0f : 0.5f;
+        const float cg = 1.0f, cb = o.value >= 5 ? 0.3f : 0.2f;
+        struct C { float x, y, z; };
+        C corners[4] = {
+            {cx - rx * half, cy - half, cz - rz * half},
+            {cx + rx * half, cy - half, cz + rz * half},
+            {cx + rx * half, cy + half, cz + rz * half},
+            {cx - rx * half, cy + half, cz - rz * half},
+        };
+        const int tri[6] = {0, 1, 2, 0, 2, 3};
+        for (int t : tri) {
+            MeshVertex v;
+            v.x = corners[t].x; v.y = corners[t].y; v.z = corners[t].z;
+            v.tu = 0; v.tv = 0; v.u = 0.5f; v.v = 0.5f;
+            v.light = 15.0f; v.cr = cr; v.cg = cg; v.cb = cb; v.sky = 15.0f;
+            verts.push_back(v);
+        }
+    }
+    if (verts.empty()) return;
+    void* data = nullptr;
+    if (FAILED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
+    memcpy(data, verts.data(), verts.size() * sizeof(MeshVertex));
+    gHeldVB->Unmap();
+    const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
+    gRC.device->IASetVertexBuffers(0, 1, &gHeldVB, &stride, &offset);
+    gRC.device->OMSetDepthStencilState(gRC.depthOn, 0);
+    gRC.device->OMSetBlendState(gRC.alphaBlend, nullptr, 0xFFFFFFFF);
+    gRC.device->PSSetShader(gRC.psUI);
+    gRC.device->PSSetShaderResources(0, 1, &gGui.texWhite.srv);
+    gRC.device->Draw(UINT(verts.size()), 0);
+    gRC.device->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+}
+
 static void DrawItemEntities() {
     if (gItemEntities.empty()) return;
     std::vector<MeshVertex> verts;
@@ -3714,6 +3813,7 @@ static void DrawWorld() {
     DrawZombies();
     DrawPlayer();
     DrawItemEntities();
+    DrawXpOrbs();
     DrawArrows();
     DrawHand();
     DrawClouds(eyeX, eyeY, eyeZ);
@@ -4015,7 +4115,8 @@ static void RenderFrame() {
             DrawHUD(gGui, gPlayer.attackCooldownProgress, gHotbarSlot, gHotbar,
                     gSurvival.health, gSurvival.hunger, gInventory.Defense(),
                     gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1,
-                    gInventory.slots + 27, uiScale);
+                    gInventory.slots + 27, uiScale,
+                    gSurvival.xpProgress / float(XpToNextLevel(gSurvival.xpLevel)), gSurvival.xpLevel);
         DrawChat(gGui, gChat.entries, gChat.open, gChat.input, gTimeSec, uiScale);
         if (gDebug) DrawDebug(uiScale);
     } else if (gScreen == Screen::Inventory) {

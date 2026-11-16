@@ -1167,6 +1167,23 @@ static void TestSkyCrevice() {
     CHECK(dimUnderOverhang, "sky bleeds sideways under the overhang (0 < sky < 15), no black crevice");
 }
 
+// Java experience curve (Player.getXpNeededForNextLevel): 2L+7 / 5L-38 / 9L-158.
+static void TestXpCurve() {
+    std::printf("[selftest] xp curve\n");
+    CHECK(XpToNextLevel(0) == 7, "xp level 0 needs 7");
+    CHECK(XpToNextLevel(15) == 37, "xp level 15 needs 37");
+    CHECK(XpToNextLevel(16) == 42, "xp level 16 needs 42");
+    CHECK(XpToNextLevel(30) == 112, "xp level 30 needs 112");
+    CHECK(XpToNextLevel(31) == 121, "xp level 31 needs 121");
+    SurvivalState s;
+    s.AddXp(7);
+    CHECK(s.xpLevel == 1 && s.xpProgress == 0.0f, "7 xp reaches level 1 exactly");
+    s.AddXp(9);
+    CHECK(s.xpLevel == 2 && s.xpProgress == 0.0f, "9 more xp reaches level 2");
+    s.AddXp(1);
+    CHECK(s.xpLevel == 2 && s.xpProgress == 1.0f, "partial xp stays as progress");
+}
+
 static void TestMobSound() {
     CHECK(MobSoundCat(MobType::Zombie, 0) == SND_ZOMBIE_SAY, "zombie ambient keeps its legacy category");
     CHECK(MobSoundCat(MobType::Zombie, 1) == SND_ZOMBIE_HURT, "zombie hurt keeps its legacy category");
@@ -1828,6 +1845,7 @@ int main() {
     TestBlockLight();
     TestSkyCrevice();
     TestCombatMath();
+    TestXpCurve();
     TestMobSound();
     TestWaterFrames();
     TestWaterShaderPass();
