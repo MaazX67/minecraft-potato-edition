@@ -74,6 +74,13 @@ hardcoded subsets**, proven by a probe that counts and hashes the loaded registr
 | ID widening (`ItemId`/`BlockId` -> 16-bit) | done (step 1.1) | `enum BlockId/ItemId : uint16_t`, 16-bit palette index tier, edits blob v2; see `docs/registry-widening.md` |
 | `--parity` gate (real numbers without a compiler) | done (step 1.1) | `PotatoEdition.exe --parity` writes `parity.txt` on the user's machine |
 | Opaque/liquid index split (P0 render bug) | done | `BuildChunkMeshCPU` records `opaqueIndexCount` before appending trail liquid quads; selftests: solid cube stays fully opaque, stone+water splits 36/36 with disjoint vertex ranges |
+| JAR bytecode probe (`tools/parity/classdump.ps1`) | done | reads vanilla constants straight from the client JAR without a JDK; used for the swing duration and hand transforms below |
+| First-person hand pitch (A) | done — no change needed | `DrawHand` renders with projection only (identity view), so the arm is pure view-space and cannot follow camera pitch on `ship` |
+| Arm swing triggers (B) | done | `ArmSwing` fires on attack (hit or miss), air punch, mining tick, block break, block place, firework use and portal light; attack cooldown stays separate |
+| Swing duration | done | 6 ticks = 300 ms. JAR: `SwingAnimation.<clinit>` `bipush 6`; `LivingEntity$SwingState.tick` `min(ticks/durationTicks,1)` then reset |
+| Held-item swing math | done | `ComputeSwingPose` reproduces `FirstPersonHandsAndItemsRenderer.swingArm` (-0.4 / 0.2 / -0.2) and `applyItemArmAttackTransform` (45 / -20 / -80 / -45, order YP,ZP,XP,YP); selftests pin p=0, 0.25, 1 and left-hand mirroring |
+| Swing tick interpolation | UNVERIFIED | Java lerps `oldAnimation`→`animation` per 20 TPS tick (`SwingState.getAnimation`); we sample continuous time per frame. Close, not tick-exact |
+| Arm rig translation | UNVERIFIED | the bare-arm rig still uses a `sin(pi*p)` lift; only the held item uses the JAR-exact pose. Needs a screenshot comparison |
 | JAR-driven block textures (step 1.2a) | done | `ResolveBlockTextures` reads blockstates/models; chest + crafting-table magenta fixed; `PARITY-BLOCKTEX` gate; see `docs/block-textures.md` |
 | Full 26.3 registry + one shared atlas (step 1.3) | written, pending CI | `RegisterRuntimeRegistry` appends 1,288 blockstates + item namespace from 0x1000; only full cubes placeable; one 1024×1024 block+item atlas; `cubes=` in parity line; see `docs/registry-m1.md` |
 

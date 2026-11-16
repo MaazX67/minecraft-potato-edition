@@ -378,6 +378,48 @@ private:
     float mLastSwingMs = -1000000.0f;
 };
 
+// Java LivingEntity.swing(): a 6-tick arm animation that is independent of the
+// attack cooldown. Progress runs 0..1 across 300 ms (6 ticks at 20 TPS) and
+// snaps back to 0 when the swing finishes, exactly like getAttackAnim().
+class ArmSwing {
+public:
+    static constexpr float DurationMs = 300.0f;
+
+    void Trigger(float nowMs) { mStartMs = nowMs; }
+    bool Active(float nowMs) const { return nowMs - mStartMs < DurationMs; }
+    float Progress(float nowMs) const {
+        const float t = (nowMs - mStartMs) / DurationMs;
+        return (t < 0.0f || t >= 1.0f) ? 0.0f : t;
+    }
+
+private:
+    float mStartMs = -1000.0f;
+};
+
+// Java 26.3 FirstPersonHandsAndItemsRenderer.swingArm + applyItemArmAttackTransform,
+// read from the client JAR with tools/parity/classdump.ps1. side is +1 for the right
+// hand, -1 for the left. At progress 0 (and 1) every translation is 0 and the two
+// yaw terms cancel, so the pose is the identity and the rest position is unchanged.
+struct SwingPose {
+    float tx, ty, tz;
+    float yaw1Deg, rollDeg, pitchDeg, yaw2Deg;
+};
+inline SwingPose ComputeSwingPose(float progress, float side) {
+    const float p = progress < 0.0f ? 0.0f : (progress > 1.0f ? 1.0f : progress);
+    const float root = sqrtf(p);
+    const float sinRoot = sinf(root * 3.14159265f);
+    const float sinSquare = sinf(p * p * 3.14159265f);
+    SwingPose s;
+    s.tx = side * (-0.4f * sinRoot);
+    s.ty = 0.2f * sinf(root * 6.28318531f);
+    s.tz = -0.2f * sinf(p * 3.14159265f);
+    s.yaw1Deg = side * (45.0f - 20.0f * sinSquare);
+    s.rollDeg = side * (-20.0f * sinRoot);
+    s.pitchDeg = -80.0f * sinRoot;
+    s.yaw2Deg = side * -45.0f;
+    return s;
+}
+
 // Per-player combat state attached to the input tracking loop. The unmanaged
 // progress float is refreshed every frame from the QPC-derived timestamp and
 // drives the HUD charge indicator under the crosshair.

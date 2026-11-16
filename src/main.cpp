@@ -134,7 +134,7 @@ static bool gRunning = true;
 static bool gDebug = false;
 static bool gHideHud = false;
 static int gPerspective = 0; // 0 first person, 1 third person back, 2 third person front
-static float gArmSwingMs = -1000.0f; // arm swing timer (ms), -1000 = no swing
+static ArmSwing gArmSwing; // 6-tick arm animation, separate from attack cooldown
 static float gZoom = 1.0f;    // C-key spyglass-style zoom factor
 static bool gFlyHook = false;
 static bool gSpawned = false;
@@ -2577,6 +2577,7 @@ static void HandleGameFrame(float dt) {
         }
     }
     if (gInput.leftClick && targetZombie) {
+        gArmSwing.Trigger(gNowMs); // Java swings on attack, hit or miss
         const float strength = gCooldown.Strength(gNowMs);
         const bool critical = strength > 0.9f && !gBody.onGround && gBody.vy < 0 &&
             !gBody.inWater && !gBody.flying && !gBody.sprinting;
@@ -2627,7 +2628,7 @@ static void HandleGameFrame(float dt) {
         gMiningElapsed += dt;
         gMiningProgress = required == 0 ? 1 : std::min(1.0f, gMiningElapsed / required);
         // Swing every 300ms while mining.
-        if (gNowMs - gArmSwingMs >= 300.0f) gArmSwingMs = gNowMs;
+        if (!gArmSwing.Active(gNowMs)) gArmSwing.Trigger(gNowMs);
         if (gGameMode == 0 && std::isfinite(required)) {
             gMiningSound -= dt;
             if (gMiningSound <= 0) {
@@ -2644,7 +2645,7 @@ static void HandleGameFrame(float dt) {
             } else {
                 gWorld->SetBlock(hx, hy, hz, BLOCK_AIR);
                 ++gBrokenBlocks;
-                gArmSwingMs = gNowMs;
+                gArmSwing.Trigger(gNowMs);
                 if (gGameMode == 0) {
                     if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 2 : 1))
                         gSound.Play(SND_TOOL_BREAK);
@@ -2677,6 +2678,7 @@ static void HandleGameFrame(float dt) {
     if (gInput.leftClick && !gHaveTarget && !targetZombie) {
         // Java: swinging at empty air plays no sound, only the arm animation.
         gCooldown.Swing(gNowMs);
+        gArmSwing.Trigger(gNowMs);
     }
 
     if (gInput.rightClick && gBody.gliding && gHotbar[gHotbarSlot] == ITEM_FIREWORK_ROCKET) {
@@ -2688,6 +2690,7 @@ static void HandleGameFrame(float dt) {
             SyncHotbar();
         }
         gSound.Play(SND_CLICK);
+        gArmSwing.Trigger(gNowMs);
         return;
     }
 
@@ -2695,6 +2698,7 @@ static void HandleGameFrame(float dt) {
         if (!gInput.keys[VK_SHIFT] && (nx || nz) && gHotbar[gHotbarSlot] == ITEM_FLINT_AND_STEEL &&
             gWorld->GetBlock(hx, hy, hz) == BLOCK_OBSIDIAN) {
             LightPortal(hx, hy, hz, nx, nz);
+            gArmSwing.Trigger(gNowMs);
             if (gGameMode == 0) WearTool(gInventory.slots[27 + gHotbarSlot], 1);
             return;
         }
@@ -2741,7 +2745,7 @@ static void HandleGameFrame(float dt) {
                 }
                 gSound.PlayAt(SoundEngine::BlockSound(block),
                               float(px) + 0.5f, float(py) + 0.5f, float(pz) + 0.5f);
-                gArmSwingMs = gNowMs;
+                gArmSwing.Trigger(gNowMs);
             }
         }
     }
@@ -3207,7 +3211,7 @@ static void DrawHand() {
     if (gPerspective != 0 || !gZombieVB || !gGui.texSkin.srv) return;
     std::vector<MeshVertex> vertices;
     vertices.reserve(36);
-    const float swing = (gNowMs - gArmSwingMs < 300.0f) ? sinf((gNowMs - gArmSwingMs) / 300.0f * 3.14159265f) : 0.0f;
+    const float swing = sinf(gArmSwing.Progress(gNowMs) * 3.14159265f);
     const float bob = (fabsf(gBody.vx) + fabsf(gBody.vz) > 0.1f && gBody.onGround) ? sinf(gTimeSec * 5.0f) * 0.4f : 0.0f;
     // Java renderPlayerArm: the arm enters from the bottom-right corner and
     // reaches forward-inward (45 deg yaw, ~30 deg pitch) rather than sideways.
@@ -3281,22 +3285,38 @@ static void DrawHand() {
             // Scale the model down and place it at hand depth; the old scale put
             // a full 0.55-unit sprite 0.5 blocks from the eye, filling the view.
             const float itemScale = isBlock ? 0.80f : 0.62f;
-            const float ip = -0.30f - swing * 0.45f;
+            const float ip = -0.30f;
             const float iy = 0.72f;
             const float cp = cosf(ip), sp = sinf(ip);
             const float cy = cosf(iy), sy = sinf(iy);
+            // JAR-exact swing pose; identity at rest, so the base pose is unchanged.
+            const SwingPose pose = ComputeSwingPose(gArmSwing.Progress(gNowMs), 1.0f);
+            const float deg = 0.0174532925f;
+            const float c1 = cosf(pose.yaw1Deg * deg), s1 = sinf(pose.yaw1Deg * deg);
+            const float cr = cosf(pose.rollDeg * deg), sr = sinf(pose.rollDeg * deg);
+            const float c2 = cosf(pose.pitchDeg * deg), s2 = sinf(pose.pitchDeg * deg);
+            const float c3 = cosf(pose.yaw2Deg * deg), s3 = sinf(pose.yaw2Deg * deg);
             for (MeshVertex& v : local) {
                 const float sx = v.x * itemScale, syy = v.y * itemScale, sz = v.z * itemScale;
-                const float rx = sx * cy + sz * sy;
-                const float rz = -sx * sy + sz * cy;
-                const float ry = syy * cp - rz * sp;
-                const float rz2 = syy * sp + rz * cp;
-                float hx = rx + 0.30f;
-                float hy = ry - 0.38f + swing * 0.10f + bob * 0.012f;
-                float hz = rz2 - 0.72f - swing * 0.08f;
-                // Follow the camera pitch so the hand doesn't go through blocks
-                // when looking down.
-                v.x = hx; v.y = hy; v.z = hz;
+                float rx = sx * cy + sz * sy;
+                float rz = -sx * sy + sz * cy;
+                float ry = syy * cp - rz * sp;
+                rz = syy * sp + rz * cp;
+                // applyItemArmAttackTransform rotation order: YP, ZP, XP, YP.
+                float ax = rx * c1 + rz * s1;
+                float az = -rx * s1 + rz * c1;
+                rx = ax; rz = az;
+                ax = rx * cr - ry * sr;
+                const float ay = rx * sr + ry * cr;
+                rx = ax; ry = ay;
+                const float by = ry * c2 - rz * s2;
+                const float bz = ry * s2 + rz * c2;
+                ry = by; rz = bz;
+                ax = rx * c3 + rz * s3;
+                az = -rx * s3 + rz * c3;
+                v.x = ax + 0.30f + pose.tx * itemScale;
+                v.y = ry - 0.38f + pose.ty * itemScale + bob * 0.012f;
+                v.z = az - 0.72f + pose.tz * itemScale;
             }
             void* hd = nullptr;
             if (SUCCEEDED(gHeldVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &hd))) {

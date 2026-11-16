@@ -2008,6 +2008,46 @@ int main() {
     CHECK(ps.attackCooldownProgress == cd.Strength(1100.0f),
           "player cooldown progress mirrors QPC-driven strength");
 
+    // --- Arm swing: 6-tick animation, independent of the attack cooldown ---
+    {
+        ArmSwing sw;
+        CHECK(!sw.Active(0.0f) && sw.Progress(0.0f) == 0.0f, "arm idle before any swing");
+        sw.Trigger(1000.0f);
+        CHECK(sw.Active(1000.0f) && sw.Progress(1000.0f) == 0.0f, "swing starts at progress 0");
+        CHECK(fabsf(sw.Progress(1150.0f) - 0.5f) < 1e-4f, "swing halfway at 150ms (3 ticks)");
+        CHECK(sw.Active(1299.0f), "swing still active just before 6 ticks");
+        CHECK(!sw.Active(1300.0f) && sw.Progress(1300.0f) == 0.0f,
+              "swing ends and resets at 300ms (6 ticks)");
+        sw.Trigger(1400.0f);
+        CHECK(sw.Progress(1450.0f) > 0.0f, "re-trigger restarts the animation");
+        ArmSwing sw2;
+        AttackCooldown cd2;
+        sw2.Trigger(2000.0f);
+        CHECK(cd2.Strength(2000.0f) == 1.0f, "arm swing does not consume attack cooldown");
+    }
+
+    // --- Held-item swing pose: JAR-exact Java 26.3 swingArm/attack transform ---
+    {
+        const SwingPose rest = ComputeSwingPose(0.0f, 1.0f);
+        CHECK(rest.tx == 0.0f && rest.ty == 0.0f && rest.tz == 0.0f,
+              "swing pose is untranslated at rest");
+        CHECK(fabsf(rest.yaw1Deg + rest.yaw2Deg) < 1e-4f && rest.rollDeg == 0.0f &&
+              rest.pitchDeg == 0.0f, "swing pose rotations cancel at rest");
+        const SwingPose q = ComputeSwingPose(0.25f, 1.0f);
+        CHECK(fabsf(q.tx + 0.4f) < 1e-5f, "swingArm x = -0.4*sin(sqrt(p)*pi)");
+        CHECK(fabsf(q.tz + 0.2f * sinf(0.25f * 3.14159265f)) < 1e-5f,
+              "swingArm z = -0.2*sin(p*pi)");
+        CHECK(fabsf(q.pitchDeg + 80.0f) < 1e-3f, "attack transform pitch = -80*sin(sqrt(p)*pi)");
+        CHECK(fabsf(q.rollDeg + 20.0f) < 1e-3f, "attack transform roll = -20*sin(sqrt(p)*pi)");
+        const SwingPose left = ComputeSwingPose(0.25f, -1.0f);
+        CHECK(fabsf(left.tx + q.tx) < 1e-5f && fabsf(left.rollDeg + q.rollDeg) < 1e-3f,
+              "left hand mirrors x and roll");
+        CHECK(fabsf(left.pitchDeg - q.pitchDeg) < 1e-3f, "pitch is hand-independent");
+        const SwingPose end = ComputeSwingPose(1.0f, 1.0f);
+        CHECK(fabsf(end.tx) < 1e-5f && fabsf(end.tz) < 1e-5f && fabsf(end.pitchDeg) < 1e-3f,
+              "swing returns to rest at progress 1");
+    }
+
     // --- Rigid ring queue ---
     RingQueue<int, 4> ring;
     CHECK(ring.TryPush(1) && ring.TryPush(2) && ring.TryPush(3) && ring.TryPush(4),
