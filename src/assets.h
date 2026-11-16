@@ -203,6 +203,9 @@ int ItemIconTile(uint16_t id);
 void SetItemIconTile(uint16_t id, int tile);
 // Normalised atlas rect with half-texel insets, safe for a point sampler.
 bool AtlasTileRect(int tile, float& u0, float& v0, float& u1, float& v1);
+// Full 16-texel tile rect, no inset. For the extruded held-item mesh, which
+// maps pixel boundaries directly (see BuildExtrudedItemMesh).
+bool AtlasTileRectExact(int tile, float& u0, float& v0, float& u1, float& v1);
 
 // Per-face block textures in atlas-key form ("block/oak_planks"), resolved from
 // the client jar's own blockstates/<block>.json -> models/block/<model>.json

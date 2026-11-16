@@ -200,9 +200,23 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texHeart[0]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/container.png");
     texHeart[1]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/full.png");
     texHeart[2]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/half.png");
+    texHeartPoisoned[0] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/poisoned_full.png");
+    texHeartPoisoned[1] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/poisoned_half.png");
+    texHeartWithered[0] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/withered_full.png");
+    texHeartWithered[1] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/withered_half.png");
+    texHeartFrozen[0] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/frozen_full.png");
+    texHeartFrozen[1] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/frozen_half.png");
+    texHeartAbsorbing[0] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/absorbing_full.png");
+    texHeartAbsorbing[1] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/absorbing_half.png");
+    texHeartHardcore[0] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/container_hardcore.png");
+    texHeartHardcore[1] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/hardcore_full.png");
+    texHeartHardcore[2] = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/heart/hardcore_half.png");
     texFood[0]        = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_empty.png");
     texFood[1]        = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_full.png");
     texFood[2]        = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_half.png");
+    texFoodHunger[0]  = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_empty_hunger.png");
+    texFoodHunger[1]  = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_full_hunger.png");
+    texFoodHunger[2]  = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/food_half_hunger.png");
     texArmor[0]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/armor_empty.png");
     texArmor[1]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/armor_full.png");
     texArmor[2]       = LoadGui(rc, store, "minecraft/textures/gui/sprites/hud/armor_half.png");
@@ -222,6 +236,22 @@ bool GuiRenderer::Init(RenderContext& rc, AssetStore& store) {
     texCraftBg        = LoadGui(rc, store, "minecraft/textures/gui/container/crafting_table.png");
     texFurnaceBg      = LoadGui(rc, store, "minecraft/textures/gui/container/furnace.png");
     texChestBg        = LoadGui(rc, store, "minecraft/textures/gui/container/generic_54.png");
+    texAnvilBg        = LoadGui(rc, store, "minecraft/textures/gui/container/anvil.png");
+    texBeaconBg       = LoadGui(rc, store, "minecraft/textures/gui/container/beacon.png");
+    texBrewingBg      = LoadGui(rc, store, "minecraft/textures/gui/container/brewing_stand.png");
+    texCartographyBg  = LoadGui(rc, store, "minecraft/textures/gui/container/cartography_table.png");
+    texCrafterBg      = LoadGui(rc, store, "minecraft/textures/gui/container/crafter.png");
+    texDispenserBg    = LoadGui(rc, store, "minecraft/textures/gui/container/dispenser.png");
+    texEnchantBg      = LoadGui(rc, store, "minecraft/textures/gui/container/enchanting_table.png");
+    texGrindstoneBg   = LoadGui(rc, store, "minecraft/textures/gui/container/grindstone.png");
+    texHopperBg       = LoadGui(rc, store, "minecraft/textures/gui/container/hopper.png");
+    texLoomBg         = LoadGui(rc, store, "minecraft/textures/gui/container/loom.png");
+    texShulkerBg      = LoadGui(rc, store, "minecraft/textures/gui/container/shulker_box.png");
+    texSmithingBg     = LoadGui(rc, store, "minecraft/textures/gui/container/smithing.png");
+    texStonecutterBg  = LoadGui(rc, store, "minecraft/textures/gui/container/stonecutter.png");
+    texVillagerBg     = LoadGui(rc, store, "minecraft/textures/gui/container/villager.png");
+    texBlastFurnaceBg = LoadGui(rc, store, "minecraft/textures/gui/container/blast_furnace.png");
+    texSmokerBg       = LoadGui(rc, store, "minecraft/textures/gui/container/smoker.png");
     texMenuBg         = LoadGui(rc, store, "minecraft/textures/gui/menu_background.png");
     texHeaderSeparator= LoadGui(rc, store, "minecraft/textures/gui/header_separator.png");
     texFooterSeparator= LoadGui(rc, store, "minecraft/textures/gui/footer_separator.png");
@@ -299,9 +329,19 @@ void GuiRenderer::Shutdown() {
                         &texSlider, &texSliderHi, &texSliderHandle, &texSliderHandleHi,
                         &texInvBg, &texCraftBg, &texFurnaceBg, &texChestBg, &texMenuBg, &texHeaderSeparator, &texFooterSeparator,
                         &texTab, &texTabHi, &texTabSelected, &texTabSelectedHi, &texSkin, &texClouds,
+                        &texAnvilBg, &texBeaconBg, &texBrewingBg, &texCartographyBg, &texCrafterBg,
+                        &texDispenserBg, &texEnchantBg, &texGrindstoneBg, &texHopperBg, &texLoomBg,
+                        &texShulkerBg, &texSmithingBg, &texStonecutterBg, &texVillagerBg,
+                        &texBlastFurnaceBg, &texSmokerBg,
                         &texXpBg, &texXpProgress, &texHotbarOffhand, &texAccessibility, &texLanguage,
                         &texHeart[0], &texHeart[1], &texHeart[2],
+                        &texHeartPoisoned[0], &texHeartPoisoned[1],
+                        &texHeartWithered[0], &texHeartWithered[1],
+                        &texHeartFrozen[0], &texHeartFrozen[1],
+                        &texHeartAbsorbing[0], &texHeartAbsorbing[1],
+                        &texHeartHardcore[0], &texHeartHardcore[1], &texHeartHardcore[2],
                         &texFood[0], &texFood[1], &texFood[2],
+                        &texFoodHunger[0], &texFoodHunger[1], &texFoodHunger[2],
                         &texArmor[0], &texArmor[1], &texArmor[2]};
     for (GuiTexture* t : all) {
         if (t->srv) { t->srv->Release(); t->srv = nullptr; }
@@ -1085,6 +1125,7 @@ int MenuSystem::HitTest(int mouseX, int mouseY) const {
 // ---------------------------------------------------------------------------
 
 static void DrawItemIcon(GuiRenderer& ui, int id, float x, float y, float scale = 1.0f) {
+    if (id == 0) return; // empty hotbar/inventory slot: air has no icon, no log
     if (!IsValidItem(id)) return;
     const int tile = ItemIconTile(uint16_t(id));
     if (tile < 0) {

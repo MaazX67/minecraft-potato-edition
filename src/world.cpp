@@ -1268,10 +1268,12 @@ void BuildExtrudedItemMesh(const uint8_t* rgba, float u0, float v0, float uSize,
         vert(x0,y0,z0,u0,v0); vert(x1,y0,z0,u1,v0); vert(x1,y1,z0,u1,v1);
         vert(x0,y0,z0,u0,v0); vert(x1,y1,z0,u1,v1); vert(x0,y1,z0,u0,v1);
     };
-    // Sprite pixel (x,y) -> atlas UV. Half-texel inset matches AtlasTileRect so a
-    // point sampler never picks up the neighbouring tile.
-    auto au = [&](int x) { return u0 + (float(x) + 0.5f) / 16.0f * uSize; };
-    auto av = [&](int y) { return v0 + (float(y) + 0.5f) / 16.0f * vSize; };
+    // Sprite pixel (x,y) -> atlas UV. Map pixel BOUNDARIES (x/16, not x+0.5)
+    // across the full 16-texel tile so each pixel quad samples exactly one
+    // atlas texel under the point sampler. The old +0.5 shift into a 15-texel
+    // inset rect made every quad straddle two texels -> the held-item smear.
+    auto au = [&](int x) { return u0 + float(x) / 16.0f * uSize; };
+    auto av = [&](int y) { return v0 + float(y) / 16.0f * vSize; };
     for (int y = 0; y < 16; ++y) {
         for (int x = 0; x < 16; ++x) {
             if (!opaque(x, y)) continue;

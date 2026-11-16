@@ -86,6 +86,20 @@ bool AtlasTileRect(int tile, float& u0, float& v0, float& u1, float& v1) {
     return true;
 }
 
+// Full 16-texel tile rect with NO half-texel inset. Used by the extruded
+// held-item mesh, which maps pixel boundaries directly and relies on the point
+// sampler; inset here would compress 16 pixels into 15 texels and smear.
+bool AtlasTileRectExact(int tile, float& u0, float& v0, float& u1, float& v1) {
+    if (tile < 0 || tile >= Atlas::MAX_TILES) return false;
+    const float px = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+    const float py = float((tile / ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
+    u0 = px;
+    v0 = py;
+    u1 = px + float(ATLAS_TILE) / float(ATLAS_SIZE);
+    v1 = py + float(ATLAS_TILE) / float(ATLAS_SIZE);
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // AssetStore
 // ---------------------------------------------------------------------------

@@ -109,6 +109,11 @@ hardcoded subsets**, proven by a probe that counts and hashes the loaded registr
 | Spawn eggs | right-click any `*_spawn_egg` spawns its mob via `ParseMobId`; consumed in survival; listed in creative Tools tab | DONE (pending user visual check) |
 | End dimension + portal blocks | `WorldGenerator::End` end-stone platform + portal-frame ring; `end_portal`/`end_portal_frame` added to registry (BLOCK_COUNT 140, tables aligned). NOT Java island/obsidian-pillar gen | PARTIAL |
 | End portal activation | eye-of-ender frame fill uses a bit hack on block ids (wrong); no held-ender_eye gate; teleport hook present but activation unreliable | BLOCKED (needs proper filled-frame state) |
+| Held-item texture smear (P0) | extruded item mesh now maps pixel boundaries (x/16) across the full 16-texel tile (`AtlasTileRectExact`); old +0.5-texel shift into a 15-texel inset made each quad straddle two texels. `TestExtrudedUV` pins pixel 8 -> 8/16..9/16 | DONE (pending user visual check) |
+| Empty-slot air icon spam (P0) | `DrawItemIcon` returns early for id 0; hotbar/inventory empty slots no longer log `missing icon id=0 name=air` | DONE |
+| GUI sprites from JAR (P1) | hotbar/selection/offhand, XP bar bg/progress, crosshair, creative/search panels, font all loaded from `textures/gui/sprites/...` at runtime (`LoadGui`) | DONE (already jar-driven) |
+| Spear charge attack (P6) | sprinting full-charge jab adds `SpearChargeDamage(chargeMult, speed)`; player horizontal speed proxies relative velocity (target approach not tracked). Formula pinned by `TestCombatMath` | UNVERIFIED (speed proxy; needs server/mob closing-speed test) |
+| P6 remaining gaps | trident throw projectile, wind charge projectile + burst knockback, armor trims from jar, dedicated Spawn Eggs creative tab (eggs currently in Tools) | BLOCKED (next batch) |
 
 `--parity` runs the same probe as `PotatoSelfTest.exe` but inside the shipped executable: it loads the user's own
 26.3 JAR from `%APPDATA%\Migurinth\meta`, prints `PARITY-REGISTRY: ...` and exits before creating a window. CI has no

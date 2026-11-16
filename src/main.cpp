@@ -2666,6 +2666,13 @@ static void HandleGameFrame(float dt) {
         const bool smash = isMace && MaceCanSmash(fallDist, gBody.gliding);
         float damage = ready ? gCooldown.Swing(gNowMs) * (critical ? 1.5f : 1.0f) : 0.0f;
         if (smash) damage += MaceSmashBonus(fallDist);
+        // Spear charge: while sprinting, a full-charge jab adds charge damage
+        // scaled by closing speed. Player horizontal speed proxies the relative
+        // velocity (target approach not tracked) -> UNVERIFIED in PARITY.md.
+        if (isSpear && ready && gBody.sprinting) {
+            const float speed = sqrtf(gBody.vx * gBody.vx + gBody.vz * gBody.vz);
+            damage += SpearChargeDamage(weapon.chargeMult, speed);
+        }
         float knockback = (strength > 0.9f && gBody.sprinting && !isSpear) ? 12.0f : 8.0f;
         if (smash) knockback = std::max(0.0f, MaceKnockbackPower(nearest, fallDist, 0.0f)) * 8.0f;
         if (ready && targetZombie->Hit(damage, sinf(gCamera.yaw) * knockback, -cosf(gCamera.yaw) * knockback) > 0) {
@@ -3477,7 +3484,7 @@ static void DrawHand() {
             uint8_t px[ATLAS_TILE * ATLAS_TILE * 4];
             float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
             if (icon >= 0 && gAtlas.GetTilePixels(icon, px) &&
-                AtlasTileRect(icon, u0, v0, u1, v1))
+                AtlasTileRectExact(icon, u0, v0, u1, v1))
                 BuildExtrudedItemMesh(px, u0, v0, u1 - u0, v1 - v0, local);
         }
         if (!local.empty() && local.size() <= 20000) {

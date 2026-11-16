@@ -1073,6 +1073,20 @@ static void TestHeldItemMesh() {
     CHECK(mesh.size() == 3456, "solid 16x16 sprite extrudes to 3456 vertices");
 }
 
+static void TestExtrudedUV() {
+    uint8_t px[16 * 16 * 4];
+    memset(px, 0, sizeof(px));
+    px[(8 * 16 + 8) * 4 + 3] = 255;
+    std::vector<MeshVertex> mesh;
+    BuildExtrudedItemMesh(px, 0.0f, 0.0f, 1.0f, 1.0f, mesh);
+    bool lo = false, hi = false;
+    for (const MeshVertex& v : mesh) {
+        if (Near(v.u, 8.0f / 16.0f)) lo = true;
+        if (Near(v.u, 9.0f / 16.0f)) hi = true;
+    }
+    CHECK(lo && hi, "extruded pixel 8 maps to exact boundaries 8/16..9/16 (no half-texel smear)");
+}
+
 static void TestNonCubeMeshes() {
     BlockTiles tiles;
     uint16_t slabId = 0;
@@ -1850,6 +1864,7 @@ int main() {
     TestClimateGeneration();
     TestBlockExpansion();
     TestHeldItemMesh();
+    TestExtrudedUV();
     TestNonCubeMeshes();
     TestBlockLight();
     TestSkyCrevice();
