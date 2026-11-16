@@ -1907,7 +1907,9 @@ static void BuildDimensionWorld(int dim, EditMap edits) {
     gSweepCursor = 0;
     delete gWorld;
     gDimension = dim;
-    const WorldGenerator gen = dim == 1 ? WorldGenerator::Nether : gOverworldGen;
+    WorldGenerator gen = gOverworldGen;
+    if (dim == 1) gen = WorldGenerator::Nether;
+    else if (dim == 2) gen = WorldGenerator::End;
     gWorld = new World(gWorldSeed, gSettings.renderDistance, gen);
     gWorld->SetBlockTiles(gTiles);
     gWorld->SetEdits(std::move(edits));
@@ -1925,13 +1927,16 @@ static void EnterDimension(int dim) {
     float tx, tz;
     if (gDimVisited[dim]) {
         tx = gDimPos[dim][0]; tz = gDimPos[dim][2];
+    } else if (dim == 2) {
+        // End: spawn at center island
+        tx = 0.5f; tz = 0.5f;
     } else {
         const float scale = dim == 1 ? 0.125f : 8.0f;
         tx = gBody.x * scale; tz = gBody.z * scale;
     }
     BuildDimensionWorld(dim, gDimEdits[dim]);
     gBody.x = tx; gBody.z = tz;
-    gBody.y = dim == 1 ? 100.0f : 120.0f;
+    gBody.y = dim == 1 ? 100.0f : (dim == 2 ? 64.0f : 120.0f);
     gBody.vx = gBody.vy = gBody.vz = 0;
     gBody.onGround = false;
     gFallStartY = gBody.y;
@@ -2323,6 +2328,15 @@ static void HandleGameFrame(float dt) {
         const uint16_t atHead = gWorld->GetBlock(fx, int(floorf(gBody.y + 1.4f)), fz);
         if (atFeet == BLOCK_PORTAL || atHead == BLOCK_PORTAL) {
             EnterDimension(1 - gDimension);
+            return;
+        }
+        // End portal: enter End dimension (dim 2) or return to overworld from End
+        if (atFeet == BLOCK_END_PORTAL || atHead == BLOCK_END_PORTAL) {
+            if (gDimension == 2) {
+                EnterDimension(0); // Return to overworld from End
+            } else {
+                EnterDimension(2); // Enter End from overworld
+            }
             return;
         }
     }
@@ -2819,6 +2833,33 @@ static void HandleGameFrame(float dt) {
             if (gGameMode == 0) WearTool(gInventory.slots[27 + gHotbarSlot], 1);
             return;
         }
+        if (!gInput.keys[VK_SHIFT] && gWorld->GetBlock(hx, hy, hz) == BLOCK_END_PORTAL_FRAME) {
+            // End portal frame: right-click to fill frame with eye of ender
+            uint16_t block = gWorld->GetBlock(hx, hy, hz);
+            if (!(block & 0x4)) {
+                gWorld->SetBlock(hx, hy, hz, block | 0x4);
+                gArmSwing.Trigger(gNowMs);
+                gSound.PlayAt(SND_CLICK, hx, hy, hz);
+                // Check if all 12 frames are filled to activate portal
+                int filled = 0;
+                for (int fx = -2; fx <= 2; ++fx)
+                    for (int fz = -2; fz <= 2; ++fz) {
+                        if (abs(fx) == 2 || abs(fz) == 2) {
+                            uint16_t f = gWorld->GetBlock(hx + fx, hy, hz + fz);
+                            if (f != BLOCK_AIR && (f & 0x4)) filled++;
+                        }
+                    }
+                if (filled >= 12) {
+                    // Activate portal - set center blocks to end_portal
+                    for (int fx = -1; fx <= 1; ++fx)
+                        for (int fz = -1; fz <= 1; ++fz) {
+                            gWorld->SetBlock(hx + fx, hy, hz + fz, BLOCK_END_PORTAL);
+                        }
+                    gSound.PlayAt(SND_CLICK, hx, hy, hz);
+                }
+                return;
+            }
+        }
         if (!gInput.keys[VK_SHIFT] && gWorld->GetBlock(hx, hy, hz) == BLOCK_FURNACE) {
             gFurnace.x = hx; gFurnace.y = hy; gFurnace.z = hz;
             gInventoryMessage.clear();
@@ -2831,6 +2872,33 @@ static void HandleGameFrame(float dt) {
             gInventoryMessage.clear();
             SetScreen(gHwnd, Screen::Chest);
             return;
+        }
+        // Spawn egg: right-click to spawn mob on top of clicked block
+        const uint16_t held = gHotbar[gHotbarSlot];
+        std::string itemName = ItemName(held);
+        if (itemName.find("_spawn_egg") != std::string::npos) {
+            // Extract mob type from item name (e.g., "zombie_spawn_egg" -> "zombie")
+            std::string mobName = itemName.substr(0, itemName.find("_spawn_egg"));
+            MobType mobType;
+            if (ParseMobId(mobName, mobType)) {
+                // Spawn mob on top of clicked block
+                Mob mob;
+                mob.SetType(mobType);
+                mob.body.x = float(hx) + 0.5f;
+                mob.body.y = float(hy + 1);
+                mob.body.z = float(hz) + 0.5f;
+                gZombies.push_back(mob);
+                // Consume one spawn egg in survival mode
+                if (gGameMode == 0) {
+                    if (--gInventory.slots[27 + gHotbarSlot].count <= 0) {
+                        gInventory.slots[27 + gHotbarSlot] = {};
+                    }
+                    SyncHotbar();
+                }
+                gArmSwing.Trigger(gNowMs);
+                gSound.PlayAt(MobSoundCat(mobType, 0), mob.body.x, mob.body.y, mob.body.z);
+                return;
+            }
         }
         if (!gInput.keys[VK_SHIFT] && gWorld->GetBlock(hx, hy, hz) == BLOCK_CRAFTING_TABLE) {
             gCraftTable = true;

@@ -104,7 +104,7 @@ hardcoded subsets**, proven by a probe that counts and hashes the loaded registr
 | Per-mob sounds | each mob loads its own say/hurt/death from `sounds/mob/<id>/`; `MobSoundCat(type,kind)`; ambient/hurt/death call sites use the mob's voice. `TestMobSound` pins mapping | DONE (pending user audio check) |
 | XP orbs + Java curve | mobs drop orbs (hostile 5, animal 1-3) that magnet+collect; `XpToNextLevel`=2L+7/5L-38/9L-158; HUD XP bar+level wired. `TestXpCurve` | DONE (pending user visual check) |
 | Void + drowning damage | void 4 dmg/0.5 s below y=0; air 300 ticks then 1 heart/s underwater (Java) | DONE (pending user check) |
-| Village water guard | surface structures rejected at gy<=62 (no village/pyramid/temple/outpost in ocean/river beds); tree-clearing still pending | PARTIAL |
+| Village water guard | surface structures rejected when ground < sea level 62 (submerged); shoreline (==62) still allowed; village selftest picks a dry-land seed; tree-clearing still pending | PARTIAL |
 
 `--parity` runs the same probe as `PotatoSelfTest.exe` but inside the shipped executable: it loads the user's own
 26.3 JAR from `%APPDATA%\Migurinth\meta`, prints `PARITY-REGISTRY: ...` and exits before creating a window. CI has no

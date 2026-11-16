@@ -1439,6 +1439,24 @@ void World::GenerateChunk(Chunk& c, int cx, int cz) const {
         c.SetRaw(raw.data());
         return;
     }
+    if (mGenerator == WorldGenerator::End) {
+        // End generation: end stone platform, chorus trees, end portal
+        const int height = 64;
+        for (int x = 0; x < CHUNK_X; ++x)
+            for (int z = 0; z < CHUNK_Z; ++z) {
+                raw[(height - 1) * CHUNK_X * CHUNK_Z + x * CHUNK_Z + z] = BLOCK_END_STONE;
+                raw[(height - 2) * CHUNK_X * CHUNK_Z + x * CHUNK_Z + z] = BLOCK_END_STONE;
+            }
+        // Central island at (0,0) with end portal at center
+        if (cx == 0 && cz == 0) {
+            for (int x = 4; x <= 11; ++x)
+                for (int z = 4; z <= 11; ++z) {
+                    raw[(height - 1) * CHUNK_X * CHUNK_Z + x * CHUNK_Z + z] = BLOCK_END_PORTAL_FRAME;
+                }
+        }
+        c.SetRaw(raw.data());
+        return;
+    }
     if (mGenerator == WorldGenerator::Flat) {
         constexpr int layer = CHUNK_X * CHUNK_Z;
         std::fill_n(raw.data(), layer, BLOCK_BEDROCK);

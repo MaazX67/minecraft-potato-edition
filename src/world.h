@@ -183,7 +183,7 @@ inline uint32_t SeedHash32(uint64_t seed) {
 }
 
 
-enum class WorldGenerator { Legacy, Climate, Flat, Nether, LargeBiomes, Amplified };
+enum class WorldGenerator { Legacy, Climate, Flat, Nether, End, LargeBiomes, Amplified };
 const char* GeneratorName(WorldGenerator generator);
 bool ParseGenerator(const std::string& name, WorldGenerator& generator);
 

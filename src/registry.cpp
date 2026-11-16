@@ -520,6 +520,7 @@ int ItemCreativeTab(uint16_t id) {
     if (FindWeapon(id).kind != WeaponKind::None) return CTAB_COMBAT;
     if (FindArmor(id) || id == ITEM_ELYTRA) return CTAB_COMBAT;
     if (id == ITEM_FLINT_AND_STEEL || id == ITEM_FIREWORK_ROCKET) return CTAB_TOOLS;
+    if (EndsWith(name, "_spawn_egg")) return CTAB_TOOLS;
     if (id >= ITEM_COAL && id <= ITEM_RAW_COPPER) return CTAB_INGREDIENTS;
     if (id == ITEM_STICK || id == ITEM_QUARTZ || id == ITEM_COPPER_INGOT) return CTAB_INGREDIENTS;
     if (EndsWith(name, "_wool") || id == BLOCK_TERRACOTTA) return CTAB_COLORED;

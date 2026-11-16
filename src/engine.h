@@ -339,7 +339,8 @@ struct HurtResistance {
 };
 
 enum class MobType {
-    Zombie, Pig, Cow, Sheep, Chicken, Creeper, Skeleton, Spider, Enderman, Count
+    Zombie, Pig, Cow, Sheep, Chicken, Creeper, Skeleton, Spider, Enderman,
+    EnderDragon, Wither, ElderGuardian, Count
 };
 
 // Java 26.3 base attributes. drop/drop2 are resource names resolved against the
