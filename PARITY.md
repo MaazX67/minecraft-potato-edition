@@ -105,6 +105,10 @@ hardcoded subsets**, proven by a probe that counts and hashes the loaded registr
 | XP orbs + Java curve | mobs drop orbs (hostile 5, animal 1-3) that magnet+collect; `XpToNextLevel`=2L+7/5L-38/9L-158; HUD XP bar+level wired. `TestXpCurve` | DONE (pending user visual check) |
 | Void + drowning damage | void 4 dmg/0.5 s below y=0; air 300 ticks then 1 heart/s underwater (Java) | DONE (pending user check) |
 | Village water guard | surface structures rejected when ground < sea level 62 (submerged); shoreline (==62) still allowed; village selftest picks a dry-land seed; tree-clearing still pending | PARTIAL |
+| Boss mobs | Ender Dragon 200 HP, Wither 300 HP, Elder Guardian 80 HP (wiki base health); speed/height/halfWidth are approximations, not Java attribute-exact; drops dragon_egg/nether_star/prismarine_shard. Mob-stats selftest green | UNVERIFIED (sizes/speed approx; models may checker) |
+| Spawn eggs | right-click any `*_spawn_egg` spawns its mob via `ParseMobId`; consumed in survival; listed in creative Tools tab | DONE (pending user visual check) |
+| End dimension + portal blocks | `WorldGenerator::End` end-stone platform + portal-frame ring; `end_portal`/`end_portal_frame` added to registry (BLOCK_COUNT 140, tables aligned). NOT Java island/obsidian-pillar gen | PARTIAL |
+| End portal activation | eye-of-ender frame fill uses a bit hack on block ids (wrong); no held-ender_eye gate; teleport hook present but activation unreliable | BLOCKED (needs proper filled-frame state) |
 
 `--parity` runs the same probe as `PotatoSelfTest.exe` but inside the shipped executable: it loads the user's own
 26.3 JAR from `%APPDATA%\Migurinth\meta`, prints `PARITY-REGISTRY: ...` and exits before creating a window. CI has no
