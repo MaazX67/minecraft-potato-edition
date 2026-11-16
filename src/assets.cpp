@@ -456,6 +456,8 @@ const BlockDef BLOCK_DEFS[BLOCK_COUNT] = {
     {"nether_quartz_ore",     "nether_quartz_ore",      "nether_quartz_ore",      "nether_quartz_ore"},
     {"nether_gold_ore",       "nether_gold_ore",        "nether_gold_ore",        "nether_gold_ore"},
     {"nether_portal",         "nether_portal",          "nether_portal",          "nether_portal"},
+    {"end_portal",            "end_portal",             "end_portal",             "end_portal"},
+    {"end_portal_frame",      "end_portal_frame_top",   "end_portal_frame_side",  "end_portal_frame_bottom"},
     {"soul_soil",             "soul_soil",              "soul_soil",              "soul_soil"},
     {"crimson_stem",          "crimson_stem_top",       "crimson_stem",           "crimson_stem_top"},
     {"warped_stem",           "warped_stem_top",        "warped_stem",            "warped_stem_top"},
@@ -601,6 +603,8 @@ const uint8_t BLOCK_FLAGS[BLOCK_COUNT] = {
     BF_SOLID | BF_OPAQUE,                           // nether_quartz_ore
     BF_SOLID | BF_OPAQUE,                           // nether_gold_ore
     BF_CUTOUT,                                      // nether_portal
+    BF_CUTOUT,                                      // end_portal
+    BF_SOLID | BF_OPAQUE,                           // end_portal_frame
     BF_SOLID | BF_OPAQUE,                           // soul_soil
     BF_SOLID | BF_OPAQUE,                           // crimson_stem
     BF_SOLID | BF_OPAQUE,                           // warped_stem
