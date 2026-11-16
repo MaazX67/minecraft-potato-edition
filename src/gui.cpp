@@ -1184,7 +1184,7 @@ void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint16_t* hotbar, float
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint16_t* hotbar, int health, int hunger, int armorPoints,
              const std::string& actionBar, bool creative, const ItemSlot* stacks,
-             float scale, float xpProgress, int xpLevel) {
+             float scale, float xpProgress, int xpLevel, int xpTotalPerLevel) {
     const float s = scale;
     const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
     ui.DrawSprite(&ui.texCrosshair, cx - 15 * s, cy - 15 * s, 2 * s, 15);

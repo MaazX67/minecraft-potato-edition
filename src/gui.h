@@ -106,8 +106,18 @@ public:
     GuiTexture texButton, texButtonHi, texButtonDisabled, texLogo, texEdition, texCrosshair;
     GuiTexture texHotbar, texHotbarSel, texFont, texDirt, texWhite, texBlack;
     GuiTexture texInvBg, texCraftBg, texFurnaceBg, texChestBg;
+    GuiTexture texAnvilBg, texBeaconBg, texBrewingBg, texCartographyBg, texCrafterBg;
+    GuiTexture texDispenserBg, texEnchantBg, texGrindstoneBg, texHopperBg, texLoomBg;
+    GuiTexture texShulkerBg, texSmithingBg, texStonecutterBg, texVillagerBg;
+    GuiTexture texBlastFurnaceBg, texSmokerBg;
     GuiTexture texHeart[3];   // container, full, half
+    GuiTexture texHeartPoisoned[2]; // full, half (poisoned)
+    GuiTexture texHeartWithered[2]; // full, half (withered)
+    GuiTexture texHeartFrozen[2]; // full, half (frozen)
+    GuiTexture texHeartAbsorbing[2]; // full, half (absorbing)
+    GuiTexture texHeartHardcore[3]; // container, full, half (hardcore)
     GuiTexture texFood[3];    // empty, full, half
+    GuiTexture texFoodHunger[3]; // empty, full, half (hunger)
     GuiTexture texArmor[3];   // empty, full, half
     GuiTexture texXpBg, texXpProgress, texHotbarOffhand;
     GuiTexture texAccessibility, texLanguage;
@@ -263,7 +273,7 @@ void DrawHotbar(GuiRenderer& ui, int selectedSlot, const uint16_t* hotbar, float
 void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
              const uint16_t* hotbar, int health, int hunger, int armorPoints,
              const std::string& actionBar, bool creative, const ItemSlot* stacks,
-             float scale = 1.0f, float xpProgress = 0.0f, int xpLevel = 0);
+             float scale = 1.0f, float xpProgress = 0.0f, int xpLevel = 0, int xpTotalPerLevel = 100);
 
 // Chat log bottom-left above the hotbar. Closed: last ten lines fade out over
 // Java's ten-second window. Open: full recent log plus the input field.
