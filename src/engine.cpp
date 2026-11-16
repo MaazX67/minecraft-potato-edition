@@ -545,9 +545,12 @@ ItemSlot BlockDrops(uint16_t b, uint16_t item) {
 }
 
 bool WearTool(ItemSlot& slot, int amount) {
-    const ToolDef* tool = FindTool(slot.id);
-    if (!tool || slot.Empty() || amount <= 0) return false;
-    if (int(slot.damage) + amount >= tool->durability) { slot = {}; return true; }
+    if (slot.Empty() || amount <= 0) return false;
+    int durability = 0;
+    if (const ToolDef* tool = FindTool(slot.id)) durability = tool->durability;
+    else if (const WeaponDef w = FindWeapon(slot.id); w.kind != WeaponKind::None) durability = w.durability;
+    if (durability <= 0) return false;
+    if (int(slot.damage) + amount >= durability) { slot = {}; return true; }
     slot.damage = uint16_t(int(slot.damage) + amount);
     return false;
 }

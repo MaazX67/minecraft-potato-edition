@@ -643,6 +643,10 @@ const ToolDef* FindTool(uint16_t id) {
     return id >= ITEM_WOOD_PICKAXE && id <= ITEM_NETHERITE_SWORD ? &TOOLS[id - ITEM_WOOD_PICKAXE] : nullptr;
 }
 
+WeaponDef FindWeapon(uint16_t id) {
+    return WeaponFromName(ItemName(id));
+}
+
 // Java armor values: defense points, toughness and durability per piece.
 static const ArmorDef ARMOR[] = {
     {"leather_helmet", 0, 1, 0, 55}, {"leather_chestplate", 1, 3, 0, 80},
@@ -746,6 +750,7 @@ bool LoadItemRGBA(AssetStore& store, uint16_t id, uint8_t* out16) {
 
 int ItemStackLimit(uint16_t id) {
     if (id == ITEM_FLINT_AND_STEEL) return 1;
+    if (FindWeapon(id).kind != WeaponKind::None) return 1;
     return FindTool(id) || FindArmor(id) ? 1 : 64;
 }
 

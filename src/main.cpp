@@ -2557,11 +2557,19 @@ static void HandleGameFrame(float dt) {
 
     const uint16_t held = gHotbar[gHotbarSlot];
     const ToolDef* tool = FindTool(held);
-    gCooldown.attackSpeed = tool ? tool->attackSpeed : 4.0f;
-    gCooldown.baseDamage = tool ? tool->damage : 1.0f;
+    const WeaponDef weapon = FindWeapon(held);
+    const bool isSpear = weapon.kind == WeaponKind::Spear;
+    const bool isMace = weapon.kind == WeaponKind::Mace;
+    if (weapon.kind != WeaponKind::None) {
+        gCooldown.attackSpeed = weapon.attackSpeed;
+        gCooldown.baseDamage = weapon.jabDamage;
+    } else {
+        gCooldown.attackSpeed = tool ? tool->attackSpeed : 4.0f;
+        gCooldown.baseDamage = tool ? tool->damage : 1.0f;
+    }
     if (held != gAttackItem) { gCooldown.Reset(gNowMs); gAttackItem = held; }
     gPlayer.UpdateCombat(gCooldown, gNowMs);
-    float nearest = 3.0f;
+    float nearest = isSpear ? 4.5f : 3.0f; // spear reach 4.5, other weapons 3
     if (gHaveTarget) {
         if (nx) nearest = std::min(nearest, (float(hx + (nx > 0 ? 1 : 0)) - gCamera.x) / gCamera.fwdX);
         else if (ny) nearest = std::min(nearest, (float(hy + (ny > 0 ? 1 : 0)) - gCamera.y) / gCamera.fwdY);
@@ -2572,6 +2580,7 @@ static void HandleGameFrame(float dt) {
     for (Zombie& zombie : gZombies) {
         float distance = 0;
         if (zombie.health > 0 && RayHitsBody(gCamera, zombie.body, nearest, distance) && distance < nearest) {
+            if (isSpear && distance < 2.0f) continue; // spear cannot hit closer than 2 blocks
             nearest = distance;
             targetZombie = &zombie;
         }
@@ -2579,11 +2588,17 @@ static void HandleGameFrame(float dt) {
     if (gInput.leftClick && targetZombie) {
         gArmSwing.Trigger(gNowMs); // Java swings on attack, hit or miss
         const float strength = gCooldown.Strength(gNowMs);
-        const bool critical = strength > 0.9f && !gBody.onGround && gBody.vy < 0 &&
+        // Spear jab is gated to full charge and never crits / sprint-knockbacks.
+        const bool ready = !isSpear || strength >= 0.999f;
+        const bool critical = !isSpear && strength > 0.9f && !gBody.onGround && gBody.vy < 0 &&
             !gBody.inWater && !gBody.flying && !gBody.sprinting;
-        const float damage = gCooldown.Swing(gNowMs) * (critical ? 1.5f : 1.0f);
-        const float knockback = (strength > 0.9f && gBody.sprinting) ? 12.0f : 8.0f;
-        if (targetZombie->Hit(damage, sinf(gCamera.yaw) * knockback, -cosf(gCamera.yaw) * knockback) > 0) {
+        const float fallDist = std::max(0.0f, gFallStartY - gBody.y);
+        const bool smash = isMace && MaceCanSmash(fallDist, gBody.gliding);
+        float damage = ready ? gCooldown.Swing(gNowMs) * (critical ? 1.5f : 1.0f) : 0.0f;
+        if (smash) damage += MaceSmashBonus(fallDist);
+        float knockback = (strength > 0.9f && gBody.sprinting && !isSpear) ? 12.0f : 8.0f;
+        if (smash) knockback = std::max(0.0f, MaceKnockbackPower(nearest, fallDist, 0.0f)) * 8.0f;
+        if (ready && targetZombie->Hit(damage, sinf(gCamera.yaw) * knockback, -cosf(gCamera.yaw) * knockback) > 0) {
             ++gCombatHits;
             if (targetZombie->health == 0) ++gZombieKills;
             if (critical) {
@@ -2592,6 +2607,7 @@ static void HandleGameFrame(float dt) {
             }
             gSound.PlayAt(critical ? SND_CRIT : SND_HIT, targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
             gSound.PlayAt(SND_ZOMBIE_HURT, targetZombie->body.x, targetZombie->body.y + 1, targetZombie->body.z);
+            if (smash) { gFallStartY = gBody.y; gBody.vy = std::max(gBody.vy, 0.01f); } // no fall damage + bounce
             // Sweep attack: sword, strength > 0.9, on ground, not sprinting.
             if (tool && tool->kind == ToolKind::Sword && strength > 0.9f && gBody.onGround && !gBody.sprinting) {
                 for (Zombie& z : gZombies) {
@@ -2606,9 +2622,23 @@ static void HandleGameFrame(float dt) {
                         gSound.PlayAt(SND_HIT, z.body.x, z.body.y + 1, z.body.z);
                     }
                 }
+            } else if (isSpear) {
+                // Spear jab hits every entity in the 2..4.5 block forward arc.
+                for (Zombie& z : gZombies) {
+                    if (&z == targetZombie || z.health <= 0) continue;
+                    float dx = z.body.x - gBody.x, dz = z.body.z - gBody.z;
+                    float d = sqrtf(dx * dx + dz * dz);
+                    float fwd = dx * sinf(gCamera.yaw) - dz * cosf(gCamera.yaw);
+                    if (d >= 2.0f && d <= 4.5f && fwd > 0) {
+                        z.Hit(weapon.jabDamage, sinf(gCamera.yaw) * 4.0f, -cosf(gCamera.yaw) * 4.0f);
+                        gParticles.SpawnCrit(z.body.x, z.body.y + 1, z.body.z);
+                        gSound.PlayAt(SND_HIT, z.body.x, z.body.y + 1, z.body.z);
+                    }
+                }
             }
             if (gGameMode == 0) {
-                if (WearTool(gInventory.slots[27 + gHotbarSlot], tool && tool->kind == ToolKind::Sword ? 1 : 2))
+                const bool oneWear = (tool && tool->kind == ToolKind::Sword) || weapon.kind != WeaponKind::None;
+                if (WearTool(gInventory.slots[27 + gHotbarSlot], oneWear ? 1 : 2))
                     gSound.Play(SND_TOOL_BREAK);
                 gSurvival.exhaustion = std::min(4.0f, gSurvival.exhaustion + 0.1f);
                 SyncHotbar();
@@ -2690,6 +2720,37 @@ static void HandleGameFrame(float dt) {
             SyncHotbar();
         }
         gSound.Play(SND_CLICK);
+        gArmSwing.Trigger(gNowMs);
+        return;
+    }
+
+    if (gInput.rightClick && std::string(ItemName(gHotbar[gHotbarSlot])) == "wind_charge") {
+        // Wind charge burst: knockback around the aim point + player self-boost.
+        // PARTIAL (UNVERIFIED): instant burst at the ray hit; the traveling
+        // projectile entity is deferred to the next batch. Radius 3.5 is a
+        // placeholder pending the AbstractWindCharge dump.
+        const float bx = gHaveTarget ? float(hx) + 0.5f : gCamera.x + gCamera.fwdX * 4.0f;
+        const float by = gHaveTarget ? float(hy) + 0.5f : gCamera.y + gCamera.fwdY * 4.0f;
+        const float bz = gHaveTarget ? float(hz) + 0.5f : gCamera.z + gCamera.fwdZ * 4.0f;
+        for (Zombie& z : gZombies) {
+            if (z.health <= 0) continue;
+            float dx = z.body.x - bx, dy = z.body.y - by, dz = z.body.z - bz;
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (d < 3.5f && d > 0.001f) {
+                float p = (3.5f - d) * 0.7f;
+                z.body.impulseX = dx / d * p * 8.0f;
+                z.body.impulseZ = dz / d * p * 8.0f;
+                z.body.vy = std::max(z.body.vy, p * 4.0f);
+                z.body.onGround = false;
+            }
+        }
+        if (gHaveTarget && ny > 0) { gBody.vy = std::max(gBody.vy, 12.0f); gBody.onGround = false; gFallStartY = gBody.y; }
+        gParticles.SpawnCrit(bx, by, bz);
+        gSound.PlayAt(SND_HIT, bx, by, bz);
+        if (gGameMode == 0) {
+            if (--gInventory.slots[27 + gHotbarSlot].count <= 0) gInventory.slots[27 + gHotbarSlot] = {};
+            SyncHotbar();
+        }
         gArmSwing.Trigger(gNowMs);
         return;
     }

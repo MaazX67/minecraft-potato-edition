@@ -1168,8 +1168,9 @@ void DrawHUD(GuiRenderer& ui, float attackStrength, int selectedSlot,
         }
     }
 
-    // XP bar above the hotbar (vanilla: 182 wide, 5 tall, centred).
-    if (ui.texXpBg.srv) {
+    // XP bar above the hotbar (vanilla: 182 wide, 5 tall, centred). Java hides
+    // the whole experience bar in creative/spectator, same as hearts/hunger.
+    if (!creative && ui.texXpBg.srv) {
         const float xpX = cx - 182.0f * s, xpY = SCREEN_H - 58.0f * s;
         ui.DrawSprite(&ui.texXpBg, xpX, xpY, 2 * s, 15);
         if (xpProgress > 0.0f && ui.texXpProgress.srv) {
@@ -1272,6 +1273,7 @@ void RebuildCreativeList() {
             if (ItemIconTile(id) < 0) continue;
         }
         if (gCreativeTab == CTAB_SEARCH) {
+            if (ItemCreativeTab(id) < 0) continue; // hide operator/technical blocks in search too
             if (!ItemMatchesSearch(id, gCreativeSearch)) continue;
         } else if (ItemCreativeTab(id) != gCreativeTab) {
             continue;

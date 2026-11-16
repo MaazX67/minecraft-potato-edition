@@ -1,4 +1,5 @@
 #pragma once
+#include "combat.h"
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -177,6 +178,10 @@ struct ToolDef {
     float speed, damage, attackSpeed;
 };
 const ToolDef* FindTool(uint16_t id);
+// Name-based resolver for the data-driven 26.3 weapons (spear/mace/trident),
+// whose jar-registry ids fall outside the hardcoded tool enum. kind == None
+// when the item is not one of these weapons.
+WeaponDef FindWeapon(uint16_t id);
 struct ArmorDef {
     const char* name;
     int slot; // 0 helmet, 1 chestplate, 2 leggings, 3 boots

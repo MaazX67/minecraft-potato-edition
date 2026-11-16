@@ -497,15 +497,31 @@ bool LootDropForBlock(uint16_t block, LootEntry& out) {
     return true;
 }
 
+// Java keeps operator/technical blocks out of the normal creative tabs (they
+// live only in the permission-gated Operator Utilities tab). Hiding them here
+// matches what a survival player sees. Exact per-tab membership/order is still
+// UNVERIFIED pending a full CreativeModeTabs parse; this is the stable hidden set.
+static bool IsCreativeHidden(const std::string& name) {
+    return name == "command_block" || name == "chain_command_block" ||
+           name == "repeating_command_block" || name == "command_block_minecart" ||
+           name == "structure_block" || name == "structure_void" || name == "jigsaw" ||
+           name == "barrier" || name == "light" || name == "debug_stick" ||
+           name == "spawner" || name == "trial_spawner" || name == "vault" ||
+           name == "ominous_vault" || name == "knowledge_book" ||
+           name == "reinforced_deepslate" || name == "budding_amethyst";
+}
+
 int ItemCreativeTab(uint16_t id) {
     if (id == BLOCK_AIR || !IsValidItem(id)) return -1;
+    const std::string name = ItemNameSafe(id);
+    if (IsCreativeHidden(name)) return -1;
     if (const ToolDef* tool = FindTool(id))
         return tool->kind == ToolKind::Axe || tool->kind == ToolKind::Sword ? CTAB_COMBAT : CTAB_TOOLS;
+    if (FindWeapon(id).kind != WeaponKind::None) return CTAB_COMBAT;
     if (FindArmor(id) || id == ITEM_ELYTRA) return CTAB_COMBAT;
     if (id == ITEM_FLINT_AND_STEEL || id == ITEM_FIREWORK_ROCKET) return CTAB_TOOLS;
     if (id >= ITEM_COAL && id <= ITEM_RAW_COPPER) return CTAB_INGREDIENTS;
     if (id == ITEM_STICK || id == ITEM_QUARTZ || id == ITEM_COPPER_INGOT) return CTAB_INGREDIENTS;
-    const std::string name = ItemNameSafe(id);
     if (EndsWith(name, "_wool") || id == BLOCK_TERRACOTTA) return CTAB_COLORED;
     switch (id) {
         case BLOCK_TNT: case BLOCK_REDSTONE_BLOCK: return CTAB_REDSTONE;

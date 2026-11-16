@@ -1143,6 +1143,68 @@ static void TestBlockLight() {
     CHECK(hasAO, "smooth lighting AO applied (some vertices have cr < 1.0)");
 }
 
+static void TestSkyCrevice() {
+    // Java SkyLightEngine: sky spreads sideways under an overhang, losing 1 per
+    // block, so a crevice near open sky is dim but NOT pitch black. Floor at
+    // y=64; a roof at y=70 covers only x=0..7, leaving x=8..15 open to sky.
+    BlockTiles tiles;
+    std::vector<uint16_t> blocks(CHUNK_VOL, BLOCK_AIR);
+    for (int z = 0; z < CHUNK_Z; ++z)
+        for (int x = 0; x < CHUNK_X; ++x) {
+            blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * 64] = BLOCK_STONE;
+            if (x < 8) blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * 70] = BLOCK_STONE;
+        }
+    MeshData md;
+    BuildChunkMeshCPU(blocks.data(), nullptr, nullptr, nullptr, nullptr, tiles, md);
+    bool dimUnderOverhang = false, fullOpen = false;
+    for (const MeshVertex& v : md.vertices) {
+        if (v.y != 65.0f) continue; // floor top faces (air cell above floor)
+        if (v.sky > 0.0f && v.sky < 15.0f) dimUnderOverhang = true;
+        if (v.sky == 15.0f) fullOpen = true;
+    }
+    CHECK(fullOpen, "open half of the floor is fully sky-lit (15)");
+    CHECK(dimUnderOverhang, "sky bleeds sideways under the overhang (0 < sky < 15), no black crevice");
+}
+
+static void TestCombatMath() {
+    // Mace (MaceItem.class): smash needs fallDistance > 1.5 and no elytra glide.
+    CHECK(!MaceCanSmash(1.5f, false) && MaceCanSmash(1.6f, false) && !MaceCanSmash(5.0f, true),
+          "mace smash gates on fall distance > 1.5 and not fall-flying");
+    CHECK(Near(MaceSmashBonus(2.0f), 8.0f) && Near(MaceSmashBonus(3.0f), 12.0f) &&
+          Near(MaceSmashBonus(8.0f), 22.0f) && Near(MaceSmashBonus(10.0f), 24.0f),
+          "mace smash bonus: 4d / 12+2(d-3) / d+14 piecewise");
+    CHECK(Near(MaceKnockbackPower(0.0f, 6.0f, 0.0f), 4.9f) &&
+          Near(MaceKnockbackPower(0.0f, 4.0f, 0.0f), 2.45f),
+          "mace knockback power doubles above 5 blocks fallen");
+    // Spear (wiki): reach 2..4.5, charge damage >= 4.6 b/s, knockback >= 5.1 b/s.
+    CHECK(!SpearInRange(1.9f) && SpearInRange(2.0f) && SpearInRange(4.5f) && !SpearInRange(4.6f),
+          "spear attack range is [2, 4.5] blocks");
+    CHECK(Near(SpearChargeDamage(0.95f, 4.6f), 4.37f) && Near(SpearChargeDamage(0.95f, 4.5f), 0.0f),
+          "spear charge damage = multiplier * relative speed, gated at 4.6");
+    CHECK(SpearChargeKnockback(5.1f) && !SpearChargeKnockback(5.0f),
+          "spear charge knockback gates at 5.1 b/s");
+    CHECK(Near(SpearChargeMultiplier(0), 0.7f) && Near(SpearChargeMultiplier(1), 0.82f) &&
+          Near(SpearChargeMultiplier(2), 0.95f) && Near(SpearChargeMultiplier(3), 1.075f) &&
+          Near(SpearChargeMultiplier(4), 1.2f), "spear charge multipliers per tier");
+    // Name resolver for the data-driven weapons.
+    const WeaponDef iron = WeaponFromName("iron_spear");
+    CHECK(iron.kind == WeaponKind::Spear && iron.tier == 2 && iron.durability == 250 &&
+          Near(iron.jabDamage, 3.0f) && Near(iron.attackSpeed, 1.05f) && Near(iron.chargeMult, 0.95f),
+          "iron spear stats match Java (3 dmg, 1.05 speed, 250 dur)");
+    const WeaponDef copper = WeaponFromName("copper_spear");
+    CHECK(copper.kind == WeaponKind::Spear && copper.durability == 190 && Near(copper.attackSpeed, 1.18f),
+          "copper spear is its own tier (190 dur, 1.18 speed)");
+    const WeaponDef diamond = WeaponFromName("diamond_spear");
+    CHECK(diamond.durability == 1561 && Near(diamond.jabDamage, 4.0f) && Near(diamond.chargeMult, 1.075f),
+          "diamond spear stats match Java");
+    const WeaponDef mace = WeaponFromName("mace");
+    CHECK(mace.kind == WeaponKind::Mace && Near(mace.jabDamage, 6.0f) && Near(mace.attackSpeed, 0.6f),
+          "mace base damage 6, attack speed 0.6");
+    CHECK(WeaponFromName("trident").kind == WeaponKind::Trident &&
+          WeaponFromName("stone").kind == WeaponKind::None,
+          "trident resolves; non-weapons return None");
+}
+
 static void TestWaterFrames() {
     // Synthetic 16x512 strip (32 frames), each frame a flat shade with Java's
     // baked water alpha (180/255 = 0.706).
@@ -1751,6 +1813,8 @@ int main() {
     TestHeldItemMesh();
     TestNonCubeMeshes();
     TestBlockLight();
+    TestSkyCrevice();
+    TestCombatMath();
     TestWaterFrames();
     TestWaterShaderPass();
     TestBubbleParticles();
