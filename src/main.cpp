@@ -2272,9 +2272,12 @@ static void HandleGameFrame(float dt) {
     }
     if (!gSpawned) {
         gWorld->Update(8.5f, 8.5f);
-        const int sy = gWorld->SurfaceY(8, 8);
-        if (sy < 0) return; // spawn chunk still generating
-        gBody.x = 8.5f; gBody.z = 8.5f; gBody.y = float(sy + 1);
+        // Java spawns on dry land; FindDrySpawn searches outward past any
+        // sea-floor column so the player never spawns underwater and drowns.
+        int sx = 8, sz = 8, sy = -1;
+        if (!gWorld->FindDrySpawn(8, 8, sx, sz, sy)) return; // spawn chunk still generating
+        gWorld->Update(float(sx) + 0.5f, float(sz) + 0.5f);
+        gBody.x = float(sx) + 0.5f; gBody.z = float(sz) + 0.5f; gBody.y = float(sy + 1);
         gBody.vx = gBody.vy = gBody.vz = 0;
         gBody.flying = false;
         if (gFlyHook) {
@@ -2283,17 +2286,17 @@ static void HandleGameFrame(float dt) {
             gCamera.pitch = -1.1f;
         }
         if (gInventoryTest) {
-            gWorld->SetBlock(8, sy + 1, 6, BLOCK_CRAFTING_TABLE);
+            gWorld->SetBlock(sx, sy + 1, sz - 2, BLOCK_CRAFTING_TABLE);
             gCamera.pitch = -0.3f;
         }
         if (gToolsTest) {
-            gWorld->SetBlock(8, sy + 1, 6, BLOCK_STONE);
-            gWorld->SetBlock(8, sy + 2, 6, BLOCK_STONE);
+            gWorld->SetBlock(sx, sy + 1, sz - 2, BLOCK_STONE);
+            gWorld->SetBlock(sx, sy + 2, sz - 2, BLOCK_STONE);
             gCamera.pitch = 0;
         }
         if (gCombatTest) {
             Zombie zombie;
-            zombie.body.x = 8.5f; zombie.body.y = float(sy + 1); zombie.body.z = 6.0f;
+            zombie.body.x = float(sx) + 0.5f; zombie.body.y = float(sy + 1); zombie.body.z = float(sz - 2);
             zombie.passive = true;
             gZombies.push_back(zombie);
             gCamera.pitch = 0;
@@ -2302,7 +2305,7 @@ static void HandleGameFrame(float dt) {
         gSpawned = true;
         if (gBonusChestPending) {
             gBonusChestPending = false;
-            const int bx = 10, bz = 8;
+            const int bx = sx + 2, bz = sz;
             const int by = gWorld->SurfaceY(bx, bz);
             if (by >= 0 && gGameMode == 0) {
                 gWorld->SetBlock(bx, by + 1, bz, BLOCK_CHEST);
@@ -2408,8 +2411,8 @@ static void HandleGameFrame(float dt) {
         sBubbleTimer += dt;
         if (sBubbleTimer >= 0.10f) {
             sBubbleTimer = 0;
-            gParticles.SpawnBubbles(gCamera.x + gCamera.fwdX * 0.25f, gCamera.y - 0.12f,
-                                    gCamera.z + gCamera.fwdZ * 0.25f);
+            gParticles.SpawnBubbles(gCamera.x + gCamera.fwdX * 0.7f, gCamera.y - 0.12f,
+                                    gCamera.z + gCamera.fwdZ * 0.7f);
         }
     } else {
         sBubbleTimer = 0.10f;
@@ -4292,7 +4295,7 @@ static void DrawWorld() {
             const float fade = p.life / p.maxLife;
             if (p.bubble) {
                 if (!gBubbleSRV || bn + 6 > MAX_PARTICLES * 6) continue;
-                quad(bubbleVerts + bn, p, 0.05f, 15.0f * fade, 0.55f, 0.80f, 1.0f);
+                quad(bubbleVerts + bn, p, 0.02f, 15.0f * fade, 0.55f, 0.80f, 1.0f);
                 bn += 6;
             } else if (p.rain) {
                 if (!gParticleSRV || rn + 6 > MAX_PARTICLES * 6) continue;

@@ -283,6 +283,11 @@ public:
     void SetBlock(int x, int y, int z, uint16_t block); // marks dirty, remeshes
     // Highest solid block in the column, or -1 if the chunk isn't generated.
     int SurfaceY(int x, int z) const;
+    // Java-style spawn: find a dry column (solid surface with two air blocks
+    // above) near (ox,oz), searching outward and generating chunks as needed.
+    // Returns false only if no surface exists at all. SurfaceY skips liquid, so
+    // a sea-floor column would otherwise spawn the player underwater.
+    bool FindDrySpawn(int ox, int oz, int& sx, int& sz, int& sy);
     // Coarse terrain sample for the beyond-render-distance LOD ring. Only
     // meaningful for Climate/Flat worlds; Legacy/Nether return height 0.
     TerrainColumn LodColumn(int x, int z) const;

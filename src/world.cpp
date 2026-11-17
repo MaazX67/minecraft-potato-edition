@@ -1699,6 +1699,32 @@ int World::SurfaceY(int x, int z) const {
     return -1;
 }
 
+bool World::FindDrySpawn(int ox, int oz, int& sx, int& sz, int& sy) {
+    sx = ox; sz = oz; sy = SurfaceY(ox, oz);
+    auto dryAt = [&](int x, int z, int h) {
+        return h >= 0 && GetBlock(x, h + 1, z) == BLOCK_AIR
+                      && GetBlock(x, h + 2, z) == BLOCK_AIR;
+    };
+    if (dryAt(sx, sz, sy)) return true;
+    int genBudget = 256;
+    for (int r = 1; r <= 64; ++r) {
+        for (int dx = -r; dx <= r; ++dx) {
+            for (int dz = -r; dz <= r; ++dz) {
+                if (dx != -r && dx != r && dz != -r && dz != r) continue;
+                const int x = ox + dx, z = oz + dz;
+                int h = SurfaceY(x, z);
+                if (h < 0 && genBudget > 0) {
+                    --genBudget;
+                    Update(float(x), float(z));
+                    h = SurfaceY(x, z);
+                }
+                if (dryAt(x, z, h)) { sx = x; sz = z; sy = h; return true; }
+            }
+        }
+    }
+    return sy >= 0;
+}
+
 TerrainColumn World::LodColumn(int x, int z) const {
     if (mGenerator == WorldGenerator::Climate || mGenerator == WorldGenerator::LargeBiomes ||
         mGenerator == WorldGenerator::Amplified)

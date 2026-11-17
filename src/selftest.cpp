@@ -1195,6 +1195,51 @@ static void TestJavaWorldgen() {
     }
 }
 
+static void TestDryLandSpawn() {
+    BlockTiles tiles;
+    // Climate worlds have oceans; the spawn search must still land on dry ground.
+    {
+        World w(2026, 3, WorldGenerator::Climate);
+        w.SetBlockTiles(tiles);
+        w.Update(8.5f, 8.5f);
+        int sx = 0, sz = 0, sy = -1;
+        bool ok = false;
+        for (int i = 0; i < 400 && !ok; ++i) {
+            ok = w.FindDrySpawn(8, 8, sx, sz, sy);
+            if (!ok) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        CHECK(ok, "climate world finds a dry spawn column");
+        if (ok) {
+            CHECK(sy >= 0, "dry spawn has a surface");
+            CHECK((BlockFlags(w.GetBlock(sx, sy, sz)) & BF_SOLID) != 0, "dry spawn surface is solid");
+            CHECK(w.GetBlock(sx, sy + 1, sz) == BLOCK_AIR, "dry spawn feet block is air");
+            CHECK(w.GetBlock(sx, sy + 2, sz) == BLOCK_AIR, "dry spawn head block is air");
+        }
+    }
+    // Flood the spawn column: FindDrySpawn must move off it instead of drowning.
+    {
+        World w(7, 2, WorldGenerator::Flat);
+        w.SetBlockTiles(tiles);
+        w.Update(8.5f, 8.5f);
+        int sy = -1;
+        for (int i = 0; i < 300 && sy < 0; ++i) {
+            sy = w.SurfaceY(8, 8);
+            if (sy < 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        CHECK(sy > 0, "flat surface exists near spawn");
+        if (sy > 0) {
+            for (int y = sy + 1; y <= sy + 6; ++y) w.SetBlock(8, y, 8, BLOCK_WATER);
+            CHECK(w.GetBlock(8, sy + 1, 8) == BLOCK_WATER, "fixture: spawn column is flooded");
+            int sx = 0, sz = 0, hsy = -1;
+            const bool ok = w.FindDrySpawn(8, 8, sx, sz, hsy);
+            CHECK(ok, "FindDrySpawn escapes a flooded spawn column");
+            CHECK(!(sx == 8 && sz == 8), "dry spawn moved off the flooded column");
+            CHECK(w.GetBlock(sx, hsy + 1, sz) == BLOCK_AIR && w.GetBlock(sx, hsy + 2, sz) == BLOCK_AIR,
+                  "escaped spawn column is dry");
+        }
+    }
+}
+
 static void TestMobHitboxes() {
     FlyCamera ray;
     ray.x = 0; ray.y = 1.0f; ray.z = 0;
@@ -1969,6 +2014,7 @@ int main() {
     TestNonCubeMeshes();
     TestMobHitboxes();
     TestJavaWorldgen();
+    TestDryLandSpawn();
     TestBlockLight();
     TestSkyCrevice();
     TestCombatMath();
