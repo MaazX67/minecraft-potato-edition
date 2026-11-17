@@ -290,6 +290,7 @@ void DrawChat(GuiRenderer& ui, const std::vector<ChatEntry>& entries, bool open,
 
 // Tutorial hint toast (Java 26.3 tutorial hints)
 void DrawTutorialHint(GuiRenderer& ui, const std::string& hint, float timeSec, float scale);
+void DrawMaazBoot(GuiRenderer& ui, float t, float scale);
 
 // Advancement toast (Java 26.3 advancement notifications)
 void DrawAdvancementToast(GuiRenderer& ui, const std::string& title, const std::string& desc, float timeSec, float scale);

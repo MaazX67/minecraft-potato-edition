@@ -1121,11 +1121,12 @@ float Mob::Hit(float damage, float knockX, float knockZ) {
     return applied;
 }
 
-bool RayHitsBody(const FlyCamera& camera, const PlayerBody& body, float reach, float& distance) {
+bool RayHitsBox(const FlyCamera& camera, float cx, float feetY, float cz,
+                float halfWidth, float height, float reach, float& distance) {
     const float origin[3] = {camera.x, camera.y, camera.z};
     const float direction[3] = {camera.fwdX, camera.fwdY, camera.fwdZ};
-    const float lo[3] = {body.x - PlayerBody::HALF, body.y, body.z - PlayerBody::HALF};
-    const float hi[3] = {body.x + PlayerBody::HALF, body.y + 1.95f, body.z + PlayerBody::HALF};
+    const float lo[3] = {cx - halfWidth, feetY, cz - halfWidth};
+    const float hi[3] = {cx + halfWidth, feetY + height, cz + halfWidth};
     float nearHit = 0, farHit = reach;
     for (int i = 0; i < 3; ++i) {
         if (fabsf(direction[i]) < 1e-6f) {
@@ -1139,6 +1140,10 @@ bool RayHitsBody(const FlyCamera& camera, const PlayerBody& body, float reach, f
     }
     distance = nearHit;
     return true;
+}
+
+bool RayHitsBody(const FlyCamera& camera, const PlayerBody& body, float reach, float& distance) {
+    return RayHitsBox(camera, body.x, body.y, body.z, PlayerBody::HALF, 1.95f, reach, distance);
 }
 
 float AttackCooldown::Strength(float nowMs) const {

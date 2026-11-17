@@ -1133,6 +1133,51 @@ static void TestNonCubeMeshes() {
         BuildChunkMeshCPU(doorBlocks.data(), nullptr, nullptr, nullptr, nullptr, tiles, md4);
         CHECK(!md4.vertices.empty(), "door produces mesh vertices");
     }
+    // Carpet (1/16 slab) and cross-shaped plants must mesh too.
+    uint16_t carpetId = 0, plantId = 0;
+    for (const RegistryBlockEntry& e : RegistryBlocks()) {
+        if (carpetId == 0 && e.name.find("carpet") != std::string::npos) carpetId = e.id;
+        if (plantId == 0 && (e.name == "dandelion" || e.name == "short_grass" ||
+                             e.name == "poppy")) plantId = e.id;
+    }
+    if (carpetId != 0) {
+        std::vector<uint16_t> cb(CHUNK_VOL, BLOCK_AIR);
+        cb[8 + CHUNK_X * 8 + CHUNK_X * CHUNK_Z * 64] = carpetId;
+        MeshData md5;
+        BuildChunkMeshCPU(cb.data(), nullptr, nullptr, nullptr, nullptr, tiles, md5);
+        CHECK(!md5.vertices.empty(), "carpet produces mesh vertices");
+    }
+    if (plantId != 0) {
+        std::vector<uint16_t> pb(CHUNK_VOL, BLOCK_AIR);
+        pb[8 + CHUNK_X * 8 + CHUNK_X * CHUNK_Z * 64] = plantId;
+        MeshData md6;
+        BuildChunkMeshCPU(pb.data(), nullptr, nullptr, nullptr, nullptr, tiles, md6);
+        CHECK(!md6.vertices.empty(), "cross-shaped plant produces mesh vertices");
+        CHECK(BlockFlags(plantId) & BF_CUTOUT, "plants are alpha-tested");
+        CHECK(!(BlockFlags(plantId) & BF_SOLID), "plants do not collide");
+    }
+}
+
+// Per-mob AABB pick bounds: a chicken and an enderman must not share the
+// player's 0.6x1.95 box (Java EntityDimensions).
+static void TestMobHitboxes() {
+    FlyCamera ray;
+    ray.x = 0; ray.y = 1.0f; ray.z = 0;
+    ray.fwdX = 0; ray.fwdY = 0; ray.fwdZ = 1;
+    float d = 0;
+    CHECK(RayHitsBox(ray, 0, 0, 4, 0.3f, 1.95f, 6, d) && Near(d, 3.7f),
+          "zombie-sized box hit at 3.7");
+    CHECK(!RayHitsBox(ray, 0, 0, 4, 0.2f, 0.7f, 6, d),
+          "chicken-sized box misses a ray at eye height 1.0");
+    ray.y = 0.4f;
+    CHECK(RayHitsBox(ray, 0, 0, 4, 0.2f, 0.7f, 6, d) && Near(d, 3.8f),
+          "chicken-sized box hit at its own height");
+    CHECK(RayHitsBox(ray, 0, 0, 4, 0.3f, 2.9f, 6, d),
+          "enderman-sized box hit at 0.4 height");
+    CHECK(!RayHitsBox(ray, 0, 0, 4, 0.3f, 1.95f, 3.6f, d),
+          "reach shorter than the entry distance misses");
+    CHECK(RayHitsBox(ray, 0, 0, 4, 0.3f, 1.95f, 3.8f, d),
+          "reach beyond the entry distance hits");
 }
 
 static void TestBlockLight() {
@@ -1845,8 +1890,11 @@ static void TestRegistryParity() {
             // A placeable cube is solid+opaque (cutout leaves/glass add a bit)
             // and always has a side sprite for its inventory icon.
             if (!(flags & BF_SOLID) || !(flags & BF_OPAQUE) || entry.textures.side.empty()) badCube = true;
-        } else if (flags != 0) {
-            idsOk = false; // non-cubes must stay inventory-only
+        } else {
+            // Every jar block must be placeable (/give + creative), but a
+            // non-cube never culls its neighbours' faces.
+            if (flags == 0) idsOk = false;
+            if (flags & BF_OPAQUE) badCube = true;
         }
     }
     CHECK(idsOk, "registry ids stay inside the appended range");
@@ -1881,6 +1929,7 @@ int main() {
     TestHeldItemMesh();
     TestExtrudedUV();
     TestNonCubeMeshes();
+    TestMobHitboxes();
     TestBlockLight();
     TestSkyCrevice();
     TestCombatMath();

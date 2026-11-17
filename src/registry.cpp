@@ -360,26 +360,35 @@ int RegisterRuntimeRegistry(AssetStore& store) {
         entry.cutout = model.cutout;
         gRegBlocks.push_back(entry);
 
-        // Only full cubes are placeable. Anything else (slab, stairs, door,
-        // torch, chest) is an inventory entry until its own mesh exists, which is
-        // why its flags stay 0 and the mesher never sees it.
+        // Every block the jar declares must be placeable: /give and the creative
+        // grid hand out ids whose flags used to stay 0 for anything that was not
+        // a full cube or one of four name matches, so the placement gate
+        // (IsBlockId) silently dropped them. Non-cubes get SOLID without OPAQUE
+        // so neighbours still draw; plants/torch are cutout and non-solid.
         uint8_t flags = 0;
         if (model.fullCube) {
             flags = uint8_t(BF_SOLID | BF_OPAQUE);
             if (model.cutout) flags |= BF_CUTOUT;
+        } else if (name == "water" || name == "lava" || name == "flowing_water" ||
+                   name == "flowing_lava") {
+            flags = BF_LIQUID;
+        } else if (name.find("torch") != std::string::npos ||
+                   name.find("sapling") != std::string::npos ||
+                   name.find("flower") != std::string::npos ||
+                   name == "grass" || name == "short_grass" || name == "tall_grass" ||
+                   name == "fern" || name == "large_fern" || name == "dead_bush" ||
+                   name.find("mushroom") != std::string::npos ||
+                   name.find("fungus") != std::string::npos ||
+                   name.find("roots") != std::string::npos ||
+                   name.find("crop") != std::string::npos ||
+                   name == "wheat" || name == "carrots" || name == "potatoes" ||
+                   name == "beetroots" || name == "sugar_cane" || name == "kelp" ||
+                   name == "seagrass" || name == "vine" || name == "web" ||
+                   name == "cobweb" || name.find("coral") != std::string::npos ||
+                   name == "air" || name == "cave_air" || name == "void_air") {
+            flags = BF_CUTOUT; // plant/cross shapes: no collision, alpha-tested
         } else {
-            // Non-cube blocks that should be placeable (torch, slab, etc.)
-            // get solid flag so they can be placed, but not opaque (they don't
-            // cull faces). Cutout blocks (torch, leaves) get BF_CUTOUT.
-            if (name.find("torch") != std::string::npos) {
-                flags = BF_CUTOUT; // torch is not solid, but is cutout
-            } else if (name.find("slab") != std::string::npos) {
-                flags = uint8_t(BF_SOLID); // slab is solid but not opaque
-            } else if (name.find("stairs") != std::string::npos) {
-                flags = uint8_t(BF_SOLID); // stairs are solid
-            } else if (name.find("door") != std::string::npos) {
-                flags = uint8_t(BF_SOLID); // doors are solid
-            }
+            flags = uint8_t(BF_SOLID | BF_CUTOUT);
         }
         if (id < BLOCK_ID_LIMIT) REGISTRY_BLOCK_FLAGS[id] = flags;
 

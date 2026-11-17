@@ -143,6 +143,9 @@ static std::string gActionBar;
 static float gActionBarUntil = 0;
 static float gNowMs = 0;
 static float gTimeSec = 0;
+// Maaz Studio intro splash clock; runs once before the title screen.
+static float gBootTime = 0.0f;
+static bool gBootDone = false;
 static float gFps = 0;
 static bool gRunning = true;
 static bool gDebug = false;
@@ -2612,8 +2615,11 @@ static void HandleGameFrame(float dt) {
             }
             continue;
         }
-        if (GetMobStats(zombie.type).attackDamage > 0 && gGameMode == 0 && gSettings.difficulty != 0 &&
-            zombie.attackDelay == 0 && distance2 < 1.8f * 1.8f && fabsf(gBody.y - zombie.body.y) < 1.5f) {
+        const MobStats& atkStats = GetMobStats(zombie.type);
+        const float meleeReach = atkStats.halfWidth + PlayerBody::HALF + 1.0f;
+        if (atkStats.attackDamage > 0 && gGameMode == 0 && gSettings.difficulty != 0 &&
+            zombie.attackDelay == 0 && distance2 < meleeReach * meleeReach &&
+            fabsf(gBody.y - zombie.body.y) < atkStats.height + 0.5f) {
             int bx, by, bz, normalX, normalY, normalZ;
             const float distance = sqrtf(distance2);
             if (distance > 0.001f && RaycastDDA(getBlock, zombie.body.x, zombie.body.y + 1.4f, zombie.body.z,
@@ -2723,7 +2729,10 @@ static void HandleGameFrame(float dt) {
     Zombie* targetZombie = nullptr;
     for (Zombie& zombie : gZombies) {
         float distance = 0;
-        if (zombie.health > 0 && RayHitsBody(gCamera, zombie.body, nearest, distance) && distance < nearest) {
+        const MobStats& ms = GetMobStats(zombie.type);
+        if (zombie.health > 0 &&
+            RayHitsBox(gCamera, zombie.body.x, zombie.body.y, zombie.body.z,
+                       ms.halfWidth, ms.height, nearest, distance) && distance < nearest) {
             if (isSpear && distance < 2.0f) continue; // spear cannot hit closer than 2 blocks
             nearest = distance;
             targetZombie = &zombie;
@@ -3173,9 +3182,36 @@ struct MobPart {
 };
 
 // Box models use Java's 16 px/block model space and standard box unwrap UVs
-// from the per-entity 64x32 / 64x64 texture.
-static void MobParts(MobType type, float moving, std::vector<MobPart>& parts) {
+// from the per-entity 64x32 / 64x64 texture. Families follow the vanilla model
+// classes (QuadrupedModel, HumanoidModel, CubeListBuilder, SpiderModel,
+// SquidModel, GhastModel, BlazeModel, GuardianModel, ...); per-mob offset
+// tweaks beyond the family layout are UNVERIFIED in PARITY.md.
+static void MobParts(MobType type, float moving, float texH, std::vector<MobPart>& parts) {
     parts.clear();
+    auto box = [&](float x, float y, float z, float w, float h, float d,
+                   float u, float v, float pivot, float rot) {
+        parts.push_back({x, y, z, w, h, d, u, v, pivot, rot});
+    };
+    // Vanilla QuadrupedModel: head front-top, horizontal body, four legs.
+    auto quadruped = [&](float legH, float bw, float bh, float bl, float hs,
+                         float hu, float hv, float bu, float bv, float lu, float lv) {
+        box(-hs / 2, legH + bh - 2, -bl / 2 - hs + 2, hs, hs, hs, hu, hv, legH + bh, 0);
+        box(-bw / 2, legH, -bl / 2, bw, bh, bl, bu, bv, legH + bh / 2, 0);
+        box(-bw / 2, 0, -bl / 2, 4, legH, 4, lu, lv, legH, moving);
+        box(bw / 2 - 4, 0, -bl / 2, 4, legH, 4, lu, lv, legH, -moving);
+        box(-bw / 2, 0, bl / 2 - 4, 4, legH, 4, lu, lv, legH, -moving);
+        box(bw / 2 - 4, 0, bl / 2 - 4, 4, legH, 4, lu, lv, legH, moving);
+    };
+    // Vanilla HumanoidModel (64x64 player unwrap).
+    auto humanoid = [&](float s, float armRot) {
+        box(-4 * s, 24 * s, -4 * s, 8 * s, 8 * s, 8 * s, 0, 0, 24 * s, 0);
+        box(-4 * s, 12 * s, -2 * s, 8 * s, 12 * s, 4 * s, 16, 16, 12 * s, 0);
+        box(-8 * s, 12 * s, -2 * s, 4 * s, 12 * s, 4 * s, 40, 16, 23 * s, armRot);
+        box(4 * s, 12 * s, -2 * s, 4 * s, 12 * s, 4 * s, 32, 48, 23 * s, -moving);
+        box(-4 * s, 0, -2 * s, 4 * s, 12 * s, 4 * s, 0, 16, 12 * s, moving);
+        box(0, 0, -2 * s, 4 * s, 12 * s, 4 * s, 16, 48, 12 * s, -moving);
+    };
+    const bool q32 = texH <= 32.0f;
     switch (type) {
     case MobType::Pig:
         parts = {{-4, 8, -14, 8, 8, 8, 0, 0, 12, 0},
@@ -3240,15 +3276,225 @@ static void MobParts(MobType type, float moving, std::vector<MobPart>& parts) {
                  {-2, 0, -2, 2, 26, 2, 0, 16, 13, moving},
                  {0, 0, -2, 2, 26, 2, 0, 16, 13, -moving}};
         break;
+    case MobType::Slime:
+        // Outer translucent cube + inner core (SlimeModel).
+        box(-4, 0, -4, 8, 8, 8, 0, 0, 4, 0);
+        box(-3, 1, -3, 6, 6, 6, 0, 16, 4, 0);
+        box(-2, 2, -2, 4, 4, 4, 0, 28, 4, 0);
+        break;
+    case MobType::Squid:
+        // SquidModel: mantle + 8 tentacles.
+        box(-6, 8, -6, 12, 16, 12, 0, 0, 16, 0);
+        for (int i = 0; i < 8; ++i) {
+            const float a = i * 0.7853982f;
+            box(cosf(a) * 5 - 1, 0, sinf(a) * 5 - 1, 2, 18, 2, 0, 32, 9, moving * (i % 2 ? 1 : -1));
+        }
+        break;
+    case MobType::Ghast:
+        box(-8, 16, -8, 16, 16, 16, 0, 0, 24, 0);
+        for (int i = 0; i < 9; ++i) {
+            const float a = i * 0.6981317f;
+            box(cosf(a) * 6 - 1, 0, sinf(a) * 6 - 1, 2, 16, 2, 0, 32, 8, moving * (i % 2 ? 1 : -1));
+        }
+        break;
+    case MobType::Blaze:
+        box(-4, 20, -4, 8, 8, 8, 0, 0, 24, 0);
+        for (int i = 0; i < 8; ++i) {
+            const float a = i * 0.7853982f + gTimeSec * 0.5f;
+            const float r = (i < 4) ? 6.0f : 9.0f;
+            box(cosf(a) * r - 1, 8 + (i % 4) * 3, sinf(a) * r - 1, 2, 8, 2, 0, 16, 12, 0);
+        }
+        break;
+    case MobType::Bat:
+        box(-3, 8, -2, 6, 8, 4, 0, 0, 12, 0);
+        box(-8, 10, -1, 5, 6, 1, 8, 0, 12, moving);
+        box(3, 10, -1, 5, 6, 1, 8, 0, 12, -moving);
+        box(-2, 16, -1, 2, 3, 1, 8, 8, 16, 0);
+        box(0, 16, -1, 2, 3, 1, 8, 8, 16, 0);
+        break;
+    case MobType::Bee:
+        box(-3.5f, 6, -4, 7, 7, 10, 0, 0, 10, 0);
+        box(-6, 12, -2, 4, 2, 6, 0, 18, 12, moving);
+        box(2, 12, -2, 4, 2, 6, 0, 18, 12, -moving);
+        box(-0.5f, 7, 6, 1, 2, 1, 0, 26, 8, 0);
+        break;
+    case MobType::Parrot:
+        box(-1.5f, 8, -2, 3, 6, 4, 0, 0, 11, 0);
+        box(-1.5f, 13, -3, 3, 4, 3, 0, 10, 14, 0);
+        box(-3, 8, -1, 1.5f, 4, 3, 8, 0, 11, moving);
+        box(1.5f, 8, -1, 1.5f, 4, 3, 8, 0, 11, -moving);
+        box(-0.5f, 0, -1, 1, 4, 1, 0, 18, 4, moving);
+        break;
+    case MobType::Allay:
+        humanoid(0.5f, moving);
+        box(-5, 10, 0, 4, 6, 1, 32, 0, 12, moving);
+        box(1, 10, 0, 4, 6, 1, 32, 0, 12, -moving);
+        break;
+    case MobType::Phantom:
+        box(-4, 8, -6, 8, 4, 12, 0, 0, 10, 0);
+        box(-12, 9, -3, 8, 2, 6, 0, 16, 10, moving);
+        box(4, 9, -3, 8, 2, 6, 0, 16, 10, -moving);
+        box(-1, 8, 6, 2, 2, 6, 0, 26, 9, 0);
+        break;
+    case MobType::Dolphin:
+        box(-4, 6, -8, 8, 7, 16, 0, 0, 10, 0);
+        box(-2, 7, -12, 4, 4, 5, 0, 24, 9, 0);
+        box(-2, 7, 8, 4, 3, 6, 0, 34, 9, moving);
+        box(-6, 6, -2, 2, 2, 6, 20, 24, 8, moving);
+        box(4, 6, -2, 2, 2, 6, 20, 24, 8, -moving);
+        break;
+    case MobType::ElderGuardian:
+    case MobType::Shulker:
+        box(-8, 0, -8, 16, 16, 16, 0, 0, 8, 0);
+        box(-6, 16, -6, 12, 4, 12, 0, 32, 16, 0);
+        break;
+    case MobType::Silverfish:
+    case MobType::Endermite:
+        box(-1.5f, 0, -4, 3, 3, 4, 0, 0, 2, moving);
+        box(-1.5f, 0, 0, 3, 3, 4, 0, 8, 2, -moving);
+        box(-1, 0, 4, 2, 2, 3, 0, 16, 2, moving);
+        break;
+    case MobType::Rabbit:
+        box(-2, 4, -3, 4, 4, 6, 0, 0, 6, 0);
+        box(-1.5f, 7, -5, 3, 3, 3, 0, 10, 8, 0);
+        box(-1.5f, 10, -4, 1, 4, 1, 8, 10, 10, moving);
+        box(0.5f, 10, -4, 1, 4, 1, 8, 10, 10, -moving);
+        box(-2, 0, 2, 2, 4, 2, 0, 16, 4, moving);
+        box(0, 0, 2, 2, 4, 2, 0, 16, 4, -moving);
+        break;
+    case MobType::Frog:
+        box(-3.5f, 2, -4, 7, 5, 8, 0, 0, 5, 0);
+        box(-3, 7, -5, 6, 3, 4, 0, 14, 8, 0);
+        box(-3, 9, -5, 2, 2, 2, 0, 22, 9, 0);
+        box(1, 9, -5, 2, 2, 2, 0, 22, 9, 0);
+        box(-4, 0, 3, 2, 2, 3, 0, 26, 2, moving);
+        box(2, 0, 3, 2, 2, 3, 0, 26, 2, -moving);
+        break;
+    case MobType::Turtle:
+        box(-6, 2, -7, 12, 6, 14, 0, 0, 5, 0);
+        box(-2, 3, -10, 4, 4, 4, 0, 20, 5, 0);
+        box(-6, 0, -6, 3, 2, 3, 0, 28, 2, moving);
+        box(3, 0, -6, 3, 2, 3, 0, 28, 2, -moving);
+        box(-6, 0, 4, 3, 2, 3, 0, 28, 2, -moving);
+        box(3, 0, 4, 3, 2, 3, 0, 28, 2, moving);
+        break;
+    case MobType::Axolotl:
+        quadruped(4, 8, 6, 14, 6, 0, 0, 0, 16, 0, 30);
+        box(-1, 6, 8, 2, 4, 4, 0, 40, 8, moving);
+        break;
+    case MobType::Strider:
+        box(-4, 12, -4, 8, 8, 8, 0, 0, 16, 0);
+        box(-3, 0, -2, 2, 12, 2, 0, 16, 12, moving);
+        box(1, 0, -2, 2, 12, 2, 0, 16, 12, -moving);
+        break;
+    case MobType::Sniffer:
+        quadruped(6, 14, 10, 20, 8, 0, 0, 0, 20, 0, 40);
+        break;
+    case MobType::Camel:
+        quadruped(14, 10, 12, 22, 7, 0, 0, 0, 20, 0, 40);
+        box(-2, 24, -2, 4, 6, 4, 32, 0, 26, 0); // hump
+        break;
+    case MobType::Horse:
+        quadruped(11, 10, 10, 20, 6, 0, 0, 0, 20, 0, 40);
+        box(-1.5f, 20, -12, 3, 6, 4, 0, 12, 22, 0); // neck
+        break;
+    case MobType::Llama:
+        quadruped(12, 9, 10, 18, 6, 0, 0, 0, 20, 0, 40);
+        box(-1.5f, 20, -10, 3, 8, 3, 0, 12, 24, 0);
+        break;
+    case MobType::Goat:
+        quadruped(9, 9, 9, 16, 6, 0, 0, 0, 20, 0, 40);
+        break;
+    case MobType::Panda:
+        quadruped(7, 13, 11, 16, 8, 0, 0, 0, 20, 0, 40);
+        break;
+    case MobType::Fox:
+        quadruped(6, 6, 6, 10, 5, 0, 0, 28, 8, 0, 16);
+        box(-1.5f, 5, 5, 3, 3, 6, 0, 24, 6, moving); // tail
+        break;
+    case MobType::Cat:
+        quadruped(6, 5, 5, 10, 4, 0, 0, 28, 8, 0, 16);
+        box(-0.5f, 6, 5, 1, 1, 6, 0, 24, 6, moving);
+        break;
+    case MobType::Wolf:
+        quadruped(8, 6, 6, 10, 5, 0, 0, 28, 8, 0, 16);
+        box(-1.5f, 7, 5, 3, 3, 5, 0, 24, 8, moving);
+        break;
+    case MobType::Villager:
+    case MobType::WanderingTrader:
+        humanoid(1.0f, 0);
+        box(-1, 20, -5, 2, 4, 2, 0, 0, 22, 0); // nose
+        break;
+    case MobType::ZombieVillager:
+        humanoid(1.0f, XM_PIDIV2);
+        box(-1, 20, -5, 2, 4, 2, 0, 0, 22, 0);
+        break;
+    case MobType::Piglin:
+        humanoid(1.0f, 0);
+        box(-5, 24, -2, 2, 4, 2, 32, 0, 26, 0); // ears
+        box(3, 24, -2, 2, 4, 2, 32, 0, 26, 0);
+        break;
+    case MobType::Witch:
+        humanoid(1.0f, 0);
+        box(-4, 32, -4, 8, 4, 8, 32, 0, 32, 0); // hat brim
+        box(-2.5f, 36, -2.5f, 5, 6, 5, 32, 12, 36, 0);
+        break;
+    case MobType::IronGolem:
+        humanoid(1.4f, 0);
+        box(-2, 26, -6, 4, 5, 3, 0, 0, 28, 0); // nose
+        break;
+    case MobType::SnowGolem:
+        box(-4, 0, -4, 8, 8, 8, 0, 0, 4, 0);
+        box(-3, 8, -3, 6, 6, 6, 0, 16, 11, 0);
+        box(-2.5f, 14, -2.5f, 5, 5, 5, 0, 28, 16, 0);
+        box(-6, 12, -1, 4, 2, 2, 32, 0, 13, moving);
+        box(2, 12, -1, 4, 2, 2, 32, 0, 13, -moving);
+        break;
+    case MobType::Warden:
+        humanoid(1.6f, 0);
+        box(-6, 34, -2, 3, 6, 2, 32, 0, 36, moving); // tendrils
+        box(3, 34, -2, 3, 6, 2, 32, 0, 36, -moving);
+        break;
+    case MobType::Wither:
+        box(-4, 16, -2, 8, 10, 4, 0, 0, 20, 0);
+        box(-4, 26, -4, 8, 8, 8, 0, 16, 30, 0);
+        box(-10, 24, -3, 6, 6, 6, 32, 0, 27, 0);
+        box(4, 24, -3, 6, 6, 6, 32, 0, 27, 0);
+        box(-2, 6, -1, 4, 10, 2, 0, 32, 12, moving);
+        box(-1, 0, -1, 2, 6, 2, 0, 44, 6, -moving);
+        break;
+    case MobType::EnderDragon:
+        box(-6, 16, -10, 12, 12, 20, 0, 0, 20, 0);
+        box(-3, 20, -20, 6, 6, 12, 0, 32, 24, 0);
+        box(-4, 22, -28, 8, 8, 10, 0, 50, 26, 0);
+        box(-24, 20, -6, 20, 3, 12, 32, 32, 22, moving);
+        box(4, 20, -6, 20, 3, 12, 32, 32, 22, -moving);
+        box(-2, 16, 10, 4, 4, 14, 0, 60, 18, moving);
+        break;
     case MobType::Skeleton:
+        if (q32) {
+            parts = {{-4, 24, -4, 8, 8, 8, 0, 0, 24, 0},
+                     {-4, 12, -2, 8, 12, 4, 16, 16, 12, 0},
+                     {-6, 12, -2, 2, 12, 2, 40, 16, 23, XM_PIDIV2},
+                     {4, 12, -2, 2, 12, 2, 40, 16, 23, XM_PIDIV2},
+                     {-2, 0, -2, 2, 12, 2, 0, 16, 12, moving},
+                     {0, 0, -2, 2, 12, 2, 0, 16, 12, -moving}};
+        } else {
+            humanoid(1.0f, XM_PIDIV2);
+        }
+        break;
     case MobType::Zombie:
     default:
-        parts = {{-4, 24, -4, 8, 8, 8, 0, 0, 24, 0},
-                 {-4, 12, -2, 8, 12, 4, 16, 16, 12, 0},
-                 {-8, 12, -2, 4, 12, 4, 40, 16, 23, XM_PIDIV2},
-                 {4, 12, -2, 4, 12, 4, 40, 16, 23, XM_PIDIV2},
-                 {-4, 0, -2, 4, 12, 4, 0, 16, 12, moving},
-                 {0, 0, -2, 4, 12, 4, 0, 16, 12, -moving}};
+        if (q32) {
+            parts = {{-4, 24, -4, 8, 8, 8, 0, 0, 24, 0},
+                     {-4, 12, -2, 8, 12, 4, 16, 16, 12, 0},
+                     {-8, 12, -2, 4, 12, 4, 40, 16, 23, XM_PIDIV2},
+                     {4, 12, -2, 4, 12, 4, 40, 16, 23, XM_PIDIV2},
+                     {-4, 0, -2, 4, 12, 4, 0, 16, 12, moving},
+                     {0, 0, -2, 4, 12, 4, 0, 16, 12, -moving}};
+        } else {
+            humanoid(1.0f, XM_PIDIV2);
+        }
         break;
     }
 }
@@ -3258,7 +3504,7 @@ static void DrawZombies() {
     static std::vector<MeshVertex> vertices;
     static std::vector<MobPart> parts;
     vertices.clear();
-    vertices.reserve(gZombies.size() * 216);
+    vertices.reserve(gZombies.size() * 400);
     const UINT stride = UINT(sizeof(MeshVertex)), offset = 0;
     gRC.device->PSSetShader(gRC.psEntity);
     for (int t = 0; t < int(MobType::Count); ++t) {
@@ -3272,7 +3518,7 @@ static void DrawZombies() {
             const bool hurt = zombie.resistance.remaining > 0.5f;
             const float moving = fabsf(zombie.body.vx) + fabsf(zombie.body.vz) > 0.1f
                 ? sinf(gTimeSec * 5) * 0.5f : 0.0f;
-            MobParts(zombie.type, moving, parts);
+            MobParts(zombie.type, moving, th, parts);
             for (const MobPart& part : parts) {
                 const float x = part.x, y = part.y, z = part.z, w = part.w, h = part.h, d = part.d;
                 const float u = part.u, v = part.v, pivotY = part.pivot, rotation = part.rot;
@@ -3298,7 +3544,7 @@ static void DrawZombies() {
                 }
             }
         }
-        if (vertices.empty()) continue;
+        if (vertices.empty() || vertices.size() > 40000) continue;
         void* data = nullptr;
         if (FAILED(gZombieVB->Map(D3D10_MAP_WRITE_DISCARD, 0, &data))) return;
         memcpy(data, vertices.data(), vertices.size() * sizeof(MeshVertex));
@@ -3365,7 +3611,7 @@ static void DrawEntityShadows() {
     static std::vector<Shadow> list;
     list.clear();
     for (const Zombie& z : gZombies) {
-        if (z.health > 0) list.push_back({z.body.x + 0.5f, z.body.y, z.body.z + 0.5f, 0.45f});
+        if (z.health > 0) list.push_back({z.body.x, z.body.y, z.body.z, 0.45f});
     }
     if (gPerspective != 0) list.push_back({gBody.x, gBody.y, gBody.z, 0.45f});
     static std::vector<MeshVertex> verts;
@@ -3404,7 +3650,8 @@ static void DrawEntityShadows() {
 
 static void DrawPlayer() {
     if (gPerspective == 0 || !gZombieVB || !gGui.texSkin.srv) return;
-    std::vector<MeshVertex> vertices;
+    static std::vector<MeshVertex> vertices;
+    vertices.clear();
     vertices.reserve(216);
     const float cy = cosf(gCamera.yaw), sy = sinf(gCamera.yaw);
     auto box = [&](float x, float y, float z, float w, float h, float d,
@@ -3491,7 +3738,8 @@ static void BuildHeldBlockCube(uint16_t block, std::vector<MeshVertex>& out) {
 // First-person arm + held item (3D block cube or extruded 2D sprite).
 static void DrawHand() {
     if (gPerspective != 0 || !gZombieVB || !gGui.texSkin.srv) return;
-    std::vector<MeshVertex> vertices;
+    static std::vector<MeshVertex> vertices;
+    vertices.clear();
     vertices.reserve(36);
     const float swing = sinf(gArmSwing.Progress(gNowMs) * 3.14159265f);
     const float bob = (fabsf(gBody.vx) + fabsf(gBody.vz) > 0.1f && gBody.onGround) ? sinf(gTimeSec * 5.0f) * 0.4f : 0.0f;
@@ -3556,7 +3804,8 @@ static void DrawHand() {
     // Held item: a 3D block cube or an extruded 2D sprite, swung with the arm.
     const uint16_t held = gHotbar[gHotbarSlot];
     if (held != BLOCK_AIR && gHeldVB) {
-        std::vector<MeshVertex> local;
+        static std::vector<MeshVertex> local;
+        local.clear();
         const bool isBlock = IsBlockId(held);
         if (isBlock) {
             BuildHeldBlockCube(held, local);
@@ -3587,8 +3836,13 @@ static void DrawHand() {
             const float cr = cosf(pose.rollDeg * deg), sr = sinf(pose.rollDeg * deg);
             const float c2 = cosf(pose.pitchDeg * deg), s2 = sinf(pose.pitchDeg * deg);
             const float c3 = cosf(pose.yaw2Deg * deg), s3 = sinf(pose.yaw2Deg * deg);
+            // Java grips a tool by its handle. The extruded sprite is centred at
+            // the origin, so shift it until the handle (sprite bottom-right)
+            // sits on the wrist; a held block stays centred in the fist.
+            const float gripX = isBlock ? 0.0f : 0.20f;
+            const float gripY = isBlock ? 0.0f : -0.20f;
             for (MeshVertex& v : local) {
-                const float sx = v.x * itemScale, syy = v.y * itemScale, sz = v.z * itemScale;
+                const float sx = (v.x - gripX) * itemScale, syy = (v.y - gripY) * itemScale, sz = v.z * itemScale;
                 float rx = sx * cy + sz * sy;
                 float rz = -sx * sy + sz * cy;
                 float ry = syy * cp - rz * sp;
@@ -4358,6 +4612,8 @@ static void RenderFrame() {
         DrawFurnace(gGui, gFurnace, gInventory, gInput.mouseX, gInput.mouseY);
     } else if (gScreen == Screen::Chest) {
         DrawChest(gGui, gChests[gChestKey], gInventory, gInput.mouseX, gInput.mouseY);
+    } else if (gScreen == Screen::Title && !gBootDone) {
+        DrawMaazBoot(gGui, gBootTime, uiScale);
     } else {
         if (menuBg && !gRC.panoramaSRV) {
             gGui.DrawQuad(&gGui.texDirt, 0, 0, SCREEN_W, SCREEN_H, 0, 0,
@@ -4610,7 +4866,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         obd.BindFlags = D3D10_BIND_VERTEX_BUFFER;
         obd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
         gRC.device->CreateBuffer(&obd, nullptr, &gOutlineVB);
-        obd.ByteWidth = 8 * 6 * 36 * UINT(sizeof(MeshVertex));
+        obd.ByteWidth = 40000 * UINT(sizeof(MeshVertex));
         gRC.device->CreateBuffer(&obd, nullptr, &gZombieVB);
         obd.ByteWidth = 20000 * UINT(sizeof(MeshVertex));
         gRC.device->CreateBuffer(&obd, nullptr, &gHeldVB);
@@ -4668,6 +4924,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         const float dt = clock.Tick();
         gNowMs = SystemTimeMs();
         gTimeSec += dt;
+        if (!gBootDone) {
+            if (gAutomation) gBootDone = true;
+            else {
+                gBootTime += dt;
+                if (gBootTime >= 4.6f) gBootDone = true;
+                else if (gBootTime > 0.8f &&
+                         (gInput.KeyPressed(VK_RETURN) || gInput.KeyPressed(VK_ESCAPE) ||
+                          gInput.leftClick)) gBootDone = true;
+            }
+        }
         for (ChatEntry& entry : gChat.entries) entry.age += dt;
 
         if (gInput.KeyPressed(VK_ESCAPE)) {

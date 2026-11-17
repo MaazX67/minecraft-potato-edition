@@ -1299,12 +1299,17 @@ void DrawChat(GuiRenderer& ui, const std::vector<ChatEntry>& entries, bool open,
         float shade = 15.0f;
         if (!open && it->age > 8.0f) shade = 15.0f * (1.0f - (it->age - 8.0f) * 0.5f);
         if (shade < 1.0f) shade = 1.0f;
+        // Java draws a translucent black strip behind every chat line so text
+        // stays readable over bright terrain; bare shadowed text washed out.
+        const float tw = ui.TextWidth(it->text, 2 * s);
+        if (shade > 1.0f)
+            ui.DrawQuad(&ui.texBlack, 2 * s, y - 2 * s, tw + 8 * s, 20 * s, 0, 0, 1, 1, 15, 0, 0, 0);
         if (it->error) ui.DrawText(it->text, 4 * s, y, 2 * s, shade, true, 1.0f, 0.4f, 0.4f);
         else ui.DrawText(it->text, 4 * s, y, 2 * s, shade, true);
         y -= 20.0f * s;
     }
     if (open)
-        DrawTextField(ui, input, 4 * s, inputY, 560 * s, 26 * s, true, timeSec, s);
+        DrawTextField(ui, input, 4 * s, inputY, SCREEN_W - 8.0f * s, 26 * s, true, timeSec, s);
 }
 
 void DrawTutorialHint(GuiRenderer& ui, const std::string& hint, float timeSec, float scale) {
@@ -1328,6 +1333,49 @@ void DrawAdvancementToast(GuiRenderer& ui, const std::string& title, const std::
     ui.DrawQuad(&ui.texBlack, x, y, tw + 40 * s, 50 * s, 0, 0, 1, 1, 15, 0.1f, 0.1f, 0.3f);
     ui.DrawText(title, x + 20 * s, y + 8 * s, 2 * s, 15, true);
     ui.DrawText(desc, x + 20 * s, y + 28 * s, 1.5f * s, 15, true);
+}
+
+// Maaz Studio boot splash: fully animated intro shown once before the title
+// screen (star drift, logo pop-in + pulse, loading bar, fade-out). Draw-only;
+// the caller advances the clock and gates input until it finishes.
+void DrawMaazBoot(GuiRenderer& ui, float t, float scale) {
+    const float s = scale;
+    const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;
+    float fade = 1.0f;
+    if (t < 0.6f) fade = t / 0.6f;
+    else if (t > 3.6f) fade = 1.0f - (t - 3.6f) / 1.0f;
+    if (fade < 0.0f) fade = 0.0f;
+    if (fade > 1.0f) fade = 1.0f;
+    ui.DrawQuad(&ui.texBlack, 0, 0, SCREEN_W, SCREEN_H, 0, 0, 1, 1, 15);
+    for (int i = 0; i < 24; ++i) {
+        const float fx = fmodf(i * 0.618f + t * 0.020f, 1.0f);
+        const float fy = fmodf(i * 0.377f + t * 0.013f, 1.0f);
+        const float tw = 6.0f + 6.0f * sinf(t * 2.0f + float(i));
+        ui.DrawQuad(&ui.texWhite, fx * SCREEN_W, fy * SCREEN_H, 2 * s, 2 * s, 0, 0, 1, 1,
+                    tw * fade, 1.0f, 0.9f, 0.6f);
+    }
+    float pop = 1.0f;
+    if (t < 1.2f) {
+        const float k = (t - 0.3f) / 0.9f;
+        const float c = k < 0.0f ? 0.0f : (k > 1.0f ? 1.0f : k);
+        pop = 1.0f + 0.35f * (1.0f - c) * (1.0f - c);
+    }
+    const float logoScale = 4.0f * s * pop * (1.0f + 0.05f * sinf(t * 3.0f));
+    ui.DrawTextCentered("MAAZ STUDIO", cx, cy - 40 * s, logoScale, 15 * fade, true,
+                        1.0f, 0.85f, 0.30f);
+    if (t > 2.0f) {
+        float a = (t - 2.0f) / 0.5f;
+        if (a > 1.0f) a = 1.0f;
+        ui.DrawTextCentered("presents", cx, cy + 6 * s, 2 * s, 15 * fade * a, true);
+    }
+    float prog = (t - 1.6f) / 2.0f;
+    if (prog < 0.0f) prog = 0.0f;
+    if (prog > 1.0f) prog = 1.0f;
+    ui.DrawQuad(&ui.texBlack, cx - 100 * s, cy + 40 * s, 200 * s, 6 * s, 0, 0, 1, 1, 5 * fade);
+    ui.DrawQuad(&ui.texWhite, cx - 100 * s, cy + 40 * s, 200 * s * prog, 6 * s, 0, 0, 1, 1,
+                15 * fade, 1.0f, 0.85f, 0.30f);
+    ui.DrawTextCentered("Minecraft Potato Edition", cx, SCREEN_H - 24 * s, 1.5f * s,
+                        10 * fade, true);
 }
 
 // ---------------------------------------------------------------------------

@@ -390,6 +390,11 @@ struct Mob {
 };
 using Zombie = Mob;
 bool RayHitsBody(const FlyCamera& camera, const PlayerBody& body, float reach, float& distance);
+// Per-entity AABB ray test. Java entity pick bounds are the mob's own
+// dimensions (EntityDimensions width/height), not the player box; a chicken
+// and an enderman must not share one 0.6x1.95 hitbox.
+bool RayHitsBox(const FlyCamera& camera, float cx, float feetY, float cz,
+                float halfWidth, float height, float reach, float& distance);
 
 // Minecraft 1.9+ attack cooldown: swing recharge gates damage.
 // Strength follows vanilla getAttackStrengthScale(0.5f); damage scales by

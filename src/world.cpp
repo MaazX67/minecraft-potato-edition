@@ -829,19 +829,43 @@ static int BlockLightLevel(uint16_t b) {
 }
 
 // Non-cube block shape: 0=cube, 1=slab (half height), 2=torch (vertical stick),
-// 3=stairs (two boxes), 4=door (vertical slab).
+// 5=carpet (1/16 height), 6=cross (two diagonal plant planes). Stairs, doors,
+// fences and panes render as full cubes for now (shape 0) so they are at least
+// visible and solid; their exact meshes are a later parity step.
+// The old version linear-scanned RegistryBlocks() for every sampled block pair
+// inside the greedy mesher (~1000 entries x millions of pairs). One LUT built
+// on first use keeps the hot path O(1).
 static int NonCubeShape(uint16_t b) {
     if (b < BLOCK_COUNT) return 0;
-    for (const RegistryBlockEntry& e : RegistryBlocks()) {
-        if (e.id != b) continue;
-        const std::string& n = e.name;
-        if (n.find("slab") != std::string::npos) return 1;
-        if (n.find("torch") != std::string::npos) return 2;
-        if (n.find("stairs") != std::string::npos) return 3;
-        if (n.find("door") != std::string::npos) return 4;
-        return 0;
+    static std::vector<uint8_t> lut;
+    if (lut.empty()) {
+        lut.resize(BLOCK_TILE_SLOTS, 0);
+        for (const RegistryBlockEntry& e : RegistryBlocks()) {
+            if (e.id >= BLOCK_TILE_SLOTS) continue;
+            const std::string& n = e.name;
+            int s = 0;
+            if (n.find("slab") != std::string::npos) s = 1;
+            else if (n.find("torch") != std::string::npos || n == "end_rod" ||
+                     n == "lightning_rod") s = 2;
+            else if (n.find("carpet") != std::string::npos) s = 5;
+            else if (n.find("sapling") != std::string::npos ||
+                     n.find("flower") != std::string::npos ||
+                     n == "grass" || n == "short_grass" || n == "tall_grass" ||
+                     n == "fern" || n == "large_fern" || n == "dead_bush" ||
+                     n.find("mushroom") != std::string::npos ||
+                     n.find("fungus") != std::string::npos ||
+                     n.find("roots") != std::string::npos ||
+                     n == "wheat" || n == "carrots" || n == "potatoes" ||
+                     n == "beetroots" || n == "sugar_cane" || n == "kelp" ||
+                     n == "seagrass" || n == "vine" || n == "web" ||
+                     n == "cobweb" || n.find("coral") != std::string::npos ||
+                     n == "sweet_berry_bush" || n == "nether_sprouts" ||
+                     n == "sea_pickle" || n == "glow_lichen" ||
+                     n == "cave_vines" || n == "hanging_roots") s = 6;
+            lut[e.id] = uint8_t(s);
+        }
     }
-    return 0;
+    return b < lut.size() ? lut[b] : 0;
 }
 
 void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint16_t* posX,
@@ -1121,6 +1145,12 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                             float aoFactor = (float)(ao + 1) / 4.0f;
                             vert.cr = vert.cg = vert.cb = (float(cell.shade) / 100.0f) * aoFactor;
                         }
+                        // Java multiplies the water sprite by the biome water
+                        // colour (default 0x3F76E4). Without it the raw blue PNG
+                        // reads pale periwinkle. Lava keeps full brightness.
+                        if (cell.liquid && BlockLightLevel(cell.block) < 15) {
+                            vert.cr *= 0.247f; vert.cg *= 0.463f; vert.cb *= 0.894f;
+                        }
                         vert.light = blockLightAt(ax, ay, az);
                         dst.vertices.push_back(vert);
                     }
@@ -1152,7 +1182,7 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                 uint16_t b = blocks[x + CHUNK_X * z + CHUNK_X * CHUNK_Z * y];
                 if (b == BLOCK_AIR) continue;
                 int shape = NonCubeShape(b);
-                if (shape <= 0 || shape >= 3) continue; // only slab(1) and torch(2)
+                if (shape != 1 && shape != 2 && shape != 5 && shape != 6) continue;
                 int tile = FaceTile(tiles, b, 1, 1);
                 if (tile <= 0) tile = 0;
                 float tileU = float((tile % ATLAS_COLS) * ATLAS_TILE) / float(ATLAS_SIZE);
@@ -1160,8 +1190,8 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                 MeshData& dst = out;
                 uint32_t base;
                 float sky = skyAt(x, y, z);
-                if (shape == 1) { // Slab: half-height cube
-                    const float h = 0.5f;
+                if (shape == 1 || shape == 5) { // Slab / carpet: reduced-height cube
+                    const float h = shape == 5 ? (1.0f / 16.0f) : 0.5f;
                     // Bottom face (facing down)
                     base = (uint32_t)dst.vertices.size();
                     for (int c = 0; c < 4; ++c) {
@@ -1203,9 +1233,9 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         dst.vertices.push_back(v);
                         v.x = x1; v.y = (float)y; v.z = z1; v.u = 1; v.v = 1; v.sky = sky;
                         dst.vertices.push_back(v);
-                        v.x = x1; v.y = y + 0.5f; v.z = z1; v.u = 1; v.v = 0; v.sky = sky;
+                        v.x = x1; v.y = y + h; v.z = z1; v.u = 1; v.v = 0; v.sky = sky;
                         dst.vertices.push_back(v);
-                        v.x = x0; v.y = y + 0.5f; v.z = z0; v.u = 0; v.v = 0; v.sky = sky;
+                        v.x = x0; v.y = y + h; v.z = z0; v.u = 0; v.v = 0; v.sky = sky;
                         dst.vertices.push_back(v);
                         dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
                         dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
@@ -1233,6 +1263,31 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         dst.vertices.push_back(v0); dst.vertices.push_back(v1); dst.vertices.push_back(v2); dst.vertices.push_back(v3);
                         dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
                         dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                    }
+                } else if (shape == 6) {
+                    // Cross: two diagonal alpha-tested planes (flowers, saplings,
+                    // crops, grass). Java renders both sides, so each plane is
+                    // emitted with both windings.
+                    const float skyC = skyAt(x, y, z);
+                    const float inset = 0.15f, top = 1.0f;
+                    const float diag[2][4] = {
+                        {x + inset, z + inset, x + 1 - inset, z + 1 - inset},
+                        {x + 1 - inset, z + inset, x + inset, z + 1 - inset},
+                    };
+                    for (int p = 0; p < 2; ++p) {
+                        for (int rev = 0; rev < 2; ++rev) {
+                            base = (uint32_t)dst.vertices.size();
+                            const float x0 = diag[p][rev ? 2 : 0], z0 = diag[p][rev ? 3 : 1];
+                            const float x1 = diag[p][rev ? 0 : 2], z1 = diag[p][rev ? 1 : 3];
+                            MeshVertex v;
+                            v.tu = tileU; v.tv = tileV; v.light = 0; v.cr = v.cg = v.cb = 1.0f; v.sky = skyC;
+                            v.x = x0; v.y = (float)y; v.z = z0; v.u = 0; v.v = 1; dst.vertices.push_back(v);
+                            v.x = x1; v.y = (float)y; v.z = z1; v.u = 1; v.v = 1; dst.vertices.push_back(v);
+                            v.x = x1; v.y = y + top; v.z = z1; v.u = 1; v.v = 0; dst.vertices.push_back(v);
+                            v.x = x0; v.y = y + top; v.z = z0; v.u = 0; v.v = 0; dst.vertices.push_back(v);
+                            dst.indices.push_back(base); dst.indices.push_back(base+1); dst.indices.push_back(base+2);
+                            dst.indices.push_back(base); dst.indices.push_back(base+2); dst.indices.push_back(base+3);
+                        }
                     }
                 }
             }
