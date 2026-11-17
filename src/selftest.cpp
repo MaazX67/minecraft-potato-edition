@@ -1837,12 +1837,15 @@ static void TestSeedsAndStructures() {
     CHECK(FindStructure(1337 + 0x100000000ull, 0, 0, StructureType::Village, x2, z2, d2) &&
           (x2 != ax || z2 != az), "the upper 32 seed bits move structure placement");
 
-    // The water guard suppresses submerged village sites, so pick a seed whose
-    // nearest village is on dry land (ground >= sea level 62) before stamping.
+    // The water guard suppresses submerged village sites and Java gates
+    // villages to their biome set, so pick a seed whose nearest village is on
+    // dry land in a village biome before stamping.
     uint64_t vseed = 1337; int vx = ax, vz = az, vdist = 0;
-    for (int k = 0; k < 32; ++k) {
+    for (int k = 0; k < 64; ++k) {
         PerlinNoise probe(vseed);
-        if (SampleTerrain(probe, vx, vz).height >= 62) break;
+        const TerrainColumn col = SampleTerrain(probe, vx, vz);
+        if (col.height >= 62 && (col.biome == Biome::Plains || col.biome == Biome::Desert ||
+            col.biome == Biome::Taiga || col.biome == Biome::Snowy)) break;
         vseed += 0x100000000ull;
         FindStructure(vseed, 0, 0, StructureType::Village, vx, vz, vdist);
     }
