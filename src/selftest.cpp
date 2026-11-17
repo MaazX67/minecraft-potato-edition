@@ -1238,6 +1238,30 @@ static void TestDryLandSpawn() {
                   "escaped spawn column is dry");
         }
     }
+    // Flood the whole generated chunk: with no dry column visible the finder
+    // must report failure (retry next frame), never hand back the wet origin.
+    {
+        World w(99, 0, WorldGenerator::Flat);
+        w.SetBlockTiles(tiles);
+        w.Update(8.5f, 8.5f);
+        int sy = -1;
+        for (int i = 0; i < 300 && sy < 0; ++i) {
+            sy = w.SurfaceY(8, 8);
+            if (sy < 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (sy > 0) {
+            for (int x = 0; x < 16; ++x)
+                for (int z = 0; z < 16; ++z)
+                    for (int y = sy + 1; y <= sy + 6; ++y) w.SetBlock(x, y, z, BLOCK_WATER);
+            int sx = 0, sz = 0, hsy = -1;
+            const bool ok = w.FindDrySpawn(8, 8, sx, sz, hsy);
+            CHECK(!(ok && sx == 8 && sz == 8), "never returns the flooded origin column");
+            if (ok) {
+                CHECK(w.GetBlock(sx, hsy + 1, sz) == BLOCK_AIR && w.GetBlock(sx, hsy + 2, sz) == BLOCK_AIR,
+                      "FindDrySpawn never returns a liquid spawn");
+            }
+        }
+    }
 }
 
 static void TestMobHitboxes() {

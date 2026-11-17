@@ -1706,7 +1706,7 @@ bool World::FindDrySpawn(int ox, int oz, int& sx, int& sz, int& sy) {
                       && GetBlock(x, h + 2, z) == BLOCK_AIR;
     };
     if (dryAt(sx, sz, sy)) return true;
-    int genBudget = 256;
+    int genBudget = 32;
     for (int r = 1; r <= 64; ++r) {
         for (int dx = -r; dx <= r; ++dx) {
             for (int dz = -r; dz <= r; ++dz) {
@@ -1722,7 +1722,10 @@ bool World::FindDrySpawn(int ox, int oz, int& sx, int& sz, int& sy) {
             }
         }
     }
-    return sy >= 0;
+    // No dry column visible yet (ocean chunks still generating async). Report
+    // failure so the caller retries next frame instead of spawning underwater.
+    sy = -1;
+    return false;
 }
 
 TerrainColumn World::LodColumn(int x, int z) const {
