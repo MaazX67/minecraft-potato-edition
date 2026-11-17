@@ -1260,6 +1260,13 @@ static void TestDryLandSpawn() {
                 CHECK(w.GetBlock(sx, hsy + 1, sz) == BLOCK_AIR && w.GetBlock(sx, hsy + 2, sz) == BLOCK_AIR,
                       "FindDrySpawn never returns a liquid spawn");
             }
+            // After enough retries the all-ocean fallback must surface the player
+            // above the water line (feet/head air), not submerged.
+            bool fb = false;
+            for (int i = 0; i < 120 && !fb; ++i) fb = w.FindDrySpawn(8, 8, sx, sz, hsy);
+            CHECK(fb, "all-ocean fallback eventually places the player");
+            CHECK(w.GetBlock(sx, hsy + 1, sz) == BLOCK_AIR && w.GetBlock(sx, hsy + 2, sz) == BLOCK_AIR,
+                  "ocean fallback keeps feet and head above water");
         }
     }
 }

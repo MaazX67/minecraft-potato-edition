@@ -330,6 +330,7 @@ private:
     const uint64_t mSeed;
     const WorldGenerator mGenerator;
     bool mStructures = true;
+    int mSpawnTries = 0;
     int mRd;
     PerlinNoise mNoise;
     BlockTiles mTiles;

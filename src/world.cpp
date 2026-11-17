@@ -1706,24 +1706,28 @@ bool World::FindDrySpawn(int ox, int oz, int& sx, int& sz, int& sy) {
                       && GetBlock(x, h + 2, z) == BLOCK_AIR;
     };
     if (dryAt(sx, sz, sy)) return true;
-    int genBudget = 32;
+    // Scan only already-generated columns. Calling Update() per candidate would
+    // recenter the load region and evict the spawn chunks (thrash, never converge).
     for (int r = 1; r <= 64; ++r) {
         for (int dx = -r; dx <= r; ++dx) {
             for (int dz = -r; dz <= r; ++dz) {
                 if (dx != -r && dx != r && dz != -r && dz != r) continue;
                 const int x = ox + dx, z = oz + dz;
-                int h = SurfaceY(x, z);
-                if (h < 0 && genBudget > 0) {
-                    --genBudget;
-                    Update(float(x), float(z));
-                    h = SurfaceY(x, z);
-                }
+                const int h = SurfaceY(x, z);
                 if (dryAt(x, z, h)) { sx = x; sz = z; sy = h; return true; }
             }
         }
     }
-    // No dry column visible yet (ocean chunks still generating async). Report
-    // failure so the caller retries next frame instead of spawning underwater.
+    // Give the spawn region time to finish loading before giving up on land.
+    if (++mSpawnTries < 90) { sy = -1; return false; }
+    // All-ocean fallback, Java fixupSpawnHeight-style: rise to the water surface
+    // so the eye stays above water (swim to land, never spawn submerged/drowning).
+    int h = SurfaceY(ox, oz);
+    if (h >= 0) {
+        while (h < CHUNK_Y - 2 && (BlockFlags(GetBlock(ox, h + 1, oz)) & BF_LIQUID)) ++h;
+        sx = ox; sz = oz; sy = h;
+        return true;
+    }
     sy = -1;
     return false;
 }
