@@ -1338,6 +1338,20 @@ void DrawAdvancementToast(GuiRenderer& ui, const std::string& title, const std::
 // Maaz Studio boot splash: fully animated intro shown once before the title
 // screen (star drift, logo pop-in + pulse, loading bar, fade-out). Draw-only;
 // the caller advances the clock and gates input until it finishes.
+void DrawBossBar(GuiRenderer& ui, const std::string& name, float fraction, bool wither, float scale) {
+    const float s = scale;
+    const float w = 182.0f * s, h = 5.0f * s;
+    const float x = SCREEN_W * 0.5f - w * 0.5f, y = 12.0f * s;
+    const float f = fraction < 0.0f ? 0.0f : (fraction > 1.0f ? 1.0f : fraction);
+    ui.DrawQuad(&ui.texBlack, x, y, w, h, 0, 0, 1, 1, 10, 0, 0, 0);
+    // Java bossbar colours: wither purple, ender dragon pink.
+    const float cr = wither ? 0.49f : 1.0f;
+    const float cg = wither ? 0.0f : 0.41f;
+    const float cb = wither ? 0.49f : 0.71f;
+    if (f > 0.0f) ui.DrawQuad(&ui.texWhite, x, y, w * f, h, 0, 0, 1, 1, 15, cr, cg, cb);
+    ui.DrawTextCentered(name, SCREEN_W * 0.5f, y - 10.0f * s, s, 15, true, 1, 1, 1);
+}
+
 void DrawMaazBoot(GuiRenderer& ui, float t, float scale) {
     const float s = scale;
     const float cx = SCREEN_W * 0.5f, cy = SCREEN_H * 0.5f;

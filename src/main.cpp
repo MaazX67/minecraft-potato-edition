@@ -3207,7 +3207,7 @@ static void MobParts(MobType type, float moving, float texH, std::vector<MobPart
         box(-4 * s, 24 * s, -4 * s, 8 * s, 8 * s, 8 * s, 0, 0, 24 * s, 0);
         box(-4 * s, 12 * s, -2 * s, 8 * s, 12 * s, 4 * s, 16, 16, 12 * s, 0);
         box(-8 * s, 12 * s, -2 * s, 4 * s, 12 * s, 4 * s, 40, 16, 23 * s, armRot);
-        box(4 * s, 12 * s, -2 * s, 4 * s, 12 * s, 4 * s, 32, 48, 23 * s, -moving);
+        box(4 * s, 12 * s, -2 * s, 4 * s, 12 * s, 4 * s, 32, 48, 23 * s, armRot);
         box(-4 * s, 0, -2 * s, 4 * s, 12 * s, 4 * s, 0, 16, 12 * s, moving);
         box(0, 0, -2 * s, 4 * s, 12 * s, 4 * s, 16, 48, 12 * s, -moving);
     };
@@ -4597,6 +4597,15 @@ static void RenderFrame() {
                     gNowMs < gActionBarUntil ? gActionBar : std::string(), gGameMode == 1,
                     gInventory.slots + 27, uiScale,
                     gSurvival.xpProgress / float(XpToNextLevel(gSurvival.xpLevel)), gSurvival.xpLevel);
+        if (!gHideHud) {
+            for (const Zombie& z : gZombies) {
+                if (z.health <= 0) continue;
+                if (z.type != MobType::Wither && z.type != MobType::EnderDragon) continue;
+                const MobStats& ms = GetMobStats(z.type);
+                DrawBossBar(gGui, ms.name, z.health / ms.health, z.type == MobType::Wither, uiScale);
+                break;
+            }
+        }
         DrawTutorialHint(gGui, gTutorialHint, gTimeSec, uiScale);
         if (!gAdvancementTitle.empty())
             DrawAdvancementToast(gGui, gAdvancementTitle, gAdvancementDesc, gTimeSec, uiScale);
@@ -4773,11 +4782,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     const int tilesLoaded = (storeOk || jarOk) ? BuildBlockAtlas(gStore, gAtlas) : 0;
     if (tilesLoaded == 0) {
         gAtlas.AddCheckerTile("__missing");
-        MessageBoxA(hwnd,
-                    "Minecraft assets not found.\n"
-                    "Expected the Migurinth launcher asset index and client jar under %APPDATA%.\n"
-                    "Running with checker textures. Overrides: --assets <index.json> --jar <client.jar>",
-                    "Potato Edition - assets missing", MB_ICONWARNING);
+        // No modal popup: a missing install must never block the title screen.
+        gActionBar = "Assets not found - fallback textures. Install Migurinth 26.3 or pass --jar / --assets.";
+        gActionBarUntil = SystemTimeMs() + 12000;
     }
     gRC.atlasSRV = CreateBlockAtlasSRV(gRC, gAtlas.Pixels(), ATLAS_SIZE, ATLAS_SIZE);
     if (strstr(GetCommandLineA(), "--dump-atlas")) DumpAtlas();

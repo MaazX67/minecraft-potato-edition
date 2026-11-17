@@ -203,9 +203,10 @@ void GenerateClimateChunk(uint16_t* blocks, const PerlinNoise& noise, uint64_t s
                           bool largeBiomes = false, bool amplified = false, bool structures = true);
 void GenerateNetherChunk(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz);
 
-// Seeded structure placement. Java 26.3 places one candidate per region cell;
-// we use a 512-block grid (256 in the Nether) keyed with SplitMix64 so a world
-// seed alone determines every village, temple, outpost, mineshaft and fortress.
+// Seeded structure placement. Spread structures (village, outpost, pyramid,
+// temple, ruined portal, fortress) use Java RandomSpreadStructurePlacement:
+// 48-bit LCG seeded per region, frequency float then two bounded ints.
+// Mineshafts roll per chunk at 0.004; stronghold/bastion keep a legacy grid.
 enum class StructureType {
     Village, DesertPyramid, JungleTemple, RuinedPortal, PillagerOutpost,
     Mineshaft, Stronghold, NetherFortress, Bastion, Count

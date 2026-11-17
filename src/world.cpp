@@ -280,29 +280,17 @@ struct StructureCandidate {
 };
 
 StructureCandidate SampleStructureCell(uint64_t seed, int cellX, int cellZ, bool nether) {
+    // Legacy grid kept only for stronghold rings and bastions (UNVERIFIED vs
+    // Java); every spread-placed structure now uses the Java RNG below.
     StructureCandidate out;
     const uint64_t h = StructureCellHash(seed, cellX, cellZ, nether);
     const uint32_t roll = uint32_t(h % 1000u);
     if (nether) {
-        if (roll < 90) out.type = StructureType::NetherFortress;
-        else if (roll < 150) out.type = StructureType::Bastion;
-        else return out;
-    } else if (roll < 55) {
-        out.type = StructureType::Village;
-    } else if (roll < 80) {
-        out.type = StructureType::PillagerOutpost;
-    } else if (roll < 125) {
-        out.type = StructureType::RuinedPortal;
-    } else if (roll < 155) {
-        out.type = StructureType::DesertPyramid;
-    } else if (roll < 175) {
-        out.type = StructureType::JungleTemple;
-    } else if (roll < 395) {
-        out.type = StructureType::Mineshaft;
-    } else if (roll < 455) {
-        out.type = StructureType::Stronghold;
+        if (roll >= 150) return out;
+        out.type = StructureType::Bastion;
     } else {
-        return out;
+        if (roll < 395 || roll >= 455) return out;
+        out.type = StructureType::Stronghold;
     }
     out.present = true;
     const int cell = nether ? kNetherStructureCell : kOverworldStructureCell;
@@ -310,6 +298,60 @@ StructureCandidate SampleStructureCell(uint64_t seed, int cellX, int cellZ, bool
     out.x = cellX * cell + 48 + int((h >> 16) % uint64_t(span));
     out.z = cellZ * cell + 48 + int((h >> 34) % uint64_t(span));
     return out;
+}
+
+// Java RandomSpreadStructurePlacement constants (26.3 data packs): spacing and
+// separation in chunks, salt per structure, frequency rolled before offsets.
+struct SpreadDef {
+    StructureType type;
+    int spacing, separation;
+    int64_t salt;
+    float frequency;
+};
+constexpr SpreadDef kSpreadDefs[] = {
+    {StructureType::Village,          34,  8, 10387312,   1.0f},
+    {StructureType::PillagerOutpost,  32,  8, 165745296,  0.2f},
+    {StructureType::DesertPyramid,    32,  8, 14357617,   1.0f},
+    {StructureType::JungleTemple,     32,  8, 14357619,   1.0f},
+    {StructureType::RuinedPortal,     40, 15, 34222645,   1.0f},
+    {StructureType::NetherFortress,   27,  4, 30084232,   1.0f},
+};
+
+// Emits every Java-placed structure whose start block falls in the area.
+// Draw order per region: nextFloat (frequency), nextInt(span), nextInt(span).
+template <class Fn>
+void ForEachJavaStructure(uint64_t seed, int x0, int z0, int x1, int z1, bool nether, Fn fn) {
+    const int64_t wseed = int64_t(seed);
+    for (const SpreadDef& d : kSpreadDefs) {
+        if (IsNetherStructure(d.type) != nether) continue;
+        const int i0 = FloorDivGrid(x0 >> 4, d.spacing), i1 = FloorDivGrid(x1 >> 4, d.spacing);
+        const int j0 = FloorDivGrid(z0 >> 4, d.spacing), j1 = FloorDivGrid(z1 >> 4, d.spacing);
+        for (int i = i0; i <= i1; ++i) {
+            for (int j = j0; j <= j1; ++j) {
+                JavaRandom rng;
+                rng.SetRegionSeed(i, j, wseed, d.salt);
+                if (d.frequency < 1.0f && rng.NextFloat() >= d.frequency) continue;
+                const int span = d.spacing - d.separation;
+                const int k = rng.NextInt(span), l = rng.NextInt(span);
+                const int bx = (i * d.spacing + k) * 16 + 8;
+                const int bz = (j * d.spacing + l) * 16 + 8;
+                if (bx < x0 || bx > x1 || bz < z0 || bz > z1) continue;
+                fn(d.type, bx, bz);
+            }
+        }
+    }
+    if (!nether) {
+        // MineshaftStructure: per-chunk LegacyRandomSource large-feature salt 0,
+        // frequency 0.004, start at the chunk centre (offset UNVERIFIED).
+        for (int cx = x0 >> 4; cx <= x1 >> 4; ++cx) {
+            for (int cz = z0 >> 4; cz <= z1 >> 4; ++cz) {
+                JavaRandom rng;
+                rng.SetRegionSeed(cx, cz, wseed, 0);
+                if (rng.NextFloat() >= 0.004f) continue;
+                fn(StructureType::Mineshaft, cx * 16 + 8, cz * 16 + 8);
+            }
+        }
+    }
 }
 
 struct StructureStamper {
@@ -543,28 +585,30 @@ bool FindStructure(uint64_t seed, int fromX, int fromZ, StructureType type,
                    int& outX, int& outZ, int& distance) {
     if (type == StructureType::Count) return false;
     const bool nether = IsNetherStructure(type);
-    const int cell = nether ? kNetherStructureCell : kOverworldStructureCell;
-    const int baseCX = FloorDivGrid(fromX, cell);
-    const int baseCZ = FloorDivGrid(fromZ, cell);
     int64_t bestSq = -1;
     int bestX = 0, bestZ = 0;
-    for (int ring = 0; ring <= 32; ++ring) {
-        for (int gx = baseCX - ring; gx <= baseCX + ring; ++gx) {
-            for (int gz = baseCZ - ring; gz <= baseCZ + ring; ++gz) {
-                if (ring > 0 && abs(gx - baseCX) != ring && abs(gz - baseCZ) != ring) continue;
-                const StructureCandidate c = SampleStructureCell(seed, gx, gz, nether);
-                if (!c.present || c.type != type) continue;
-                const int64_t dx = int64_t(c.x) - fromX;
-                const int64_t dz = int64_t(c.z) - fromZ;
-                const int64_t sq = dx * dx + dz * dz;
-                if (bestSq < 0 || sq < bestSq) {
-                    bestSq = sq;
-                    bestX = c.x;
-                    bestZ = c.z;
+    auto consider = [&](StructureType t, int x, int z) {
+        if (t != type) return;
+        const int64_t dx = int64_t(x) - fromX;
+        const int64_t dz = int64_t(z) - fromZ;
+        const int64_t sq = dx * dx + dz * dz;
+        if (bestSq < 0 || sq < bestSq) { bestSq = sq; bestX = x; bestZ = z; }
+    };
+    const bool legacy = type == StructureType::Stronghold || type == StructureType::Bastion;
+    const int cell = nether ? kNetherStructureCell : kOverworldStructureCell;
+    for (int ring = 0; ring <= 24; ++ring) {
+        const int r = ring * 512;
+        ForEachJavaStructure(seed, fromX - r, fromZ - r, fromX + r, fromZ + r, nether, consider);
+        if (legacy) {
+            const int baseCX = FloorDivGrid(fromX, cell), baseCZ = FloorDivGrid(fromZ, cell);
+            const int rc = ring * 512 / cell + 1;
+            for (int gx = baseCX - rc; gx <= baseCX + rc; ++gx)
+                for (int gz = baseCZ - rc; gz <= baseCZ + rc; ++gz) {
+                    const StructureCandidate c = SampleStructureCell(seed, gx, gz, nether);
+                    if (c.present) consider(c.type, c.x, c.z);
                 }
-            }
         }
-        if (bestSq >= 0 && double(ring) * double(cell) > std::sqrt(double(bestSq)) + double(cell)) break;
+        if (bestSq >= 0 && double(r) > std::sqrt(double(bestSq)) + 544.0) break;
     }
     if (bestSq < 0) return false;
     outX = bestX;
@@ -578,23 +622,29 @@ void ApplyStructures(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed,
     const int cell = nether ? kNetherStructureCell : kOverworldStructureCell;
     const int originX = cx * CHUNK_X;
     const int originZ = cz * CHUNK_Z;
-    const int minCX = FloorDivGrid(originX - 16, cell);
-    const int maxCX = FloorDivGrid(originX + CHUNK_X + 16, cell);
-    const int minCZ = FloorDivGrid(originZ - 16, cell);
-    const int maxCZ = FloorDivGrid(originZ + CHUNK_Z + 16, cell);
     const StructureStamper stamper{blocks, originX, originZ};
-    for (int gx = minCX; gx <= maxCX; ++gx) {
-        for (int gz = minCZ; gz <= maxCZ; ++gz) {
-            const StructureCandidate c = SampleStructureCell(seed, gx, gz, nether);
-            if (!c.present || IsNetherStructure(c.type) != nether) continue;
-            const int gy = StructureGroundY(noise, c);
-            // Surface structures need dry land: never stamp a village/pyramid/
-            // temple/outpost into submerged terrain (ground below sea level 62).
-            if (!nether && gy < 62 &&
-                (c.type == StructureType::Village || c.type == StructureType::PillagerOutpost ||
-                 c.type == StructureType::DesertPyramid || c.type == StructureType::JungleTemple))
-                continue;
-            switch (c.type) {
+    auto stamp = [&](StructureType type, int sx, int sz) {
+        StructureCandidate c;
+        c.present = true;
+        c.type = type;
+        c.x = sx;
+        c.z = sz;
+        const int gy = StructureGroundY(noise, c);
+        // Surface structures need dry land: never stamp a village/pyramid/
+        // temple/outpost into submerged terrain (ground below sea level 62).
+        if (!nether && gy < 62 &&
+            (type == StructureType::Village || type == StructureType::PillagerOutpost ||
+             type == StructureType::DesertPyramid || type == StructureType::JungleTemple))
+            return;
+        // Java villages only generate in their biome set (plains/savanna/desert/
+        // taiga/snowy/meadow); our climate map lacks savanna/meadow, so gate on
+        // the four that exist.
+        if (!nether && type == StructureType::Village) {
+            const Biome b = SampleTerrain(noise, sx, sz).biome;
+            if (b != Biome::Plains && b != Biome::Desert && b != Biome::Taiga && b != Biome::Snowy)
+                return;
+        }
+        switch (type) {
                 case StructureType::Village: BuildVillage(stamper, c.x, gy, c.z); break;
                 case StructureType::DesertPyramid: BuildDesertPyramid(stamper, c.x, gy, c.z); break;
                 case StructureType::JungleTemple: BuildJungleTemple(stamper, c.x, gy, c.z); break;
@@ -609,9 +659,19 @@ void ApplyStructures(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed,
                 case StructureType::NetherFortress: BuildNetherFortress(stamper, c.x, 72, c.z); break;
                 case StructureType::Bastion: BuildBastion(stamper, c.x, 68, c.z); break;
                 default: break;
-            }
         }
-    }
+    };
+    ForEachJavaStructure(seed, originX - 16, originZ - 16,
+                         originX + CHUNK_X + 16, originZ + CHUNK_Z + 16, nether, stamp);
+    const int minCX = FloorDivGrid(originX - 16, cell);
+    const int maxCX = FloorDivGrid(originX + CHUNK_X + 16, cell);
+    const int minCZ = FloorDivGrid(originZ - 16, cell);
+    const int maxCZ = FloorDivGrid(originZ + CHUNK_Z + 16, cell);
+    for (int gx = minCX; gx <= maxCX; ++gx)
+        for (int gz = minCZ; gz <= maxCZ; ++gz) {
+            const StructureCandidate c = SampleStructureCell(seed, gx, gz, nether);
+            if (c.present && IsNetherStructure(c.type) == nether) stamp(c.type, c.x, c.z);
+        }
 }
 
 void GenerateNetherChunk(uint16_t* blocks, const PerlinNoise& noise, uint64_t seed, int cx, int cz) {
@@ -1149,6 +1209,9 @@ void BuildChunkMeshCPU(const uint16_t* blocks, const uint16_t* negX, const uint1
                         // colour (default 0x3F76E4). Without it the raw blue PNG
                         // reads pale periwinkle. Lava keeps full brightness.
                         if (cell.liquid && BlockLightLevel(cell.block) < 15) {
+                            // Java multiplies the water texture by the biome
+                            // water colour (plains 0x3F76E4); lava (light 15)
+                            // keeps full brightness.
                             vert.cr *= 0.247f; vert.cg *= 0.463f; vert.cb *= 0.894f;
                         }
                         vert.light = blockLightAt(ax, ay, az);

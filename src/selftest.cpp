@@ -3,6 +3,7 @@
 #include "registry.h"
 #include "commands.h"
 #include "world.h"
+#include "jrand.h"
 #include "ui_layout.h"
 #include "sound.h"
 #include "shader_embed.h"
@@ -1160,6 +1161,40 @@ static void TestNonCubeMeshes() {
 
 // Per-mob AABB pick bounds: a chicken and an enderman must not share the
 // player's 0.6x1.95 box (Java EntityDimensions).
+static void TestJavaWorldgen() {
+    // java.util.Random golden values: new Random(0).nextInt() and Random(42).
+    JavaRandom r;
+    r.SetSeed(0);
+    CHECK(r.Next(32) == -1155484576, "Java LCG seed 0 first nextInt matches java.util.Random");
+    r.SetSeed(42);
+    CHECK(r.Next(32) == -1170105035, "Java LCG seed 42 first nextInt matches java.util.Random");
+    r.SetSeed(7);
+    bool bounded = true, deterministic = true;
+    JavaRandom r2;
+    r2.SetSeed(7);
+    for (int i = 0; i < 200; ++i) {
+        const int a = r.NextInt(26), b = r2.NextInt(26);
+        if (a < 0 || a >= 26) bounded = false;
+        if (a != b) deterministic = false;
+    }
+    CHECK(bounded, "Java nextInt(bound) stays in [0,bound)");
+    CHECK(deterministic, "same Java seed replays the same draw sequence");
+    // Spread placement: village start sits at chunk*16+8 inside its region's
+    // separation window, and the same seed always locates the same village.
+    int x1 = 0, z1 = 0, d1 = 0, x2 = 0, z2 = 0, d2 = 0;
+    const bool f1 = FindStructure(12345, 0, 0, StructureType::Village, x1, z1, d1);
+    const bool f2 = FindStructure(12345, 0, 0, StructureType::Village, x2, z2, d2);
+    CHECK(f1 == f2 && x1 == x2 && z1 == z2 && d1 == d2, "same seed locates the same village");
+    if (f1) {
+        auto fdiv = [](int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); };
+        const int cx = x1 >> 4, cz = z1 >> 4;
+        const int i = fdiv(cx, 34), j = fdiv(cz, 34);
+        CHECK(x1 % 16 == 8 && z1 % 16 == 8, "village start is chunk centre +8");
+        CHECK(cx - i * 34 >= 0 && cx - i * 34 < 26 && cz - j * 34 >= 0 && cz - j * 34 < 26,
+              "village chunk offset inside spacing-separation window");
+    }
+}
+
 static void TestMobHitboxes() {
     FlyCamera ray;
     ray.x = 0; ray.y = 1.0f; ray.z = 0;
@@ -1930,6 +1965,7 @@ int main() {
     TestExtrudedUV();
     TestNonCubeMeshes();
     TestMobHitboxes();
+    TestJavaWorldgen();
     TestBlockLight();
     TestSkyCrevice();
     TestCombatMath();
