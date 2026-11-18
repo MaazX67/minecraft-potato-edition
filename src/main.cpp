@@ -3219,6 +3219,33 @@ static void MobParts(MobType type, float moving, float texH, std::vector<MobPart
         box(-4 * s, 0, -2 * s, 4 * s, 12 * s, 4 * s, 0, 16, 12 * s, moving);
         box(0, 0, -2 * s, 4 * s, 12 * s, 4 * s, ll.u, ll.v, 12 * s, -moving, ll.mirror);
     };
+    // Vanilla VillagerModel.createBodyLayer: 10-tall head, robe body (16,20),
+    // fused crossed arms (44,22)/(40,38) rotated -0.75 rad, legs (0,22).
+    // Hat/jacket overlay layers omitted (CubeDeformation grow would overflow UVs).
+    auto villager = [&](float armRot) {
+        const MobLimbUV la = VillagerLeftArmUV(), ll = VillagerLeftLegUV();
+        box(-4, 24, -4, 8, 10, 8, 0, 0, 24, 0);
+        box(-1, 21, -6, 2, 4, 2, 24, 0, 24, 0);
+        box(-4, 12, -3, 8, 12, 6, 16, 20, 12, 0);
+        box(-8, 15, -3, 4, 8, 4, 44, 22, 21, armRot);
+        box(4, 15, -3, 4, 8, 4, la.u, la.v, 21, armRot, la.mirror);
+        box(-4, 15, -3, 8, 4, 4, 40, 38, 21, armRot);
+        box(-4, 0, -2, 4, 12, 4, 0, 22, 12, moving);
+        box(0, 0, -2, 4, 12, 4, ll.u, ll.v, 12, -moving, ll.mirror);
+    };
+    // Vanilla IronGolemModel.createBodyLayer: 30-tall arms (60,21)/(60,58),
+    // 16-tall legs (37,0)/(60,0), wide body (0,40)+(0,70), 128x128 texture.
+    auto golem = [&]() {
+        const MobLimbUV la = GolemLeftArmUV(), ll = GolemLeftLegUV();
+        box(-4, 33, -7.5f, 8, 10, 8, 0, 0, 33, 0);
+        box(-1, 32, -9.5f, 2, 4, 2, 24, 0, 33, 0);
+        box(-9, 21, -6, 18, 12, 11, 0, 40, 21, 0);
+        box(-4.5f, 16, -3, 9, 5, 6, 0, 70, 21, 0);
+        box(-13, 3.5f, -3, 4, 30, 6, 60, 21, 33, moving);
+        box(9, 3.5f, -3, 4, 30, 6, la.u, la.v, 33, -moving, la.mirror);
+        box(-7.5f, 0, -3, 6, 16, 5, 37, 0, 16, moving);
+        box(1.5f, 0, -3, 6, 16, 5, ll.u, ll.v, 16, -moving, ll.mirror);
+    };
     const bool q32 = texH <= 32.0f;
     switch (type) {
     case MobType::Pig:
@@ -3430,12 +3457,10 @@ static void MobParts(MobType type, float moving, float texH, std::vector<MobPart
         break;
     case MobType::Villager:
     case MobType::WanderingTrader:
-        humanoid(1.0f, 0);
-        box(-1, 20, -5, 2, 4, 2, 0, 0, 22, 0); // nose
+        villager(-0.75f);
         break;
     case MobType::ZombieVillager:
-        humanoid(1.0f, XM_PIDIV2);
-        box(-1, 20, -5, 2, 4, 2, 0, 0, 22, 0);
+        villager(XM_PIDIV2);
         break;
     case MobType::Piglin:
         humanoid(1.0f, 0);
@@ -3448,8 +3473,7 @@ static void MobParts(MobType type, float moving, float texH, std::vector<MobPart
         box(-2.5f, 36, -2.5f, 5, 6, 5, 32, 12, 36, 0);
         break;
     case MobType::IronGolem:
-        humanoid(1.4f, 0);
-        box(-2, 26, -6, 4, 5, 3, 0, 0, 28, 0); // nose
+        golem();
         break;
     case MobType::SnowGolem:
         box(-4, 0, -4, 8, 8, 8, 0, 0, 4, 0);

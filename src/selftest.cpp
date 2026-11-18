@@ -1285,6 +1285,21 @@ static void TestMobModelUV() {
     CHECK(arm.u + 2 * d + 2 * w <= 64 && arm.v + d + h <= 32, "left arm unwrap fits 64x32");
     CHECK(leg.u + 2 * d + 2 * w <= 64 && leg.v + d + h <= 32, "left leg unwrap fits 64x32");
     CHECK(48.0f + d + h > 32, "old player v=48 UV would overflow a 64x32 texture");
+    // VillagerModel.createBodyLayer (64x64): left_arm (44,22).mirror(),
+    // left_leg (0,22).mirror(); fused arm bar (40,38) 8x4x4.
+    const MobLimbUV va = VillagerLeftArmUV(), vl = VillagerLeftLegUV();
+    CHECK(va.u == 44.0f && va.v == 22.0f && va.mirror, "villager left arm mirrors texOffs(44,22)");
+    CHECK(vl.u == 0.0f && vl.v == 22.0f && vl.mirror, "villager left leg mirrors texOffs(0,22)");
+    CHECK(va.u + 2 * 4 + 2 * 4 <= 64 && va.v + 4 + 8 <= 64, "villager arm unwrap fits 64x64");
+    CHECK(vl.u + 2 * 4 + 2 * 4 <= 64 && vl.v + 4 + 12 <= 64, "villager leg unwrap fits 64x64");
+    CHECK(40.0f + 2 * 4 + 2 * 8 <= 64 && 38.0f + 4 + 4 <= 64, "villager fused arm bar fits 64x64");
+    // IronGolemModel.createBodyLayer (128x128): left_arm (60,58) NOT mirrored,
+    // left_leg (60,0).mirror(); arms 4x30x6, legs 6x16x5.
+    const MobLimbUV ga = GolemLeftArmUV(), gl = GolemLeftLegUV();
+    CHECK(ga.u == 60.0f && ga.v == 58.0f && !ga.mirror, "golem left arm texOffs(60,58) not mirrored");
+    CHECK(gl.u == 60.0f && gl.v == 0.0f && gl.mirror, "golem left leg mirrors texOffs(60,0)");
+    CHECK(ga.u + 2 * 6 + 2 * 4 <= 128 && ga.v + 6 + 30 <= 128, "golem arm unwrap fits 128x128");
+    CHECK(gl.u + 2 * 5 + 2 * 6 <= 128 && gl.v + 5 + 16 <= 128, "golem leg unwrap fits 128x128");
 }
 
 static void TestMobHitboxes() {

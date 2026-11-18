@@ -358,6 +358,14 @@ enum class MobType {
 struct MobLimbUV { float u, v; bool mirror; };
 inline MobLimbUV HumanoidLeftArmUV() { return {40.0f, 16.0f, true}; }
 inline MobLimbUV HumanoidLeftLegUV() { return {0.0f, 16.0f, true}; }
+// VillagerModel.createBodyLayer: left_arm texOffs(44,22).mirror(),
+// left_leg texOffs(0,22).mirror() (robe layout, 64x64 texture).
+inline MobLimbUV VillagerLeftArmUV() { return {44.0f, 22.0f, true}; }
+inline MobLimbUV VillagerLeftLegUV() { return {0.0f, 22.0f, true}; }
+// IronGolemModel.createBodyLayer: left_arm texOffs(60,58) NOT mirrored,
+// left_leg texOffs(60,0).mirror() (128x128 texture).
+inline MobLimbUV GolemLeftArmUV() { return {60.0f, 58.0f, false}; }
+inline MobLimbUV GolemLeftLegUV() { return {60.0f, 0.0f, true}; }
 
 // Java 26.3 base attributes. drop/drop2 are resource names resolved against the
 // JAR registry at kill time (empty = no drop).
