@@ -107,9 +107,9 @@ bool AtlasTileRectExact(int tile, float& u0, float& v0, float& u1, float& v1) {
 std::string DefaultAssetIndexPath() {
     const char* appdata = getenv("APPDATA");
     if (appdata && appdata[0]) {
-        return std::string(appdata) + "/Migurinth/meta/assets/indexes/34.json";
+        return std::string(appdata) + "/Migurinth/meta/assets/indexes/1.13.1.json";
     }
-    return "C:/Users/Admin/AppData/Roaming/Migurinth/meta/assets/indexes/34.json";
+    return "C:/Users/Admin/AppData/Roaming/Migurinth/meta/assets/indexes/1.13.1.json";
 }
 
 std::string DefaultClientJarPath() {
@@ -126,7 +126,7 @@ std::string DefaultClientJarPath() {
         if (dir == "." || dir == "..") continue;
         const std::string jar = base + "/" + dir + "/" + dir + ".jar";
         if (GetFileAttributesA(jar.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
-        if (dir > bestDir) { bestDir = dir; best = jar; }
+        if (dir == "1.13.2" || dir > bestDir) { bestDir = dir; best = jar; }
     } while (FindNextFileA(h, &fd));
     FindClose(h);
     return best;
