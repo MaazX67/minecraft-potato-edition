@@ -351,6 +351,14 @@ enum class MobType {
     EnderDragon, Wither, ElderGuardian, Count
 };
 
+// Java HumanoidModel.createMesh: left_arm = texOffs(40,16).mirror(),
+// left_leg = texOffs(0,16).mirror() (ZombieModel/SkeletonModel inherit this).
+// Mirrored left limbs reuse the right-limb texture region; only PlayerModel
+// overrides them to (32,48)/(16,48) for the separate 64x64 player-skin limbs.
+struct MobLimbUV { float u, v; bool mirror; };
+inline MobLimbUV HumanoidLeftArmUV() { return {40.0f, 16.0f, true}; }
+inline MobLimbUV HumanoidLeftLegUV() { return {0.0f, 16.0f, true}; }
+
 // Java 26.3 base attributes. drop/drop2 are resource names resolved against the
 // JAR registry at kill time (empty = no drop).
 struct MobStats {

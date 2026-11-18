@@ -3182,6 +3182,7 @@ static void DrawWorldSky(const XMMATRIX& view, const XMMATRIX& proj, const SkySt
 
 struct MobPart {
     float x, y, z, w, h, d, u, v, pivot, rot;
+    bool mirror;
 };
 
 // Box models use Java's 16 px/block model space and standard box unwrap UVs
@@ -3192,8 +3193,8 @@ struct MobPart {
 static void MobParts(MobType type, float moving, float texH, std::vector<MobPart>& parts) {
     parts.clear();
     auto box = [&](float x, float y, float z, float w, float h, float d,
-                   float u, float v, float pivot, float rot) {
-        parts.push_back({x, y, z, w, h, d, u, v, pivot, rot});
+                   float u, float v, float pivot, float rot, bool mirror = false) {
+        parts.push_back({x, y, z, w, h, d, u, v, pivot, rot, mirror});
     };
     // Vanilla QuadrupedModel: head front-top, horizontal body, four legs.
     auto quadruped = [&](float legH, float bw, float bh, float bl, float hs,
@@ -3205,14 +3206,18 @@ static void MobParts(MobType type, float moving, float texH, std::vector<MobPart
         box(-bw / 2, 0, bl / 2 - 4, 4, legH, 4, lu, lv, legH, -moving);
         box(bw / 2 - 4, 0, bl / 2 - 4, 4, legH, 4, lu, lv, legH, moving);
     };
-    // Vanilla HumanoidModel (64x64 player unwrap).
+    // Vanilla HumanoidModel.createMesh: left limbs mirror the right-limb UV
+    // region (40,16)/(0,16), not the player-only (32,48)/(16,48). The old
+    // player-layout UVs sampled v=48 out of bounds on 64x32 zombie/skeleton
+    // textures -> black/garbage left limbs.
     auto humanoid = [&](float s, float armRot) {
+        const MobLimbUV la = HumanoidLeftArmUV(), ll = HumanoidLeftLegUV();
         box(-4 * s, 24 * s, -4 * s, 8 * s, 8 * s, 8 * s, 0, 0, 24 * s, 0);
         box(-4 * s, 12 * s, -2 * s, 8 * s, 12 * s, 4 * s, 16, 16, 12 * s, 0);
         box(-8 * s, 12 * s, -2 * s, 4 * s, 12 * s, 4 * s, 40, 16, 23 * s, armRot);
-        box(4 * s, 12 * s, -2 * s, 4 * s, 12 * s, 4 * s, 32, 48, 23 * s, armRot);
+        box(4 * s, 12 * s, -2 * s, 4 * s, 12 * s, 4 * s, la.u, la.v, 23 * s, armRot, la.mirror);
         box(-4 * s, 0, -2 * s, 4 * s, 12 * s, 4 * s, 0, 16, 12 * s, moving);
-        box(0, 0, -2 * s, 4 * s, 12 * s, 4 * s, 16, 48, 12 * s, -moving);
+        box(0, 0, -2 * s, 4 * s, 12 * s, 4 * s, ll.u, ll.v, 12 * s, -moving, ll.mirror);
     };
     const bool q32 = texH <= 32.0f;
     switch (type) {
@@ -3525,11 +3530,17 @@ static void DrawZombies() {
             for (const MobPart& part : parts) {
                 const float x = part.x, y = part.y, z = part.z, w = part.w, h = part.h, d = part.d;
                 const float u = part.u, v = part.v, pivotY = part.pivot, rotation = part.rot;
+                const bool mir = part.mirror;
                 const float corners[8][3] = {{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
                     {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
                 const int faces[6][4] = {{0,1,2,3},{5,4,7,6},{4,0,3,7},{1,5,6,2},{3,2,6,7},{4,5,1,0}};
-                const float uv[6][4] = {{u+d,v+d,w,h},{u+2*d+w,v+d,w,h},{u,v+d,d,h},
+                float uv[6][4] = {{u+d,v+d,w,h},{u+2*d+w,v+d,w,h},{u,v+d,d,h},
                     {u+d+w,v+d,d,h},{u+d,v,w,d},{u+d+w,v,w,d}};
+                // Java ModelPart.Cube mirror: mirrorFacing swaps the X-axis
+                // (west/east) faces; the Polygon vertex reversal flips U.
+                if (mir) {
+                    for (int k = 0; k < 4; ++k) { float t = uv[2][k]; uv[2][k] = uv[3][k]; uv[3][k] = t; }
+                }
                 const int triangles[6] = {0,1,2,0,2,3};
                 const float cr = cosf(rotation), sr = sinf(rotation);
                 for (int face = 0; face < 6; ++face) {
@@ -3537,7 +3548,8 @@ static void DrawZombies() {
                         const float* p = corners[faces[face][index]];
                         const float localY = pivotY + (p[1] - pivotY) * cr - p[2] * sr;
                         const float localZ = (p[1] - pivotY) * sr + p[2] * cr;
-                        const float tu = uv[face][0] + (index == 1 || index == 2 ? uv[face][2] : 0);
+                        const float off = (index == 1 || index == 2) ? uv[face][2] : 0.0f;
+                        const float tu = uv[face][0] + (mir ? uv[face][2] - off : off);
                         const float tv = uv[face][1] + (index < 2 ? 0 : uv[face][3]);
                         vertices.push_back({zombie.body.x + (cy * p[0] - sy * localZ) / 16,
                             zombie.body.y + localY / 16, zombie.body.z + (sy * p[0] + cy * localZ) / 16,

@@ -1271,6 +1271,22 @@ static void TestDryLandSpawn() {
     }
 }
 
+static void TestMobModelUV() {
+    // Java HumanoidModel.createMesh / SkeletonModel: left limbs mirror the
+    // right-limb region (40,16)/(0,16), never the player-only (32,48)/(16,48).
+    const MobLimbUV arm = HumanoidLeftArmUV(), leg = HumanoidLeftLegUV();
+    CHECK(arm.u == 40.0f && arm.v == 16.0f && arm.mirror, "left arm mirrors texOffs(40,16)");
+    CHECK(leg.u == 0.0f && leg.v == 16.0f && leg.mirror, "left leg mirrors texOffs(0,16)");
+    // Standard limb box is 4 wide x 12 high x 4 deep; the box unwrap spans
+    // u + 2*d + 2*w horizontally and v + d + h vertically. On a 64x32 mob
+    // texture both mirrored limbs must stay in bounds (the old v=48 player UV
+    // overflowed 32 -> black/garbage left limbs on zombie/skeleton).
+    const float w = 4, h = 12, d = 4;
+    CHECK(arm.u + 2 * d + 2 * w <= 64 && arm.v + d + h <= 32, "left arm unwrap fits 64x32");
+    CHECK(leg.u + 2 * d + 2 * w <= 64 && leg.v + d + h <= 32, "left leg unwrap fits 64x32");
+    CHECK(48.0f + d + h > 32, "old player v=48 UV would overflow a 64x32 texture");
+}
+
 static void TestMobHitboxes() {
     FlyCamera ray;
     ray.x = 0; ray.y = 1.0f; ray.z = 0;
@@ -2044,6 +2060,7 @@ int main() {
     TestExtrudedUV();
     TestNonCubeMeshes();
     TestMobHitboxes();
+    TestMobModelUV();
     TestJavaWorldgen();
     TestDryLandSpawn();
     TestBlockLight();
