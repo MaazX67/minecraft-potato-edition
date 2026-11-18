@@ -82,20 +82,21 @@ bool SoundEngine::Init(AssetStore& store) {
         candidates.push_back({name, SND_HURT});
     }
     for (int m = 0; m < int(MobType::Count); ++m) {
-        const std::string prefix = std::string("minecraft/sounds/mob/") + MobId(MobType(m)) + "/";
-        const std::vector<std::string> mob = store.ListPrefix(prefix);
-        for (const std::string& name : mob) {
-            if (!EndsWith(name, ".ogg")) continue;
-            int kind = -1;
-            if (name.find("say") != std::string::npos || name.find("ambient") != std::string::npos ||
-                name.find("idle") != std::string::npos) kind = 0;
-            else if (name.find("hurt") != std::string::npos) kind = 1;
-            else if (name.find("death") != std::string::npos) kind = 2;
-            if (kind < 0) continue;
-            const SoundCat cat = MobSoundCat(MobType(m), kind);
-            if (mNext[cat] >= 4) continue;
-            ++mNext[cat];
-            candidates.push_back({name, cat});
+        // Legacy (pre-1.13) folders live under sounds/mob/<id>/, newer mobs
+        // (1.17+) under sounds/entity/<id>/; the installed index mixes both.
+        const char* roots[] = {"minecraft/sounds/mob/", "minecraft/sounds/entity/"};
+        for (const char* root : roots) {
+            const std::string prefix = std::string(root) + MobId(MobType(m)) + "/";
+            const std::vector<std::string> mob = store.ListPrefix(prefix);
+            for (const std::string& name : mob) {
+                if (!EndsWith(name, ".ogg")) continue;
+                const int kind = MobSoundKind(name);
+                if (kind < 0) continue;
+                const SoundCat cat = MobSoundCat(MobType(m), kind);
+                if (mNext[cat] >= 4) continue;
+                ++mNext[cat];
+                candidates.push_back({name, cat});
+            }
         }
     }
     candidates.push_back({"minecraft/sounds/random/click.ogg", SND_CLICK});

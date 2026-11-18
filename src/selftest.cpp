@@ -1395,6 +1395,16 @@ static void TestMobSound() {
     for (int m = 0; m < int(MobType::Count); ++m)
         for (int k = 0; k < 3; ++k)
             CHECK(MobSoundCat(MobType(m), k) < SND_COUNT, "every mob sound category is inside the arena");
+    // Vanilla file-name -> kind mapping. Villager hurt clips are named "hit"
+    // (SoundEvents.VILLAGER_HURT); step/plop are not voices.
+    CHECK(MobSoundKind("minecraft/sounds/mob/pig/say1.ogg") == 0, "pig say is ambient");
+    CHECK(MobSoundKind("minecraft/sounds/entity/goat/ambient1.ogg") == 0, "goat ambient is ambient");
+    CHECK(MobSoundKind("minecraft/sounds/mob/villager/idle1.ogg") == 0, "villager idle is ambient");
+    CHECK(MobSoundKind("minecraft/sounds/mob/cow/hurt2.ogg") == 1, "cow hurt is hurt");
+    CHECK(MobSoundKind("minecraft/sounds/mob/villager/hit2.ogg") == 1, "villager hit is hurt");
+    CHECK(MobSoundKind("minecraft/sounds/mob/zombie/death.ogg") == 2, "zombie death is death");
+    CHECK(MobSoundKind("minecraft/sounds/mob/pig/step2.ogg") == -1, "step is not a voice");
+    CHECK(MobSoundKind("minecraft/sounds/mob/chicken/plop.ogg") == -1, "plop is not a voice");
 }
 
 static void TestCombatMath() {

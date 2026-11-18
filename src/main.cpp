@@ -2529,7 +2529,9 @@ static void HandleGameFrame(float dt) {
     if (sSayTimer >= 6 && !gZombies.empty()) {
         sSayTimer = 0;
         const Zombie& z = gZombies[gWorldClock.Ticks() % gZombies.size()];
-        if (z.type == MobType::Zombie)
+        // Java LivingEntity ambient tick plays getAmbientSound() for every mob,
+        // not just zombies; Creeper.getAmbientSound() returns null (no idle voice).
+        if (z.type != MobType::Creeper)
             gSound.PlayAt(MobSoundCat(z.type, 0), z.body.x, z.body.y, z.body.z);
     }
     if (!gAutomation && gRuleMobSpawning && gSettings.difficulty != 0) {

@@ -30,6 +30,17 @@ inline SoundCat MobSoundCat(MobType type, int kind) {
     return SoundCat(int(SND_ZOMBIE_SAY) + int(type) * 3 + kind);
 }
 
+// Maps a vanilla mob sound file to kind 0=ambient/say, 1=hurt, 2=death, -1=skip.
+// Legacy asset folders name the villager hurt clip "hit" (Java
+// SoundEvents.VILLAGER_HURT), so "hit" counts as hurt alongside "hurt".
+inline int MobSoundKind(const std::string& name) {
+    if (name.find("say") != std::string::npos || name.find("ambient") != std::string::npos ||
+        name.find("idle") != std::string::npos) return 0;
+    if (name.find("hurt") != std::string::npos || name.find("hit") != std::string::npos) return 1;
+    if (name.find("death") != std::string::npos) return 2;
+    return -1;
+}
+
 // Native audio architecture: every vanilla sound is located through the
 // launcher's SHA-1 object index, decoded to PCM at boot, and packed into one
 // contiguous arena. Playback requests enter a rigid ring queue and are served
